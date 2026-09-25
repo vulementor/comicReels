@@ -6,6 +6,7 @@ CACHE_BASE="${XDG_CACHE_HOME:-$HOME/.cache}"
 RUNTIME_ROOT="${COMICREELS_RUNTIME_DIR:-$CACHE_BASE/comicreels/runtime}"
 VENV="${COMICREELS_VENV:-$CACHE_BASE/comicreels/venv}"
 RUNTIME_REF="${COMICREELS_RUNTIME_REF:-HEAD}"
+GPTFP_REQUIRED_REF="${COMICREELS_GPTFP_REF:-27b4e5b75b771bde683e274aa212ac291a8d3b8c}"
 
 mkdir -p "$RUNTIME_ROOT" "$(dirname "$VENV")"
 
@@ -51,6 +52,40 @@ if [ ! -f "$REQ_STAMP" ] || [ "$(cat "$REQ_STAMP")" != "$REQ_HASH" ]; then
   printf '%s' "$REQ_HASH" > "$REQ_STAMP"
 fi
 
+# Browser-native ChatGPT AI through the private GPT FullProxy SDK.
+# The public ComicReels repo does not vendor browser-session material or private source.
+if [ -z "${COMICREELS_GPTFP_PROFILE_DIR:-}" ]; then
+  ZALO_PROFILE="$HOME/Library/Application Support/ZaloConnect/chatgpt-web-profile"
+  if [ -d "$ZALO_PROFILE" ]; then
+    export COMICREELS_GPTFP_PROFILE_DIR="$ZALO_PROFILE"
+  fi
+fi
+
+GPTFP_DIR="${COMICREELS_GPTFP_DIR:-}"
+if [ -z "$GPTFP_DIR" ] && [ -d "$SOURCE_ROOT/../gpt_fullproxy/.git" ]; then
+  GPTFP_DIR="$(cd "$SOURCE_ROOT/../gpt_fullproxy" && pwd)"
+fi
+
+if [ -n "$GPTFP_DIR" ]; then
+  if [ ! -f "$GPTFP_DIR/pyproject.toml" ]; then
+    echo "ComicReels: COMICREELS_GPTFP_DIR is not a GPT FullProxy checkout: $GPTFP_DIR" >&2
+    exit 2
+  fi
+  GPTFP_HEAD="$(git -C "$GPTFP_DIR" rev-parse HEAD)"
+  if [ "${COMICREELS_GPTFP_ALLOW_UNPINNED:-0}" != "1" ] && [ "$GPTFP_HEAD" != "$GPTFP_REQUIRED_REF" ]; then
+    echo "ComicReels: GPT FullProxy HEAD $GPTFP_HEAD does not match required $GPTFP_REQUIRED_REF" >&2
+    echo "Sync vulementor/gpt_fullproxy feature/image-reference-attachments or set COMICREELS_GPTFP_REF explicitly." >&2
+    exit 2
+  fi
+  GPTFP_STAMP="$VENV/.comicreels-gptfp.sha"
+  if [ ! -f "$GPTFP_STAMP" ] || [ "$(cat "$GPTFP_STAMP")" != "$GPTFP_HEAD" ]; then
+    "$VENV/bin/python" -m pip install -e "$GPTFP_DIR[browser]"
+    "$VENV/bin/python" -m camoufox fetch
+    printf '%s' "$GPTFP_HEAD" > "$GPTFP_STAMP"
+  fi
+  export COMICREELS_GPTFP_DIR="$GPTFP_DIR"
+fi
+
 LOCK_HASH="$(hash_file dashboard/package-lock.json)"
 LOCK_STAMP="$RUNTIME_ROOT/.comicreels-package-lock.sha"
 if [ ! -d dashboard/node_modules ] || [ ! -f "$LOCK_STAMP" ] || [ "$(cat "$LOCK_STAMP")" != "$LOCK_HASH" ]; then
@@ -68,6 +103,8 @@ trap 'kill $BACKEND $FRONTEND 2>/dev/null || true' EXIT INT TERM
 echo "ComicReels source:  $SOURCE_ROOT"
 echo "Runtime commit:     $COMMIT"
 echo "ComicReels runtime: $RUNTIME_ROOT"
+echo "GPT FullProxy:       ${COMICREELS_GPTFP_DIR:-not connected}"
+echo "ChatGPT profile:     ${COMICREELS_GPTFP_PROFILE_DIR:-not connected}"
 echo "Backend PID: $BACKEND"
 echo "Frontend PID: $FRONTEND"
 echo "Open http://127.0.0.1:5173/"
