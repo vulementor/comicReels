@@ -108,6 +108,7 @@ class AnalyzeBody(BaseModel):
 
 class AIImageBody(BaseModel):
     confirm_paid: bool = False
+    force: bool = False
 
 
 class Box(BaseModel):
@@ -471,6 +472,25 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
     raw_panel = await store.panel(panel_id)
     if not raw_panel:
         raise HTTPException(404, "Không tìm thấy panel.")
+
+    if (
+        not body.force
+        and raw_panel.get("status") in {"AI_IMAGE_READY", "AI_IMAGE_APPROVED"}
+        and raw_panel.get("portrait_path")
+        and raw_panel.get("portrait_sha256")
+    ):
+        try:
+            existing = _safe_file(raw_panel.get("portrait_path"))
+        except HTTPException:
+            existing = None
+        if existing is not None and sha256_file(existing) == raw_panel.get("portrait_sha256"):
+            return {
+                "panel_id": panel_id,
+                "portrait_sha256": raw_panel["portrait_sha256"],
+                "status": raw_panel["status"],
+                "deduplicated": True,
+            }
+
     crop = _safe_file(raw_panel.get("crop_path"))
     try:
         regions = json.loads(raw_panel.get("mask_json") or "[]")
