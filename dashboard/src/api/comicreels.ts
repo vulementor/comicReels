@@ -161,6 +161,9 @@ export const comic = {
     }),
   cost: (shotId: string) =>
     api<{ estimated_credits: number | null; note: string }>(`/api/comicreels/shots/${shotId}/cost`),
+  pauseQueue: () => api<{ ok: boolean; paused: boolean }>('/api/comicreels/queue/pause', { method: 'POST' }),
+  resumeQueue: () => api<{ ok: boolean; paused: boolean }>('/api/comicreels/queue/resume', { method: 'POST' }),
+  cancelGeneration: (generationId: string) => api<ComicGeneration>(`/api/comicreels/generations/${generationId}/cancel`, { method: 'POST' }),
 }
 
 export const comicUrl = {
