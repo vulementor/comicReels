@@ -154,3 +154,8 @@ body {
     @apply font-sans;
   }
 }
+
+/* ComicReels: keep touch targets usable on narrow/mobile local dashboards. */
+@media (max-width: 700px) {
+  main { padding: 12px !important; }
+}
