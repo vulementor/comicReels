@@ -523,6 +523,14 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
             conversation_url=conversation_url,
             panel_index=int(raw_panel["display_order"]),
             panel_context=dialogue_context,
+            panel_box={
+                "x": int(raw_panel["x"]),
+                "y": int(raw_panel["y"]),
+                "w": int(raw_panel["w"]),
+                "h": int(raw_panel["h"]),
+            },
+            source_width=int(project["source_width"]),
+            source_height=int(project["source_height"]),
         )
     except Exception as exc:
         raise HTTPException(502, f"AI Generate ảnh thất bại: {exc}") from exc
