@@ -291,7 +291,7 @@ async def analyze_project(project_id: str, body: AnalyzeBody):
         dialogues = []
         for item in result.get("dialogues", []):
             row = dict(item)
-            row["verified"] = True
+            row["verified"] = bool(item.get("verified", False))
             dialogues.append(row)
         response = await _apply_analysis(project_id, panels, dialogues)
         response["analysis_warnings"] = result.get("warnings", [])
