@@ -393,3 +393,132 @@ def test_image_prompt_locks_exact_source_panel_geometry():
     assert "x=205, y=741, w=1379, h=563" in prompt
     assert "1780x2048" in prompt
     assert "KHÔNG mượn pose/composition từ panel khác" in prompt
+
+
+@pytest.mark.asyncio
+async def test_verify_endpoint_persists_only_fully_verified_transcript(monkeypatch):
+    details = {
+        "project": {
+            "id": "project-1",
+            "ai_conversation_url": "https://chatgpt.com/c/existing",
+        },
+        "panels": [
+            {
+                "id": "panel-1",
+                "display_order": 0,
+                "dialogues": [
+                    {
+                        "id": "dialogue-1",
+                        "panel_id": "panel-1",
+                        "display_order": 0,
+                        "speaker_id": "CHAR_1",
+                        "text": "OLD",
+                        "verified": 0,
+                        "confidence": 0.9,
+                    }
+                ],
+            }
+        ],
+    }
+    writes = []
+    clears = []
+
+    async def fake_details(_project_id):
+        return details
+
+    async def fake_verify(_conversation_url, _candidates):
+        return [{
+            "panel_index": 0,
+            "display_order": 0,
+            "speaker_id": "CHAR_1",
+            "text": "NEW",
+            "verified": True,
+        }]
+
+    async def fake_upsert(panel_id, **kwargs):
+        writes.append((panel_id, kwargs))
+        return {}
+
+    async def fake_clear(project_id):
+        clears.append(project_id)
+
+    monkeypatch.setattr(comic_api, "_details", fake_details)
+    monkeypatch.setattr(comic_api, "verify_dialogues_in_conversation", fake_verify)
+    monkeypatch.setattr(comic_api.store, "upsert_dialogue", fake_upsert)
+    monkeypatch.setattr(comic_api.store, "clear_shots", fake_clear)
+
+    await comic_api.verify_project_dialogues("project-1")
+
+    assert writes == [(
+        "panel-1",
+        {
+            "dialogue_id": "dialogue-1",
+            "order": 0,
+            "speaker_id": "CHAR_1",
+            "text": "NEW",
+            "verified": True,
+            "confidence": 0.9,
+        },
+    )]
+    assert clears == ["project-1"]
+
+
+@pytest.mark.asyncio
+async def test_verify_endpoint_rejects_unverified_result_without_partial_commit(monkeypatch):
+    details = {
+        "project": {
+            "id": "project-1",
+            "ai_conversation_url": "https://chatgpt.com/c/existing",
+        },
+        "panels": [
+            {
+                "id": "panel-1",
+                "display_order": 0,
+                "dialogues": [
+                    {
+                        "id": "dialogue-1",
+                        "panel_id": "panel-1",
+                        "display_order": 0,
+                        "speaker_id": "CHAR_1",
+                        "text": "NHƯNG ỔNG CÓ SỪNG SẴN RỒI MÀ",
+                        "verified": 0,
+                        "confidence": 0.9,
+                    }
+                ],
+            }
+        ],
+    }
+    writes = []
+    clears = []
+
+    async def fake_details(_project_id):
+        return details
+
+    async def fake_verify(_conversation_url, _candidates):
+        return [{
+            "panel_index": 0,
+            "display_order": 0,
+            "speaker_id": "CHAR_1",
+            "text": "NHƯNG ỔNG CÓ SỪNG SẴN RỒI MÀ",
+            "verified": False,
+        }]
+
+    async def fake_upsert(*args, **kwargs):
+        writes.append((args, kwargs))
+        return {}
+
+    async def fake_clear(project_id):
+        clears.append(project_id)
+
+    monkeypatch.setattr(comic_api, "_details", fake_details)
+    monkeypatch.setattr(comic_api, "verify_dialogues_in_conversation", fake_verify)
+    monkeypatch.setattr(comic_api.store, "upsert_dialogue", fake_upsert)
+    monkeypatch.setattr(comic_api.store, "clear_shots", fake_clear)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await comic_api.verify_project_dialogues("project-1")
+
+    assert exc_info.value.status_code == 422
+    assert "không cập nhật" in str(exc_info.value.detail)
+    assert writes == []
+    assert clears == []
