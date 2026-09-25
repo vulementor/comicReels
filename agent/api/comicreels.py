@@ -370,6 +370,14 @@ async def verify_project_dialogues(project_id: str):
     except Exception as exc:
         raise HTTPException(502, f"AI kiểm tra thoại thất bại: {exc}") from exc
 
+    if len(verified) != len(candidates) or any(
+        not bool(row.get("verified")) for row in verified
+    ):
+        raise HTTPException(
+            422,
+            "AI chưa xác minh chắc chắn toàn bộ lời thoại; không cập nhật transcript hoặc trạng thái verified.",
+        )
+
     for row in verified:
         key = (int(row["panel_index"]), int(row["display_order"]))
         current = dialogue_index.get(key)
