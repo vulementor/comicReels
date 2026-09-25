@@ -187,7 +187,7 @@ async def comicreels_status():
             "ready": bool(client.connected and pid),
         },
         "supported_video_durations": SUPPORTED_DURATIONS,
-        "local_test_state": "NOT_RUN",
+        "local_test_state": "OFFLINE_PASS_EXTERNAL_GATES_PENDING",
     }
 
 

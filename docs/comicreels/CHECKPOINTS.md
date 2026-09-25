@@ -22,7 +22,7 @@ Trạng thái mới: OFFLINE_LOCAL_TEST_PASS = code và workflow local đã ch�
 | 13 | EXTERNAL_TEST_PENDING | Paid guard 409 PASS; chưa gửi video thật, chưa phát sinh phí. |
 | 14 | EXTERNAL_TEST_PENDING | Batch code có guard/idempotency; chưa chạy batch thật trước single-shot Flow pass. |
 | 15 | OFFLINE_LOCAL_TEST_PASS + EXTERNAL QA PENDING | Register/review/ffmpeg assemble PASS với video synthetic; video AI thật chưa kiểm tra lip-sync/voice. |
-| 16 | OFFLINE_LOCAL_TEST_PASS_WITH_GAPS | Backup/restore, macOS shell launcher logic và runtime-cache design được test; PowerShell/Windows chưa test. |
+| 16 | OFFLINE_LOCAL_TEST_PASS_WITH_GAPS | Backup/restore PASS; launcher macOS đã chạy thực tế từ source iCloud và dựng runtime cache ngoài iCloud; PowerShell/Windows chưa test. |
 
 ## Regression evidence
 - Python unit tests: 378/378 PASS.

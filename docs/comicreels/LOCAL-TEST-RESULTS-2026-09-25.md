@@ -53,6 +53,11 @@ Routing was also verified: root highlights ComicReels Studio; /flowkit highlight
 - Updated Vite alias to import.meta.dirname.
 - Changed launcher design so runtime, virtualenv, node_modules, DB and output live outside iCloud; committed source remains in the user's requested iCloud folder.
 
+## Final launcher verification
+- The launcher was run from the exact iCloud source path requested by the user.
+- It reconstructed the tracked commit into a cache runtime outside iCloud, started backend on 127.0.0.1:8100 and frontend on 127.0.0.1:5173, and served ComicReels successfully.
+- The status API reports `OFFLINE_PASS_EXTERNAL_GATES_PENDING`; Google Flow remained disconnected and no paid generation was made.
+
 ## External gates still pending
 1. Real comic image quality on irregular layouts and AI-assisted recognition/inpainting. Current offline cleaner preserves pixels outside a supplied mask but does not reconstruct hidden artwork.
 2. Google Flow Extension/project authentication and one real paid video shot.
