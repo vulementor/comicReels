@@ -111,7 +111,7 @@ async def test_analyze_comic_preserves_exact_single_pass_transcript(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_generate_clean_portrait_reuses_source_conversation_with_reference_attachment(tmp_path, monkeypatch):
+async def test_generate_clean_portrait_reuses_source_conversation_without_reupload(tmp_path, monkeypatch):
     crop = tmp_path / "crop.png"
     Image.new("RGB", (800, 500), (120, 130, 140)).save(crop)
     artifact = tmp_path / "generated.png"
@@ -143,7 +143,7 @@ async def test_generate_clean_portrait_reuses_source_conversation_with_reference
     )
 
     assert calls["kwargs"]["conversation"] == conversation
-    assert calls["kwargs"]["attachments"] == [crop]
+    assert calls["kwargs"]["attachments"] == []
     assert "TURN ĐẦU" in calls["prompt"]
     assert "KHUNG 1" in calls["prompt"]
     assert "9:16" in calls["prompt"]
@@ -186,3 +186,41 @@ async def test_ai_generate_requires_source_conversation(tmp_path, monkeypatch):
 
     assert exc_info.value.status_code == 409
     assert "conversation" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_three_panels_reuse_one_conversation_without_reupload(tmp_path, monkeypatch):
+    artifact = tmp_path / "generated.png"
+    Image.new("RGB", (576, 1024), (20, 30, 40)).save(artifact)
+    calls = []
+
+    class FakeImage:
+        def generate(self, prompt, **kwargs):
+            calls.append({"prompt": prompt, **kwargs})
+            return SimpleNamespace(
+                state="verified",
+                output_path=str(artifact),
+                reason=None,
+            )
+
+    client = SimpleNamespace(image=FakeImage())
+    monkeypatch.setattr(provider, "_client", lambda: client)
+
+    conversation = "https://chatgpt.com/c/one-comic-session"
+    for panel_index in range(3):
+        crop = tmp_path / f"crop-{panel_index}.png"
+        Image.new("RGB", (800, 500), (100 + panel_index, 120, 140)).save(crop)
+        output = tmp_path / f"out-{panel_index}.png"
+        await provider.generate_clean_portrait(
+            crop,
+            [{"x": 20, "y": 30, "w": 100, "h": 60}],
+            output,
+            conversation_url=conversation,
+            panel_index=panel_index,
+            panel_context=f"CHAR_{panel_index + 1}: dialogue",
+        )
+
+    assert len(calls) == 3
+    assert all(call["conversation"] == conversation for call in calls)
+    assert all(call["attachments"] == [] for call in calls)
+    assert ["KHUNG 1" in calls[0]["prompt"], "KHUNG 2" in calls[1]["prompt"], "KHUNG 3" in calls[2]["prompt"]] == [True, True, True]
