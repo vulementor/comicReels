@@ -141,12 +141,25 @@ class ComicGenerationWorker:
     def __init__(self) -> None:
         self._shutdown = asyncio.Event()
         self.active_generation_id: str | None = None
+        self.paused = False
 
     def request_shutdown(self) -> None:
         self._shutdown.set()
 
+    def pause(self) -> None:
+        self.paused = True
+
+    def resume(self) -> None:
+        self.paused = False
+
     async def start(self) -> None:
         while not self._shutdown.is_set():
+            if self.paused:
+                try:
+                    await asyncio.wait_for(self._shutdown.wait(), timeout=1)
+                except asyncio.TimeoutError:
+                    pass
+                continue
             job = await repo.next_queued_generation()
             if not job:
                 try:
