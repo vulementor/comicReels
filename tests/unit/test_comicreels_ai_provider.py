@@ -1,40 +1,112 @@
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from PIL import Image
 
-from agent.comicreels.ai_provider import prepare_edit_assets, provider_status
+import agent.comicreels.ai_provider as provider
 
 
-def test_ai_canvas_is_vertical_and_preserves_mask_contract(tmp_path, monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    src = tmp_path / "panel.png"
-    Image.new("RGB", (400, 200), (20, 40, 60)).save(src)
+def test_provider_status_uses_explicit_profile_without_session_secrets(tmp_path, monkeypatch):
+    profile = tmp_path / "chatgpt-profile"
+    profile.mkdir()
+    monkeypatch.setenv("COMICREELS_GPTFP_PROFILE_DIR", str(profile))
+    monkeypatch.setattr(provider, "_sdk_available", lambda: True)
 
-    base = tmp_path / "base.png"
-    mask = tmp_path / "mask.png"
-    protected, scale = prepare_edit_assets(
-        src,
-        [{"x": 100, "y": 40, "w": 120, "h": 80}],
-        base,
-        mask,
+    status = provider.provider_status()
+
+    assert status["provider"] == "gpt_fullproxy"
+    assert status["configured"] is True
+    assert status["profile_dir"] == str(profile.resolve())
+    assert "cookie" not in repr(status).lower()
+    assert "token" not in repr(status).lower()
+
+
+def test_extract_json_accepts_fenced_payload():
+    payload = provider._extract_json(
+        """```json
+{"panels":[{"x":0,"y":0,"w":10,"h":20,"order":0}],"dialogues":[]}
+```"""
+    )
+    assert payload["panels"][0]["h"] == 20
+
+
+@pytest.mark.asyncio
+async def test_analyze_comic_uses_chat_attachment_and_normalizes_regions(tmp_path, monkeypatch):
+    source = tmp_path / "page.png"
+    Image.new("RGB", (200, 300), (255, 255, 255)).save(source)
+
+    attachment = SimpleNamespace(name="page.png", size_bytes=source.stat().st_size, sha256="a" * 64)
+    response = SimpleNamespace(
+        state="verified",
+        text="""{
+          "panels":[
+            {"x":10,"y":20,"w":100,"h":120,"order":0,"speech_regions":[
+              {"x":5,"y":6,"w":40,"h":30,"kind":"speech_bubble"}
+            ]}
+          ],
+          "dialogues":[
+            {"panel_index":0,"display_order":0,"speaker_id":"CHAR_1","text":"Xin chào","confidence":0.9}
+          ],
+          "characters":[],
+          "warnings":[]
+        }""",
+        reason=None,
+        conversation_url="https://chatgpt.com/c/test",
+        assistant_message_id="assistant-1",
+        attachment_receipts=(attachment,),
     )
 
-    assert scale == 1.0
-    with Image.open(base) as image:
-        assert image.height > image.width
-        assert abs((image.width / image.height) - (9 / 16)) < 0.02
-    with Image.open(mask) as image:
-        alpha = image.getchannel("A")
-        outside = alpha.getpixel((0, 0))
-        inside_source = alpha.getpixel((protected["x"] + 20, protected["y"] + 20))
-        inside_edit = alpha.getpixel((protected["x"] + 140, protected["y"] + 80))
-        assert outside == 0
-        assert inside_source == 255
-        assert inside_edit == 0
+    calls = {}
+
+    class FakeChat:
+        def send(self, prompt, **kwargs):
+            calls["prompt"] = prompt
+            calls["kwargs"] = kwargs
+            return response
+
+    monkeypatch.setattr(provider, "_client", lambda: SimpleNamespace(chat=FakeChat()))
+
+    result = await provider.analyze_comic(source, "image/png", 200, 300)
+
+    assert calls["kwargs"]["attachments"] == [source]
+    assert result["panels"][0]["mask"] == [{"x": 5, "y": 6, "w": 40, "h": 30}]
+    assert result["dialogues"][0]["text"] == "Xin chào"
+    assert result["provider_receipt"]["attachments"][0]["sha256"] == "a" * 64
 
 
-def test_provider_status_does_not_expose_key(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-test-key")
-    status = provider_status()
-    assert status["configured"] is True
-    assert "secret-test-key" not in repr(status)
+@pytest.mark.asyncio
+async def test_generate_clean_portrait_uses_reference_attachment_and_requires_9_16(tmp_path, monkeypatch):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (800, 500), (120, 130, 140)).save(crop)
+    artifact = tmp_path / "generated.png"
+    Image.new("RGB", (576, 1024), (10, 20, 30)).save(artifact)
+    output = tmp_path / "out" / "portrait.png"
+
+    calls = {}
+
+    class FakeImage:
+        def generate(self, prompt, **kwargs):
+            calls["prompt"] = prompt
+            calls["kwargs"] = kwargs
+            return SimpleNamespace(
+                state="verified",
+                output_path=str(artifact),
+                reason=None,
+                attachment_receipts=(),
+            )
+
+    monkeypatch.setattr(provider, "_client", lambda: SimpleNamespace(image=FakeImage()))
+
+    path, protected, digest = await provider.generate_clean_portrait(
+        crop,
+        [{"x": 20, "y": 30, "w": 100, "h": 60}],
+        output,
+        panel_context="CHAR_1: Xin chào",
+    )
+
+    assert calls["kwargs"]["attachments"] == [crop]
+    assert "9:16" in calls["prompt"]
+    assert path == output
+    assert protected == {"x": 0, "y": 0, "w": 576, "h": 1024}
+    assert len(digest) == 64
