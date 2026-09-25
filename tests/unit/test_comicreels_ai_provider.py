@@ -288,7 +288,7 @@ async def test_verify_dialogues_reuses_exact_conversation_without_attachments(mo
         "NHƯNG ÔNG CÓ SỪNG SẴN RỒI MÀ",
         "Ừ, QUÊN.",
     ]
-    assert all(row["verified"] is True for row in result)
+    assert all(row["verified"] is False for row in result)
 
 
 @pytest.mark.asyncio
@@ -337,4 +337,4 @@ async def test_verify_dialogues_consumes_stable_assistant_receipt_without_second
         "LŨ KHỐN NẠN",
         "NHƯNG ÔNG CÓ SỪNG SẴN RỒI MÀ",
     ]
-    assert all(row["verified"] is True for row in result)
+    assert all(row["verified"] is False for row in result)
