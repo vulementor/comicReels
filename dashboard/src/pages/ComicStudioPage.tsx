@@ -221,7 +221,7 @@ function ShotView(props: {
 
   const queue = async () => {
     await run('Xếp một video', async () => {
-      await comic.queueOne(project.id, shot, 'comicreels:' + project.id + ':' + shot.id + ':' + shot.image_sha256)
+      await comic.queueOne(project.id, shot, 'comicreels:' + project.id + ':' + shot.id + ':' + shot.image_sha256 + ':' + (project.generations.filter(g => g.shot_id === shot.id).length + 1))
       await reload()
     })
   }
@@ -500,6 +500,8 @@ export default function ComicStudioPage() {
                   <div><h3 className="text-lg font-bold">Google Flow và thành phẩm</h3><p className="text-xs" style={{ color: 'var(--muted)' }}>Không gửi job nếu anh chưa xác nhận tín dụng.</p></div>
                   <label className="ml-auto flex items-center gap-2 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: confirmCost ? 'var(--green)' : 'var(--border)' }}><input type="checkbox" checked={confirmCost} onChange={e => setConfirmCost(e.target.checked)} />Xác nhận video có thể tốn tín dụng</label>
                   <button type="button" disabled={busy || !flowReady || !confirmCost || !shots.length} onClick={() => void queueAll()} className={btn(busy || !flowReady || !confirmCost || !shots.length)} style={{ background: 'var(--accent)', color: 'white' }}><Play size={14} />Xếp toàn bộ shot</button>
+                  <button type="button" disabled={busy} onClick={() => void run('Tạm dừng queue', () => comic.pauseQueue())} className={btn(busy) + ' border'} style={{ borderColor: 'var(--border)' }}>Tạm dừng queue</button>
+                  <button type="button" disabled={busy} onClick={() => void run('Tiếp tục queue', () => comic.resumeQueue())} className={btn(busy) + ' border'} style={{ borderColor: 'var(--border)' }}>Tiếp tục queue</button>
                   <button type="button" disabled={busy || !videosApproved} onClick={() => void concat()} className={btn(busy || !videosApproved) + ' border'} style={{ borderColor: videosApproved ? 'var(--green)' : 'var(--border)' }}><Film size={14} />Ghép Reel</button>
                 </div>
                 {project.generations.length > 0 && <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[650px] text-left text-xs"><thead style={{ color: 'var(--muted)' }}><tr><th className="py-2">Job</th><th>Shot</th><th>Model</th><th>Giây</th><th>Credits ước tính</th><th>Trạng thái</th></tr></thead><tbody>{project.generations.map(g => <tr key={g.id} className="border-t" style={{ borderColor: 'var(--border)' }}><td className="py-2 font-mono">{g.id.slice(0, 8)}</td><td className="font-mono">{g.shot_id.slice(0, 8)}</td><td>{g.model_family}</td><td>{g.duration_s}</td><td>{g.cost_estimate ?? 'xem Flow'}</td><td style={{ color: g.status === 'FAILED' ? 'var(--red)' : g.status === 'COMPLETED' ? 'var(--green)' : 'var(--text)' }}>{g.status}</td></tr>)}</tbody></table></div>}
