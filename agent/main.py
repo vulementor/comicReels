@@ -24,6 +24,9 @@ from agent.api.music import router as music_router
 from agent.api.models import router as models_router
 from agent.api.providers import router as providers_router
 from agent.api.active_project import router as active_project_router
+from agent.api.comicreels import router as comicreels_router
+from agent.comicreels.schema import init_comicreels_db
+from agent.comicreels.flow import get_comic_generation_worker
 from agent.worker.processor import get_worker_controller
 from agent.services.flow_client import get_flow_client
 from agent.services.event_bus import event_bus
@@ -72,6 +75,7 @@ async def run_ws_server():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await init_comicreels_db()
 
     # Load custom materials from DB into in-memory registry
     from agent.db.crud import list_materials as db_list_materials
@@ -90,6 +94,7 @@ async def lifespan(app: FastAPI):
     logger.info("Flow Kit starting on %s:%d", API_HOST, API_PORT)
 
     controller = get_worker_controller()
+    comic_controller = get_comic_generation_worker()
 
     # SIGTERM handler for graceful shutdown (Unix only)
     try:
@@ -101,14 +106,17 @@ async def lifespan(app: FastAPI):
     # Start background tasks
     ws_task = asyncio.create_task(run_ws_server())
     worker_task = asyncio.create_task(controller.start())
-    logger.info("WS server + worker started")
+    comic_worker_task = asyncio.create_task(comic_controller.start())
+    logger.info("WS server + workers started (FlowKit + ComicReels)")
 
     yield
 
     controller.request_shutdown()
+    comic_controller.request_shutdown()
     await controller.drain()
     ws_task.cancel()
     worker_task.cancel()
+    comic_worker_task.cancel()
     await close_db()
     logger.info("Flow Kit stopped")
 
@@ -160,6 +168,7 @@ app.include_router(music_router, prefix="/api")
 app.include_router(models_router)
 app.include_router(providers_router)
 app.include_router(active_project_router)
+app.include_router(comicreels_router, prefix="/api")
 
 
 import secrets as _secrets
