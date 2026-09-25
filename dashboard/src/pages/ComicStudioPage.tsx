@@ -146,6 +146,16 @@ function PanelEditor({
     })
   }, 'AI đã tạo ảnh sạch 9:16. Hãy xem kỹ trước khi OK.')
 
+  const regenerateAI = () => {
+    if (!window.confirm('Tạo lại ảnh AI sẽ dùng thêm một lượt Generate cho khung này. Tiếp tục?')) return
+    void run(async () => {
+      await apiJson(`/api/comicreels/panels/${panel.id}/ai-generate`, {
+        method: 'POST',
+        body: JSON.stringify({ confirm_paid: true, force: true }),
+      })
+    }, 'AI đã tạo lại ảnh 9:16 cho đúng khung này. Hãy review lại trước khi OK.')
+  }
+
   return (
     <article className="rounded-xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -244,15 +254,35 @@ function PanelEditor({
       </details>
 
       <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          disabled={working || !aiConfigured || panel.mask.length === 0 || hasAIPortrait}
-          onClick={generateAI}
-          className="rounded px-3 py-2 text-xs font-semibold disabled:opacity-40"
-          style={{ background: 'var(--accent)', color: 'white' }}
-        >
-          {working ? <Loader2 size={14} className="mr-1 inline animate-spin"/> : <Sparkles size={14} className="mr-1 inline"/>}
-          {hasAIPortrait ? 'Đã có ảnh AI 9:16' : 'AI Generate ảnh sạch 9:16'}
-        </button>
+        {!hasAIPortrait ? (
+          <button
+            disabled={working || !aiConfigured || panel.mask.length === 0}
+            onClick={generateAI}
+            className="rounded px-3 py-2 text-xs font-semibold disabled:opacity-40"
+            style={{ background: 'var(--accent)', color: 'white' }}
+          >
+            {working ? <Loader2 size={14} className="mr-1 inline animate-spin"/> : <Sparkles size={14} className="mr-1 inline"/>}
+            AI Generate ảnh sạch 9:16
+          </button>
+        ) : (
+          <>
+            <button
+              disabled
+              className="rounded px-3 py-2 text-xs font-semibold opacity-60"
+              style={{ background: 'var(--accent)', color: 'white' }}
+            >
+              <CheckCircle2 size={14} className="mr-1 inline"/>Đã có ảnh AI 9:16
+            </button>
+            <button
+              disabled={working || !aiConfigured}
+              onClick={regenerateAI}
+              className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-40"
+              style={{ borderColor: 'var(--border)' }}
+            >
+              <RefreshCcw size={14} className="mr-1 inline"/>Tạo lại ảnh AI
+            </button>
+          </>
+        )}
 
         <button disabled={working || !hasAIPortrait} onClick={() => run(async () => {
           await apiJson(`/api/comicreels/panels/${panel.id}/approve`, { method: 'POST' })
