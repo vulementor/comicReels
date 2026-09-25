@@ -264,6 +264,7 @@ async def _apply_analysis(project_id: str, panels: list[dict[str, Any]],
             clamp_box(region, box["w"], box["h"])
             for region in (panel.get("mask") or [])
         ]
+        box["visual_anchor"] = str(panel.get("visual_anchor") or "").strip()
         safe.append(box)
     if not safe or len(safe) > 32:
         raise HTTPException(400, "Số panel phải từ 1 đến 32.")
@@ -419,7 +420,7 @@ async def update_panel_box(panel_id: str, body: PanelUpdate):
     await store.update_panel(
         panel_id, **safe, display_order=body.display_order if body.display_order is not None else panel["display_order"],
         crop_path=str(out), clean_path=None, portrait_path=None, portrait_sha256=None,
-        approved_sha256=None, mask_json="[]", protected_json=None, status="EXTRACTED",
+        approved_sha256=None, mask_json="[]", visual_anchor=None, protected_json=None, status="EXTRACTED",
     )
     await store.clear_shots(panel["project_id"])
     await store.set_project_status(panel["project_id"], "EXTRACTED")
@@ -481,6 +482,13 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
     if not raw_panel:
         raise HTTPException(404, "Không tìm thấy panel.")
 
+    visual_anchor = str(raw_panel.get("visual_anchor") or "").strip()
+    if not visual_anchor:
+        raise HTTPException(
+            409,
+            "Panel chưa có visual anchor từ ảnh nguồn. Cần AI phân tích/backfill anchor trước khi Generate.",
+        )
+
     if (
         not body.force
         and raw_panel.get("status") in {"AI_IMAGE_READY", "AI_IMAGE_APPROVED"}
@@ -539,6 +547,7 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
             },
             source_width=int(project["source_width"]),
             source_height=int(project["source_height"]),
+            visual_anchor=visual_anchor,
         )
     except Exception as exc:
         raise HTTPException(502, f"AI Generate ảnh thất bại: {exc}") from exc
@@ -600,6 +609,11 @@ async def approve_panel(panel_id: str):
     panel = await store.panel(panel_id)
     if not panel or not panel.get("portrait_path"):
         raise HTTPException(409, "Cần tạo ảnh 9:16 trước khi duyệt.")
+    if not str(panel.get("visual_anchor") or "").strip():
+        raise HTTPException(
+            409,
+            "Ảnh này chưa khóa visual anchor của panel nguồn; không cho duyệt để tránh cross-panel contamination.",
+        )
     digest = sha256_file(_safe_file(panel["portrait_path"]))
     if digest != panel.get("portrait_sha256"):
         raise HTTPException(409, "Ảnh 9:16 đã thay đổi ngoài state; hãy tạo lại trước khi OK.")
@@ -615,6 +629,11 @@ async def storyboard(project_id: str, body: StoryboardBody):
     if not panels:
         raise HTTPException(409, "Dự án chưa có panel.")
     for panel in panels:
+        if not str(panel.get("visual_anchor") or "").strip():
+            raise HTTPException(
+                409,
+                f"Panel {panel['display_order'] + 1} chưa khóa visual anchor từ ảnh nguồn.",
+            )
         if panel.get("status") != "AI_IMAGE_APPROVED":
             raise HTTPException(409, f"Panel {panel['display_order'] + 1} chưa được duyệt từ ảnh AI Generate.")
         if not panel.get("portrait_sha256") or panel.get("approved_sha256") != panel.get("portrait_sha256"):

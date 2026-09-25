@@ -14,7 +14,7 @@ type Dialogue = {
 type Panel = {
   id: string; display_order: number; x: number; y: number; w: number; h: number
   crop_path: string | null; clean_path: string | null; portrait_path: string | null
-  portrait_sha256: string | null; approved_sha256: string | null
+  portrait_sha256: string | null; approved_sha256: string | null; visual_anchor: string | null
   status: string; updated_at?: string; mask: Array<{x:number;y:number;w:number;h:number}>; dialogues: Dialogue[]
 }
 type Shot = {
@@ -92,6 +92,7 @@ function PanelEditor({
   const base = `/api/comicreels/panels/${panel.id}/asset`
   const version = encodeURIComponent(panel.updated_at ?? panel.portrait_sha256 ?? panel.status)
   const hasAIPortrait = Boolean(panel.portrait_path && (panel.status === 'AI_IMAGE_READY' || panel.status === 'AI_IMAGE_APPROVED'))
+  const hasVisualAnchor = Boolean(panel.visual_anchor?.trim())
   const imageUrl = hasAIPortrait ? `${base}/portrait?v=${version}` : `${base}/crop?v=${version}`
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
@@ -179,6 +180,15 @@ function PanelEditor({
           <span className="text-xs font-semibold">AI nhận diện</span>
           <span className="text-[10px]" style={{ color: 'var(--muted)' }}>{panel.mask.length} vùng chữ / bong bóng</span>
         </div>
+        {hasVisualAnchor ? (
+          <div className="mt-2 rounded border px-3 py-2 text-[11px]" style={{borderColor:'var(--border)',color:'var(--muted)'}}>
+            <strong>Visual anchor:</strong> {panel.visual_anchor}
+          </div>
+        ) : (
+          <div className="mt-2 rounded border px-3 py-2 text-[11px] text-amber-400" style={{borderColor:'var(--border)'}}>
+            ⚠ Khung legacy chưa có visual anchor từ ảnh nguồn. Không được Generate/OK cho tới khi backfill anchor.
+          </div>
+        )}
         <div className="mt-2 space-y-2">
           {panel.dialogues.length === 0 ? (
             <div className="text-xs" style={{ color: 'var(--muted)' }}>Chưa có thoại AI nhận diện.</div>
@@ -256,7 +266,7 @@ function PanelEditor({
       <div className="mt-3 flex flex-wrap gap-2">
         {!hasAIPortrait ? (
           <button
-            disabled={working || !aiConfigured || panel.mask.length === 0}
+            disabled={working || !aiConfigured || panel.mask.length === 0 || !hasVisualAnchor}
             onClick={generateAI}
             className="rounded px-3 py-2 text-xs font-semibold disabled:opacity-40"
             style={{ background: 'var(--accent)', color: 'white' }}
@@ -274,7 +284,7 @@ function PanelEditor({
               <CheckCircle2 size={14} className="mr-1 inline"/>Đã có ảnh AI 9:16
             </button>
             <button
-              disabled={working || !aiConfigured}
+              disabled={working || !aiConfigured || !hasVisualAnchor}
               onClick={regenerateAI}
               className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-40"
               style={{ borderColor: 'var(--border)' }}
@@ -284,7 +294,7 @@ function PanelEditor({
           </>
         )}
 
-        <button disabled={working || !hasAIPortrait} onClick={() => run(async () => {
+        <button disabled={working || !hasAIPortrait || !hasVisualAnchor} onClick={() => run(async () => {
           await apiJson(`/api/comicreels/panels/${panel.id}/approve`, { method: 'POST' })
         }, 'Đã OK đúng hash ảnh AI hiện tại.')}
           className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-40"
@@ -429,6 +439,11 @@ export default function ComicStudioPage() {
 
   const generateAllImages = async () => {
     if (!details || !status?.ai.configured) return
+    const missingAnchors = details.panels.filter(panel => !panel.visual_anchor?.trim())
+    if (missingAnchors.length > 0) {
+      setNotice(`Có ${missingAnchors.length} khung chưa có visual anchor từ ảnh nguồn. Hãy backfill/re-analyze trước khi Generate.`)
+      return
+    }
     const pending = details.panels.filter(
       panel => !['AI_IMAGE_READY', 'AI_IMAGE_APPROVED'].includes(panel.status) || !panel.portrait_sha256
     )
@@ -494,7 +509,7 @@ export default function ComicStudioPage() {
 
   const allApproved = useMemo(() =>
     Boolean(details?.panels.length) && (details?.panels.every(
-      p => p.status === 'AI_IMAGE_APPROVED' && p.portrait_sha256 && p.approved_sha256 === p.portrait_sha256
+      p => Boolean(p.visual_anchor?.trim()) && p.status === 'AI_IMAGE_APPROVED' && p.portrait_sha256 && p.approved_sha256 === p.portrait_sha256
     ) ?? false),
     [details])
 

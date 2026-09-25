@@ -46,9 +46,9 @@ async def test_analyze_comic_uploads_source_once_and_returns_conversation(tmp_pa
         state="verified",
         text='''{
           "panels":[
-            {"x":10,"y":20,"w":100,"h":120,"order":0,"speech_regions":[
-              {"x":5,"y":6,"w":40,"h":30,"kind":"speech_bubble"}
-            ]}
+            {"x":10,"y":20,"w":100,"h":120,"order":0,
+             "visual_anchor":"CHAR_1 đứng bên trái, quay mặt sang phải, cận trung.",
+             "speech_regions":[{"x":5,"y":6,"w":40,"h":30,"kind":"speech_bubble"}]}
           ],
           "dialogues":[
             {"panel_index":0,"display_order":0,"speaker_id":"CHAR_1","text":"Xin chào","confidence":0.9}
@@ -75,6 +75,8 @@ async def test_analyze_comic_uploads_source_once_and_returns_conversation(tmp_pa
     assert len(calls) == 1
     assert calls[0][1]["attachments"] == [source]
     assert result["panels"][0]["mask"] == [{"x": 5, "y": 6, "w": 40, "h": 30}]
+    assert result["panels"][0]["visual_anchor"] == "CHAR_1 đứng bên trái, quay mặt sang phải, cận trung."
+    assert "visual_anchor" in calls[0][0]
     assert result["dialogues"][0]["text"] == "Xin chào"
     assert result["dialogues"][0]["verified"] is False
     assert result["provider_receipt"]["conversation_url"] == "https://chatgpt.com/c/test"
@@ -89,7 +91,9 @@ async def test_analyze_comic_preserves_exact_single_pass_transcript(tmp_path, mo
     first = SimpleNamespace(
         state="verified",
         text='''{
-          "panels":[{"x":0,"y":0,"w":300,"h":200,"order":0,"speech_regions":[{"x":10,"y":10,"w":180,"h":80}]}],
+          "panels":[{"x":0,"y":0,"w":300,"h":200,"order":0,
+                     "visual_anchor":"CHAR_1 chính diện, khung ngang.",
+                     "speech_regions":[{"x":10,"y":10,"w":180,"h":80}]}],
           "dialogues":[{"panel_index":0,"display_order":0,"speaker_id":"CHAR_1","text":"LŨ KHỐN NẠN","confidence":0.99}],
           "characters":[],"warnings":[]
         }''',
@@ -147,6 +151,7 @@ async def test_generate_clean_portrait_reuses_source_conversation_without_reuplo
         panel_box={"x": 10, "y": 20, "w": 800, "h": 500},
         source_width=1200,
         source_height=1600,
+        visual_anchor="CHAR_1 đứng trái, quay phải; nhân vật còn lại ở giường bên phải.",
     )
 
     assert calls["kwargs"]["conversation"] == conversation
@@ -157,6 +162,62 @@ async def test_generate_clean_portrait_reuses_source_conversation_without_reuplo
     assert path == output
     assert protected == {"x": 0, "y": 0, "w": 576, "h": 1024}
     assert len(digest) == 64
+
+
+@pytest.mark.asyncio
+async def test_ai_generate_blocks_missing_visual_anchor_before_provider(tmp_path, monkeypatch):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (100, 100), (255, 255, 255)).save(crop)
+
+    async def fake_panel(_panel_id):
+        return {
+            "id": "panel-legacy",
+            "project_id": "project-1",
+            "crop_path": str(crop),
+            "mask_json": '[{"x":1,"y":2,"w":20,"h":10}]',
+            "display_order": 0,
+            "visual_anchor": None,
+        }
+
+    monkeypatch.setattr(comic_api.store, "panel", fake_panel)
+    monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
+    monkeypatch.setattr(
+        comic_api,
+        "generate_clean_portrait",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("provider must not run")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await comic_api.ai_generate_panel(
+            "panel-legacy",
+            comic_api.AIImageBody(confirm_paid=True),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "visual anchor" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_approve_panel_blocks_legacy_portrait_without_visual_anchor(tmp_path, monkeypatch):
+    portrait = tmp_path / "portrait.png"
+    Image.new("RGB", (576, 1024), (1, 2, 3)).save(portrait)
+
+    async def fake_panel(_panel_id):
+        return {
+            "id": "panel-legacy",
+            "portrait_path": str(portrait),
+            "portrait_sha256": comic_api.sha256_file(portrait),
+            "visual_anchor": None,
+            "status": "AI_IMAGE_READY",
+        }
+
+    monkeypatch.setattr(comic_api.store, "panel", fake_panel)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await comic_api.approve_panel("panel-legacy")
+
+    assert exc_info.value.status_code == 409
+    assert "visual anchor" in str(exc_info.value.detail).lower()
 
 
 @pytest.mark.asyncio
@@ -171,6 +232,7 @@ async def test_ai_generate_requires_source_conversation(tmp_path, monkeypatch):
             "crop_path": str(crop),
             "mask_json": '[{"x":1,"y":2,"w":20,"h":10}]',
             "display_order": 0,
+            "visual_anchor": "CHAR_1 đứng bên trái.",
         }
 
     async def fake_details(_project_id):
@@ -228,12 +290,18 @@ async def test_three_panels_reuse_one_conversation_without_reupload(tmp_path, mo
             panel_box={"x": 10, "y": 20 + panel_index * 100, "w": 800, "h": 500},
             source_width=1200,
             source_height=1600,
+            visual_anchor=f"ANCHOR_PANEL_{panel_index + 1}",
         )
 
     assert len(calls) == 3
     assert all(call["conversation"] == conversation for call in calls)
     assert all(call["attachments"] == [] for call in calls)
     assert ["KHUNG 1" in calls[0]["prompt"], "KHUNG 2" in calls[1]["prompt"], "KHUNG 3" in calls[2]["prompt"]] == [True, True, True]
+    for index, call in enumerate(calls, start=1):
+        assert f"ANCHOR_PANEL_{index}" in call["prompt"]
+        for other in range(1, 4):
+            if other != index:
+                assert f"ANCHOR_PANEL_{other}" not in call["prompt"]
 
 
 @pytest.mark.asyncio
@@ -396,6 +464,7 @@ async def test_ai_generate_deduplicates_existing_ready_portrait(tmp_path, monkey
             "status": "AI_IMAGE_READY",
             "portrait_path": str(portrait),
             "portrait_sha256": digest,
+            "visual_anchor": "CHAR_1 đứng bên trái, quay sang phải.",
         }
 
     async def forbidden_generate(*_args, **_kwargs):
@@ -424,12 +493,15 @@ def test_image_prompt_locks_exact_source_panel_geometry():
         panel_box={"x": 205, "y": 741, "w": 1379, "h": 563},
         source_width=1780,
         source_height=2048,
+        visual_anchor="Thỏ ngồi thẳng ở giữa, quay sang trái nhìn bò; bò sữa nằm bên phải.",
     )
 
     assert "KHUNG 2" in prompt
     assert "x=205, y=741, w=1379, h=563" in prompt
     assert "1780x2048" in prompt
     assert "KHÔNG mượn pose/composition từ panel khác" in prompt
+    assert "Thỏ ngồi thẳng ở giữa, quay sang trái nhìn bò" in prompt
+    assert "MỌI ảnh AI đã generate ở các TURN SAU chỉ là OUTPUT CŨ" in prompt
 
 
 @pytest.mark.asyncio

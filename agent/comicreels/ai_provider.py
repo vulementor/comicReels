@@ -133,6 +133,10 @@ Yêu cầu bắt buộc:
 - Tự nhận mọi vùng speech bubble, caption, chữ và watermark cần xóa trong từng panel.
 - speech_regions là bbox TƯƠNG ĐỐI VỚI CROP PANEL.
 - bbox panel là tọa độ pixel trên toàn ảnh nguồn.
+- Với MỖI panel, visual_anchor phải mô tả CHỈ những gì nhìn thấy trong chính panel đó:
+  nhân vật nào xuất hiện, vị trí trái/phải/trước/sau, pose, hướng mặt/hướng nhìn,
+  biểu cảm, khoảng cách tương đối, đạo cụ và framing. Không suy diễn cốt truyện.
+- visual_anchor phải đủ cụ thể để phân biệt panel này với panel liền trước/liền sau.
 - Không dịch, không viết lại, không tự thêm lời.
 
 Schema:
@@ -141,6 +145,7 @@ Schema:
     {{
       "x": 0, "y": 0, "w": 100, "h": 100, "order": 0,
       "confidence": 0.99,
+      "visual_anchor": "mô tả hình học/pose/framing chỉ của panel này",
       "speech_regions": [
         {{"x": 10, "y": 10, "w": 50, "h": 30, "kind": "speech_bubble"}}
       ]
@@ -331,6 +336,7 @@ async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[
                 continue
         safe["mask"] = regions
         safe["confidence"] = panel.get("confidence")
+        safe["visual_anchor"] = str(panel.get("visual_anchor") or "").strip()
         normalized.append(safe)
 
     parsed["panels"] = normalized
@@ -380,6 +386,7 @@ def _image_prompt(
     panel_box: dict[str, int],
     source_width: int,
     source_height: int,
+    visual_anchor: str,
 ) -> str:
     region_text = ", ".join(
         f"(x={r['x']},y={r['y']},w={r['w']},h={r['h']})" for r in regions
@@ -387,12 +394,17 @@ def _image_prompt(
     return f"""
 Dùng CHÍNH ảnh nguồn đã được upload ở TURN ĐẦU của conversation này làm reference bắt buộc.
 Không yêu cầu upload lại ảnh và không dùng ảnh từ conversation khác.
+MỌI ảnh AI đã generate ở các TURN SAU chỉ là OUTPUT CŨ: tuyệt đối không dùng chúng làm
+reference hình học, pose, framing hoặc bố cục cho yêu cầu hiện tại.
 
 Chỉ xử lý KHUNG {panel_index + 1} của ảnh nguồn.
 Vùng panel mục tiêu trong ẢNH NGUỒN {source_width}x{source_height}px là:
 x={panel_box['x']}, y={panel_box['y']}, w={panel_box['w']}, h={panel_box['h']}.
 
 Trước khi tạo ảnh, hãy coi CHÍNH hình ảnh bên trong bbox này là reference hình học bắt buộc.
+VISUAL ANCHOR đã được đọc trực tiếp từ ảnh nguồn trong lần phân tích đầu tiên:
+{visual_anchor}
+Visual anchor này là ràng buộc của KHUNG {panel_index + 1}, không được thay bằng pose từ output cũ.
 Tạo lại riêng cảnh của khung đó thành ảnh dọc 9:16 hoàn chỉnh dùng cho video.
 
 BẮT BUỘC:
@@ -427,6 +439,7 @@ async def generate_clean_portrait(
     panel_box: dict[str, int] | None = None,
     source_width: int | None = None,
     source_height: int | None = None,
+    visual_anchor: str = "",
 ) -> tuple[Path, dict[str, int], str]:
     if not crop_path.is_file():
         raise RuntimeError("Không tìm thấy crop panel local để đối chiếu kết quả.")
@@ -436,6 +449,11 @@ async def generate_clean_portrait(
         raise RuntimeError(
             "AI chưa xác định vùng chữ/bong bóng cho panel này. "
             "Hãy chạy AI phân tích hoặc sửa nhận diện trước."
+        )
+    visual_anchor = str(visual_anchor or "").strip()
+    if not visual_anchor:
+        raise RuntimeError(
+            "Panel chưa có visual anchor từ ảnh nguồn; chặn Generate để tránh mượn pose từ ảnh AI cũ."
         )
 
     client = _client()
@@ -450,6 +468,7 @@ async def generate_clean_portrait(
         panel_box=panel_box,
         source_width=source_width,
         source_height=source_height,
+        visual_anchor=visual_anchor,
     )
 
     result = await asyncio.to_thread(

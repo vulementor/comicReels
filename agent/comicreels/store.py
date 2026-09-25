@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS comic_panel (
     portrait_sha256 TEXT,
     approved_sha256 TEXT,
     mask_json TEXT NOT NULL DEFAULT '[]',
+    visual_anchor TEXT,
     protected_json TEXT,
     status TEXT NOT NULL DEFAULT 'ANALYZED',
     created_at TEXT NOT NULL,
@@ -120,6 +121,12 @@ class ComicStore:
                     await db.execute("ALTER TABLE comic_project ADD COLUMN ai_conversation_url TEXT")
                 if "ai_analysis_message_id" not in columns:
                     await db.execute("ALTER TABLE comic_project ADD COLUMN ai_analysis_message_id TEXT")
+                panel_columns = {
+                    str(row[1])
+                    for row in await (await db.execute("PRAGMA table_info(comic_panel)")).fetchall()
+                }
+                if "visual_anchor" not in panel_columns:
+                    await db.execute("ALTER TABLE comic_panel ADD COLUMN visual_anchor TEXT")
                 await db.commit()
             self._ready = True
 
@@ -221,12 +228,13 @@ class ComicStore:
                 panel_ids.append(pid)
                 await db.execute(
                     """INSERT INTO comic_panel
-                    (id,project_id,display_order,x,y,w,h,mask_json,status,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,'ANALYZED',?,?)""",
+                    (id,project_id,display_order,x,y,w,h,mask_json,visual_anchor,status,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,'ANALYZED',?,?)""",
                     (
                         pid, project_id, idx,
                         int(panel["x"]), int(panel["y"]), int(panel["w"]), int(panel["h"]),
                         json.dumps(panel.get("mask") or []),
+                        str(panel.get("visual_anchor") or "").strip() or None,
                         ts, ts,
                     ),
                 )
@@ -254,7 +262,7 @@ class ComicStore:
     async def update_panel(self, panel_id: str, **fields: Any) -> None:
         allowed = {
             "display_order", "x", "y", "w", "h", "crop_path", "clean_path", "portrait_path",
-            "portrait_sha256", "approved_sha256", "mask_json", "protected_json", "status",
+            "portrait_sha256", "approved_sha256", "mask_json", "visual_anchor", "protected_json", "status",
         }
         values = {k: v for k, v in fields.items() if k in allowed}
         if not values:
