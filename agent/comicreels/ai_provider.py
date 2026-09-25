@@ -21,6 +21,7 @@ from agent.comicreels.images import clamp_box, sha256_file
 
 
 _PROVIDER = "gpt_fullproxy"
+_DIALOGUE_VERIFY_REVISION = "v2"
 _PROFILE_NAME = os.environ.get("COMICREELS_GPTFP_PROFILE", "zaloconnect-chatgpt")
 _VISIBLE = os.environ.get("COMICREELS_GPTFP_VISIBLE", "1").strip().lower() not in {
     "0", "false", "no", "off",
@@ -173,6 +174,7 @@ def _dialogue_verification_prompt(dialogues: list[dict[str, Any]]) -> str:
         for item in dialogues
     ]
     return f"""
+ComicReels dialogue verification revision: {_DIALOGUE_VERIFY_REVISION}
 Dựa CHỈ vào ảnh nguồn đã upload ở TURN ĐẦU của chính conversation này.
 KHÔNG yêu cầu upload lại ảnh, KHÔNG dùng ảnh từ chat khác.
 
@@ -225,7 +227,9 @@ async def verify_dialogues_in_conversation(
         ensure_ascii=False,
         sort_keys=True,
     )
-    digest = hashlib.sha256((conversation_url + "\n" + payload).encode("utf-8")).hexdigest()[:32]
+    digest = hashlib.sha256(
+        (conversation_url + "\n" + _DIALOGUE_VERIFY_REVISION + "\n" + payload).encode("utf-8")
+    ).hexdigest()[:32]
     idempotency_key = f"comicreels-dialogue-verify-v2:{digest}"
 
     def _run():
