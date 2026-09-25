@@ -251,7 +251,7 @@ function PanelEditor({
           style={{ background: 'var(--accent)', color: 'white' }}
         >
           {working ? <Loader2 size={14} className="mr-1 inline animate-spin"/> : <Sparkles size={14} className="mr-1 inline"/>}
-          {hasAIPortrait ? 'AI Generate lại ảnh 9:16' : 'AI Generate ảnh sạch 9:16'}
+          {hasAIPortrait ? 'Đã có ảnh AI 9:16' : 'AI Generate ảnh sạch 9:16'}
         </button>
 
         <button disabled={working || !hasAIPortrait} onClick={() => run(async () => {
