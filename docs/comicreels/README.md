@@ -10,6 +10,8 @@
 - [RISKS: rủi ro và các quyết định](RISKS.md)
 - [ROADMAP: 17 phân đoạn và nghiệm thu](ROADMAP.md)
 - [CHECKPOINTS: trạng thái thực, PR và kiểm thử còn thiếu](CHECKPOINTS.md)
+- [IMPLEMENTATION-03-16: ma trận code các đoạn 3–16](IMPLEMENTATION-03-16.md)
+- [LOCAL-TEST-PLAN: kịch bản test local đang chờ anh yêu cầu](LOCAL-TEST-PLAN.md)
 - [CHECKPOINT-TEMPLATE: mẫu báo cáo mỗi đoạn](CHECKPOINT-TEMPLATE.md)
 
 ## Checklist và rủi ro từng phân đoạn

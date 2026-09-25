@@ -609,6 +609,7 @@ async def review_shot(shot_id: str, body: ReviewBody):
     return await store.shot(shot_id)
 
 
+@router.get("/projects/{project_id}/assemble")
 @router.post("/projects/{project_id}/assemble")
 async def assemble(project_id: str):
     details = await _details(project_id)
