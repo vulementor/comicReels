@@ -3,7 +3,6 @@ import {
   CheckCircle2, CircleAlert, Download, FileImage, Film, ImagePlus, Loader2,
   Play, RefreshCcw, Save, Scissors, ShieldCheck, Sparkles, Trash2, UploadCloud,
 } from 'lucide-react'
-import { fetchAPI } from '../api/client'
 
 type FlowState = { extension_connected: boolean; project_id: string | null; ready: boolean }
 type ComicStatus = { status: string; flow: FlowState; local_test_state: string }
@@ -63,9 +62,9 @@ function parseMask(text: string) {
 }
 
 function PanelEditor({
-  panel, projectId, reload, setNotice,
+  panel, reload, setNotice,
 }: {
-  panel: Panel; projectId: string; reload: () => Promise<void>; setNotice: (x: string) => void
+  panel: Panel; reload: () => Promise<void>; setNotice: (x: string) => void
 }) {
   const [maskText, setMaskText] = useState(JSON.stringify(panel.mask ?? [], null, 2))
   const [speaker, setSpeaker] = useState(panel.dialogues[0]?.speaker_id ?? 'CHAR_1')
@@ -405,7 +404,7 @@ export default function ComicStudioPage() {
             <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>Kiểm tra lời thoại trước, khai báo mask vùng chữ, tạo 9:16 rồi OK từng ảnh. Ảnh sửa lại sẽ tự mất OK.</p>
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
-            {details.panels.map(p => <PanelEditor key={p.id} panel={p} projectId={details.project.id} reload={reload} setNotice={setNotice}/>)}
+            {details.panels.map(p => <PanelEditor key={p.id} panel={p} reload={reload} setNotice={setNotice}/>)}
           </div>
           <div className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
             <div className="flex flex-wrap items-center justify-between gap-3">
