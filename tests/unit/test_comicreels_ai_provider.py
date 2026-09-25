@@ -338,3 +338,36 @@ async def test_verify_dialogues_consumes_stable_assistant_receipt_without_second
         "NHƯNG ÔNG CÓ SỪNG SẴN RỒI MÀ",
     ]
     assert all(row["verified"] is False for row in result)
+
+
+@pytest.mark.asyncio
+async def test_ai_generate_deduplicates_existing_ready_portrait(tmp_path, monkeypatch):
+    portrait = tmp_path / "portrait.png"
+    Image.new("RGB", (576, 1024), (12, 34, 56)).save(portrait)
+    digest = comic_api.sha256_file(portrait)
+
+    async def fake_panel(_panel_id):
+        return {
+            "id": "panel-ready",
+            "project_id": "project-1",
+            "status": "AI_IMAGE_READY",
+            "portrait_path": str(portrait),
+            "portrait_sha256": digest,
+        }
+
+    async def forbidden_generate(*_args, **_kwargs):
+        raise AssertionError("provider must not run for an already generated panel")
+
+    monkeypatch.setattr(comic_api.store, "panel", fake_panel)
+    monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
+    monkeypatch.setattr(comic_api, "_safe_file", lambda value: portrait if value else portrait)
+    monkeypatch.setattr(comic_api, "generate_clean_portrait", forbidden_generate)
+
+    result = await comic_api.ai_generate_panel(
+        "panel-ready",
+        comic_api.AIImageBody(confirm_paid=True, force=False),
+    )
+
+    assert result["deduplicated"] is True
+    assert result["portrait_sha256"] == digest
+    assert result["status"] == "AI_IMAGE_READY"
