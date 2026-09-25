@@ -435,14 +435,14 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
         if lines:
             dialogue_context = "Detected dialogue context only; do NOT render it as text: " + " | ".join(lines)
     out = project_dir(raw_panel["project_id"]) / "panels" / panel_id / "portrait.png"
+    project = details["project"]
+    conversation_url = str(project.get("ai_conversation_url") or "").strip()
+    if not conversation_url:
+        raise HTTPException(
+            409,
+            "Project chưa có ChatGPT conversation nguồn. Hãy chạy AI phân tích ảnh nguồn trước.",
+        )
     try:
-        project = details["project"]
-        conversation_url = str(project.get("ai_conversation_url") or "").strip()
-        if not conversation_url:
-            raise HTTPException(
-                409,
-                "Project chưa có ChatGPT conversation nguồn. Hãy chạy AI phân tích ảnh nguồn trước.",
-            )
         _, protected, digest = await generate_clean_portrait(
             crop,
             regions,
