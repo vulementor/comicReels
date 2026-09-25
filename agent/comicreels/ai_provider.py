@@ -22,6 +22,7 @@ from agent.comicreels.images import clamp_box, sha256_file
 
 _PROVIDER = "gpt_fullproxy"
 _DIALOGUE_VERIFY_REVISION = "v3"
+_VISUAL_ANCHOR_REVISION = "v1"
 _PROFILE_NAME = os.environ.get("COMICREELS_GPTFP_PROFILE", "zaloconnect-chatgpt")
 _VISIBLE = os.environ.get("COMICREELS_GPTFP_VISIBLE", "1").strip().lower() not in {
     "0", "false", "no", "off",
@@ -302,6 +303,172 @@ async def verify_dialogues_in_conversation(
         verified,
         key=lambda item: (int(item.get("panel_index", 0)), int(item.get("display_order", 0))),
     )
+
+
+def _visual_anchor_prompt(
+    panels: list[dict[str, Any]],
+    *,
+    source_width: int,
+    source_height: int,
+) -> str:
+    rows = [
+        {
+            "panel_index": int(panel.get("panel_index", panel.get("display_order", 0))),
+            "x": int(panel["x"]),
+            "y": int(panel["y"]),
+            "w": int(panel["w"]),
+            "h": int(panel["h"]),
+            "dialogues": [
+                {
+                    "speaker_id": str(item.get("speaker_id") or "UNKNOWN"),
+                    "text": str(item.get("text") or ""),
+                }
+                for item in (panel.get("dialogues") or [])
+            ],
+        }
+        for panel in panels
+    ]
+    return f"""
+ComicReels visual-anchor backfill revision: {_VISUAL_ANCHOR_REVISION}
+Dựa CHỈ vào ẢNH NGUỒN đã upload ở TURN ĐẦU của chính conversation này.
+KHÔNG upload lại ảnh. KHÔNG dùng bất kỳ ảnh AI nào được generate ở các TURN SAU làm reference.
+
+Ảnh nguồn có kích thước {source_width}x{source_height}px.
+Với TỪNG panel ứng viên bên dưới, hãy nhìn đúng bbox của panel đó trong ảnh nguồn và mô tả
+visual_anchor đủ cụ thể để khóa pose/composition khi tạo ảnh 9:16 sau này.
+
+Visual anchor phải mô tả CHỈ những gì nhìn thấy:
+- nhân vật nào xuất hiện;
+- vị trí trái/phải/trước/sau;
+- đứng/ngồi/nằm/quay lưng, hướng mặt và hướng nhìn;
+- biểu cảm chính;
+- khoảng cách tương đối và framing;
+- đạo cụ/bối cảnh quan trọng nếu có.
+Không suy diễn cốt truyện. Không mượn pose từ panel khác. Không dùng output ảnh AI cũ.
+
+Panels:
+{json.dumps(rows, ensure_ascii=False)}
+
+Trả DUY NHẤT JSON:
+{{
+  "panels": [
+    {{"panel_index": 0, "visual_anchor": "mô tả cụ thể panel 1"}}
+  ]
+}}
+""".strip()
+
+
+async def backfill_visual_anchors_in_conversation(
+    conversation_url: str,
+    panels: list[dict[str, Any]],
+    *,
+    source_width: int,
+    source_height: int,
+    client=None,
+) -> dict[int, str]:
+    if not conversation_url:
+        raise RuntimeError("Thiếu ChatGPT conversation URL để backfill visual anchor.")
+    if not panels:
+        return {}
+
+    active_client = client or _client()
+    prompt = _visual_anchor_prompt(
+        panels,
+        source_width=source_width,
+        source_height=source_height,
+    )
+    payload = json.dumps(
+        [
+            {
+                "panel_index": int(panel.get("panel_index", panel.get("display_order", 0))),
+                "x": int(panel["x"]),
+                "y": int(panel["y"]),
+                "w": int(panel["w"]),
+                "h": int(panel["h"]),
+            }
+            for panel in panels
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    digest = hashlib.sha256(
+        (
+            conversation_url
+            + "\n"
+            + _VISUAL_ANCHOR_REVISION
+            + "\n"
+            + str(source_width)
+            + "x"
+            + str(source_height)
+            + "\n"
+            + payload
+        ).encode("utf-8")
+    ).hexdigest()[:32]
+    idempotency_key = f"comicreels-visual-anchor-v1:{digest}"
+
+    def _run():
+        handle = active_client.chat.open(conversation_url)
+        reply = handle.reply(
+            text=prompt,
+            idempotency_key=idempotency_key,
+            visible=_VISIBLE,
+        )
+        if reply.state != "completed":
+            raise RuntimeError(
+                f"GPT FullProxy visual-anchor backfill chưa hoàn tất: "
+                f"{reply.state}: {reply.reason or 'không có receipt'}"
+            )
+        if getattr(reply, "assistant_text", None):
+            return str(reply.assistant_text)
+        if reply.user_message is None:
+            raise RuntimeError(
+                "GPT FullProxy visual-anchor backfill thiếu cả assistant receipt và user receipt."
+            )
+        anchor = reply.user_message.provider_message_id
+        if not anchor:
+            raise RuntimeError("GPT FullProxy visual-anchor backfill thiếu provider user-message id.")
+        message = handle.wait_for_new_message(
+            after_message_id=anchor,
+            role="assistant",
+            timeout=180.0,
+            visible=_VISIBLE,
+        )
+        if message is None or not message.text:
+            raise RuntimeError("ChatGPT không trả visual-anchor backfill trong thời gian chờ.")
+        return message.text
+
+    assistant_text = await asyncio.to_thread(_run)
+    parsed = _extract_json(assistant_text)
+    raw = parsed.get("panels")
+    if not isinstance(raw, list):
+        raise RuntimeError("ChatGPT visual-anchor backfill thiếu mảng panels.")
+
+    expected = {
+        int(panel.get("panel_index", panel.get("display_order", 0)))
+        for panel in panels
+    }
+    anchors: dict[int, str] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        panel_index = int(item.get("panel_index", -1))
+        if panel_index not in expected:
+            raise RuntimeError("ChatGPT visual-anchor backfill đổi panel_index ngoài contract.")
+        if panel_index in anchors:
+            raise RuntimeError("ChatGPT visual-anchor backfill trả panel_index trùng lặp.")
+        visual_anchor = str(item.get("visual_anchor") or "").strip()
+        if len(visual_anchor) < 20:
+            raise RuntimeError("ChatGPT visual-anchor backfill trả anchor quá ngắn hoặc rỗng.")
+        if len(visual_anchor) > 1200:
+            raise RuntimeError("ChatGPT visual-anchor backfill trả anchor quá dài.")
+        anchors[panel_index] = visual_anchor
+
+    if set(anchors) != expected:
+        raise RuntimeError(
+            f"ChatGPT visual-anchor backfill trả {len(anchors)}/{len(expected)} panel; "
+            "không áp dụng một phần."
+        )
+    return anchors
 
 
 async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[str, Any]:

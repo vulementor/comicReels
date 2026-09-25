@@ -298,6 +298,48 @@ class ComicStore:
     async def clear_shots(self, project_id: str) -> None:
         await self.execute("DELETE FROM comic_shot WHERE project_id=?", (project_id,))
 
+    async def apply_visual_anchors_and_invalidate_portraits(
+        self,
+        project_id: str,
+        anchors: dict[int, str],
+    ) -> None:
+        ts = now()
+        db = await self._connect()
+        try:
+            rows = await (
+                await db.execute(
+                    "SELECT id,display_order FROM comic_panel WHERE project_id=? ORDER BY display_order",
+                    (project_id,),
+                )
+            ).fetchall()
+            expected = {int(row[1]) for row in rows}
+            if set(anchors) != expected:
+                raise ValueError("visual-anchor set does not match project panels")
+            for row in rows:
+                panel_id = str(row[0])
+                display_order = int(row[1])
+                visual_anchor = str(anchors[display_order]).strip()
+                if not visual_anchor:
+                    raise ValueError("visual anchor must not be empty")
+                await db.execute(
+                    """UPDATE comic_panel
+                    SET visual_anchor=?,portrait_path=NULL,portrait_sha256=NULL,approved_sha256=NULL,
+                        protected_json=NULL,status='EXTRACTED',updated_at=?
+                    WHERE id=?""",
+                    (visual_anchor, ts, panel_id),
+                )
+            await db.execute("DELETE FROM comic_shot WHERE project_id=?", (project_id,))
+            await db.execute(
+                "UPDATE comic_project SET status='EXTRACTED',updated_at=? WHERE id=?",
+                (ts, project_id),
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+        finally:
+            await db.close()
+
     async def insert_shot(self, data: dict[str, Any]) -> None:
         ts = now()
         await self.execute(

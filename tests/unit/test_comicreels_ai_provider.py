@@ -305,6 +305,93 @@ async def test_three_panels_reuse_one_conversation_without_reupload(tmp_path, mo
 
 
 @pytest.mark.asyncio
+async def test_backfill_visual_anchors_uses_one_text_reply_in_same_conversation(monkeypatch):
+    calls = {"open": [], "reply": 0, "wait": 0}
+
+    class FakeHandle:
+        def reply(self, *, text, idempotency_key, visible):
+            calls["reply"] += 1
+            assert "TURN ĐẦU" in text
+            assert "output ảnh AI cũ" in text
+            assert idempotency_key.startswith("comicreels-visual-anchor-v1:")
+            return SimpleNamespace(
+                state="completed",
+                reason=None,
+                assistant_text='''{
+                  "panels":[
+                    {"panel_index":0,"visual_anchor":"Bò đứng bên trái quay sang phải; thỏ và bò sữa nằm trên giường bên phải."},
+                    {"panel_index":1,"visual_anchor":"Thỏ ngồi thẳng ở giữa giường quay sang trái nhìn bò; bò sữa nằm bên phải."},
+                    {"panel_index":2,"visual_anchor":"Bò ở bên trái quay lưng bước sang trái; thỏ ngồi trên giường ở giữa và bò sữa nằm bên phải."}
+                  ]
+                }''',
+                user_message=None,
+            )
+
+        def wait_for_new_message(self, **_kwargs):
+            calls["wait"] += 1
+            raise AssertionError("stable assistant receipt must avoid second wait")
+
+    class FakeChat:
+        def open(self, conversation):
+            calls["open"].append(conversation)
+            return FakeHandle()
+
+    panels = [
+        {"panel_index": i, "x": 0, "y": i * 100, "w": 800, "h": 500, "dialogues": []}
+        for i in range(3)
+    ]
+    conversation = "https://chatgpt.com/c/existing-comic"
+
+    anchors = await provider.backfill_visual_anchors_in_conversation(
+        conversation,
+        panels,
+        source_width=1200,
+        source_height=1600,
+        client=SimpleNamespace(chat=FakeChat()),
+    )
+
+    assert calls == {"open": [conversation], "reply": 1, "wait": 0}
+    assert set(anchors) == {0, 1, 2}
+    assert "Thỏ ngồi thẳng" in anchors[1]
+    assert "quay lưng" in anchors[2]
+
+
+@pytest.mark.asyncio
+async def test_backfill_visual_anchors_rejects_partial_receipt(monkeypatch):
+    class FakeHandle:
+        def reply(self, **_kwargs):
+            return SimpleNamespace(
+                state="completed",
+                reason=None,
+                assistant_text='''{
+                  "panels":[
+                    {"panel_index":0,"visual_anchor":"Panel zero has a sufficiently detailed source visual anchor."},
+                    {"panel_index":1,"visual_anchor":"Panel one has a sufficiently detailed source visual anchor."}
+                  ]
+                }''',
+                user_message=None,
+            )
+
+    class FakeChat:
+        def open(self, _conversation):
+            return FakeHandle()
+
+    panels = [
+        {"panel_index": i, "x": 0, "y": i * 100, "w": 800, "h": 500, "dialogues": []}
+        for i in range(3)
+    ]
+
+    with pytest.raises(RuntimeError, match="2/3"):
+        await provider.backfill_visual_anchors_in_conversation(
+            "https://chatgpt.com/c/existing-comic",
+            panels,
+            source_width=1200,
+            source_height=1600,
+            client=SimpleNamespace(chat=FakeChat()),
+        )
+
+
+@pytest.mark.asyncio
 async def test_verify_dialogues_reuses_exact_conversation_without_attachments(monkeypatch):
     calls = {"open": [], "reply": [], "wait": []}
 
@@ -502,6 +589,78 @@ def test_image_prompt_locks_exact_source_panel_geometry():
     assert "KHÔNG mượn pose/composition từ panel khác" in prompt
     assert "Thỏ ngồi thẳng ở giữa, quay sang trái nhìn bò" in prompt
     assert "MỌI ảnh AI đã generate ở các TURN SAU chỉ là OUTPUT CŨ" in prompt
+
+
+@pytest.mark.asyncio
+async def test_backfill_route_applies_all_anchors_atomically(monkeypatch):
+    details = {
+        "project": {
+            "id": "project-anchor",
+            "ai_conversation_url": "https://chatgpt.com/c/existing",
+            "source_width": 1200,
+            "source_height": 1600,
+        },
+        "panels": [
+            {
+                "id": f"panel-{index}",
+                "display_order": index,
+                "x": 0,
+                "y": index * 500,
+                "w": 1200,
+                "h": 500,
+                "dialogues": [
+                    {"speaker_id": f"CHAR_{index + 1}", "text": f"line-{index}"}
+                ],
+            }
+            for index in range(3)
+        ],
+        "shots": [],
+    }
+    calls = {"provider": [], "apply": []}
+
+    async def fake_details(_project_id):
+        return details
+
+    async def fake_backfill(conversation_url, panels, *, source_width, source_height):
+        calls["provider"].append(
+            (conversation_url, panels, source_width, source_height)
+        )
+        return {
+            0: "Anchor zero with enough panel-specific geometry for generation.",
+            1: "Anchor one with enough panel-specific geometry for generation.",
+            2: "Anchor two with enough panel-specific geometry for generation.",
+        }
+
+    async def fake_apply(project_id, anchors):
+        calls["apply"].append((project_id, anchors))
+
+    monkeypatch.setattr(comic_api, "_details", fake_details)
+    monkeypatch.setattr(
+        comic_api,
+        "backfill_visual_anchors_in_conversation",
+        fake_backfill,
+    )
+    monkeypatch.setattr(
+        comic_api.store,
+        "apply_visual_anchors_and_invalidate_portraits",
+        fake_apply,
+    )
+
+    result = await comic_api.backfill_project_visual_anchors("project-anchor")
+
+    assert result is details
+    assert len(calls["provider"]) == 1
+    assert calls["provider"][0][0] == "https://chatgpt.com/c/existing"
+    assert calls["provider"][0][2:] == (1200, 1600)
+    assert len(calls["provider"][0][1]) == 3
+    assert calls["apply"] == [(
+        "project-anchor",
+        {
+            0: "Anchor zero with enough panel-specific geometry for generation.",
+            1: "Anchor one with enough panel-specific geometry for generation.",
+            2: "Anchor two with enough panel-specific geometry for generation.",
+        },
+    )]
 
 
 @pytest.mark.asyncio

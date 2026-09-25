@@ -37,6 +37,7 @@ from agent.comicreels.prompts import SUPPORTED_DURATIONS, build_shots
 from agent.comicreels.store import ROOT, store
 from agent.comicreels.ai_provider import (
     analyze_comic,
+    backfill_visual_anchors_in_conversation,
     generate_clean_portrait,
     provider_status,
     verify_dialogues_in_conversation,
@@ -394,6 +395,58 @@ async def verify_project_dialogues(project_id: str):
             confidence=current.get("confidence"),
         )
     await store.clear_shots(project_id)
+    return await _details(project_id)
+
+
+@router.post("/projects/{project_id}/backfill-visual-anchors")
+async def backfill_project_visual_anchors(project_id: str):
+    details = await _details(project_id)
+    project = details["project"]
+    conversation_url = str(project.get("ai_conversation_url") or "").strip()
+    if not conversation_url:
+        raise HTTPException(409, "Project chưa có ChatGPT conversation nguồn.")
+
+    panels = [
+        {
+            "panel_index": int(panel["display_order"]),
+            "display_order": int(panel["display_order"]),
+            "x": int(panel["x"]),
+            "y": int(panel["y"]),
+            "w": int(panel["w"]),
+            "h": int(panel["h"]),
+            "dialogues": [
+                {
+                    "speaker_id": str(dialogue.get("speaker_id") or "UNKNOWN"),
+                    "text": str(dialogue.get("text") or ""),
+                }
+                for dialogue in panel.get("dialogues", [])
+            ],
+        }
+        for panel in details["panels"]
+    ]
+    if not panels:
+        raise HTTPException(409, "Project chưa có panel để backfill visual anchor.")
+
+    try:
+        anchors = await backfill_visual_anchors_in_conversation(
+            conversation_url,
+            panels,
+            source_width=int(project["source_width"]),
+            source_height=int(project["source_height"]),
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"AI backfill visual anchor thất bại: {exc}") from exc
+
+    if len(anchors) != len(panels):
+        raise HTTPException(
+            422,
+            "AI chưa trả đủ visual anchor cho toàn bộ panel; không cập nhật một phần.",
+        )
+
+    try:
+        await store.apply_visual_anchors_and_invalidate_portraits(project_id, anchors)
+    except Exception as exc:
+        raise HTTPException(500, f"Không thể lưu visual anchor atomic: {type(exc).__name__}") from exc
     return await _details(project_id)
 
 

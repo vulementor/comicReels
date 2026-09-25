@@ -78,3 +78,103 @@ async def test_store_migrates_legacy_panel_table_with_visual_anchor(tmp_path, mo
         }
 
     assert "visual_anchor" in columns
+
+
+@pytest.mark.asyncio
+async def test_apply_visual_anchors_invalidates_all_portraits_atomically(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_module, "ROOT", tmp_path / "comicreels")
+    monkeypatch.setattr(store_module, "DB_PATH", tmp_path / "comicreels" / "comicreels.db")
+    s = ComicStore()
+    await s.create_project(
+        project_id="p-backfill",
+        name="Backfill",
+        source_path=str(tmp_path / "source.png"),
+        sha256="b" * 64,
+        mime="image/png",
+        width=1200,
+        height=1600,
+    )
+    await s.replace_analysis(
+        "p-backfill",
+        panels=[
+            {"x": 0, "y": 0, "w": 1200, "h": 500, "mask": []},
+            {"x": 0, "y": 500, "w": 1200, "h": 500, "mask": []},
+            {"x": 0, "y": 1000, "w": 1200, "h": 600, "mask": []},
+        ],
+        dialogues=[],
+    )
+    seeded = await s.get_project("p-backfill")
+    for index, panel in enumerate(seeded["panels"]):
+        await s.update_panel(
+            panel["id"],
+            portrait_path=f"/tmp/legacy-{index}.png",
+            portrait_sha256=str(index + 1) * 64,
+            approved_sha256=None,
+            protected_json='{"x":0,"y":0,"w":576,"h":1024}',
+            status="AI_IMAGE_READY",
+        )
+
+    await s.apply_visual_anchors_and_invalidate_portraits(
+        "p-backfill",
+        {
+            0: "Anchor panel zero with enough geometry to distinguish the source panel.",
+            1: "Anchor panel one with enough geometry to distinguish the source panel.",
+            2: "Anchor panel two with enough geometry to distinguish the source panel.",
+        },
+    )
+
+    loaded = await s.get_project("p-backfill")
+    assert loaded["project"]["status"] == "EXTRACTED"
+    assert [panel["status"] for panel in loaded["panels"]] == ["EXTRACTED"] * 3
+    assert all(panel["portrait_path"] is None for panel in loaded["panels"])
+    assert all(panel["portrait_sha256"] is None for panel in loaded["panels"])
+    assert all(panel["approved_sha256"] is None for panel in loaded["panels"])
+    assert all(panel["protected"] is None for panel in loaded["panels"])
+    assert [panel["visual_anchor"] for panel in loaded["panels"]] == [
+        "Anchor panel zero with enough geometry to distinguish the source panel.",
+        "Anchor panel one with enough geometry to distinguish the source panel.",
+        "Anchor panel two with enough geometry to distinguish the source panel.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_apply_visual_anchors_rejects_partial_set_without_mutation(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_module, "ROOT", tmp_path / "comicreels")
+    monkeypatch.setattr(store_module, "DB_PATH", tmp_path / "comicreels" / "comicreels.db")
+    s = ComicStore()
+    await s.create_project(
+        project_id="p-partial",
+        name="Partial",
+        source_path=str(tmp_path / "source.png"),
+        sha256="c" * 64,
+        mime="image/png",
+        width=100,
+        height=200,
+    )
+    await s.replace_analysis(
+        "p-partial",
+        panels=[
+            {"x": 0, "y": 0, "w": 100, "h": 100, "mask": []},
+            {"x": 0, "y": 100, "w": 100, "h": 100, "mask": []},
+        ],
+        dialogues=[],
+    )
+    seeded = await s.get_project("p-partial")
+    for panel in seeded["panels"]:
+        await s.update_panel(
+            panel["id"],
+            portrait_path="/tmp/legacy.png",
+            portrait_sha256="d" * 64,
+            status="AI_IMAGE_READY",
+        )
+
+    with pytest.raises(ValueError, match="does not match"):
+        await s.apply_visual_anchors_and_invalidate_portraits(
+            "p-partial",
+            {0: "Only one anchor should not be accepted for a two-panel project."},
+        )
+
+    loaded = await s.get_project("p-partial")
+    assert [panel["status"] for panel in loaded["panels"]] == ["AI_IMAGE_READY", "AI_IMAGE_READY"]
+    assert all(panel["visual_anchor"] is None for panel in loaded["panels"])
+    assert all(panel["portrait_path"] == "/tmp/legacy.png" for panel in loaded["panels"])
