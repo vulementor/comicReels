@@ -24,7 +24,7 @@ def test_portrait_preserves_source_pixels(tmp_path):
             protected["x"], protected["y"],
             protected["x"] + protected["w"], protected["y"] + protected["h"],
         ))
-        assert list(crop.getdata()) == list(original.convert("RGB").getdata())
+        assert list(crop.get_flattened_data()) == list(original.convert("RGB").get_flattened_data())
         assert portrait.width * 16 == portrait.height * 9
 
 

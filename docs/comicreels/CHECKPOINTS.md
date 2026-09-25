@@ -1,35 +1,43 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
-**Cập nhật 25/09/2026 theo chỉ đạo mới của anh:** không dừng chờ OK từng đoạn nữa. Em được phép triển khai liên tục Đoạn 3–16, nhưng anh yêu cầu chưa test trên máy local cho tới khi toàn bộ code hoàn tất và anh ra yêu cầu test cụ thể.
+**Cập nhật 25/09/2026 sau vòng test local trên máy Mac của anh.** Anh đã cho phép triển khai liên tục và test local, nhưng yêu cầu báo trước khi cần tài khoản Google Flow hoặc ChatGPT/vision AI.
 
-Vì vậy có 4 trạng thái: ACCEPTED_WITH_GAPS, CODE_COMPLETE_LOCAL_TEST_PENDING, IN_PROGRESS, PLANNED. **CODE_COMPLETE không có nghĩa runtime pass.**
+Trạng thái mới: OFFLINE_LOCAL_TEST_PASS = code và workflow local đã chạy thực tế; EXTERNAL_TEST_PENDING = cần dịch vụ/tài khoản ngoài; ACCEPTED_WITH_GAPS = đã được anh cho chuyển bước dù còn khoảng trống.
 
-| Đoạn | Trạng thái | Code / hiện vật | Local test |
-|---|---|---|---|
-| 0 | ACCEPTED_WITH_GAPS | VISION, PRD, kiến trúc, roadmap | Không áp dụng runtime |
-| 1 | ACCEPTED_WITH_GAPS | Public fork + PR #1 + docs | Backend/dashboard smoke còn thiếu |
-| 2 | CODE_COMPLETE_LOCAL_TEST_PENDING | PR #2 + Studio tiếng Việt; Flow status cũ được thay bằng API ComicReels status ở nhánh tổng | CHƯA CHẠY |
-| 3 | CODE_COMPLETE_LOCAL_TEST_PENDING | Import multipart, validate MIME/size, source SHA-256, SQLite project storage | CHƯA CHẠY |
-| 4 | CODE_COMPLETE_LOCAL_TEST_PENDING | Heuristic gutter detector, manual/vision analysis, bbox PATCH + UI chỉnh x/y/w/h | CHƯA CHẠY |
-| 5 | CODE_COMPLETE_LOCAL_TEST_PENDING | Vision transcript optional, multi-dialogue CRUD, stable speaker ID + UI kiểm tra nguyên văn | CHƯA CHẠY |
-| 6 | CODE_COMPLETE_LOCAL_TEST_PENDING | Crop PNG, mask rectangles, protected source contract, pixel-preservation tests đã viết | CHƯA CHẠY |
-| 7 | CODE_COMPLETE_LOCAL_TEST_PENDING | Local mask compositor chỉ đổi pixel trong mask; không dùng unsafe whole-image edit | CHƯA CHẠY chất lượng xóa chữ |
-| 8 | CODE_COMPLETE_LOCAL_TEST_PENDING | Canvas 9:16 giữ source pixels, protected-region manifest/hash | CHƯA CHẠY |
-| 9 | CODE_COMPLETE_LOCAL_TEST_PENDING | Approval theo SHA-256, sửa ảnh/bbox hủy approval và storyboard phụ thuộc | CHƯA CHẠY bypass/race |
-| 10 | CODE_COMPLETE_LOCAL_TEST_PENDING | Split exact substring, 4/6/8/10s Omni hoặc 8s Veo, speaker/lip-sync lock | CHƯA CHẠY |
-| 11 | CODE_COMPLETE_LOCAL_TEST_PENDING | Prompt có source/dialogue/lip-sync locks, copy prompt + backup ZIP | CHƯA CHẠY |
-| 12 | CODE_COMPLETE_LOCAL_TEST_PENDING | Flow preflight dùng đúng extension + project, manual fallback giữ được | CHƯA CHẠY với Flow thật |
-| 13 | CODE_COMPLETE_LOCAL_TEST_PENDING | Single-shot upload/generate/poll, confirm_paid, idempotency, lưu MP4 từ signed URL | CHƯA CHẠY, KHÔNG phát sinh phí |
-| 14 | CODE_COMPLETE_LOCAL_TEST_PENDING | Batch endpoint có batch key/idempotency, per-shot error/result; UI cố ý chưa bật batch one-click | CHƯA CHẠY, KHÔNG phát sinh phí |
-| 15 | CODE_COMPLETE_LOCAL_TEST_PENDING | Video register/poll, APPROVED/REJECTED, UI review, ffmpeg assemble chỉ khi mọi shot APPROVED | CHƯA CHẠY |
-| 16 | CODE_COMPLETE_LOCAL_TEST_PENDING | Windows/WSL launchers, backup/restore manifest/source+analysis, deferred local test plan | CHƯA CHẠY fresh install/restore |
+| Đoạn | Trạng thái | Bằng chứng / khoảng trống |
+|---|---|---|
+| 0 | ACCEPTED_WITH_GAPS | VISION, PRD, kiến trúc, roadmap đã được anh duyệt định hướng. |
+| 1 | ACCEPTED_WITH_GAPS | Public fork và docs có trên GitHub; lịch sử/parent đã xác minh. |
+| 2 | OFFLINE_LOCAL_TEST_PASS | Studio tiếng Việt, route root và /flowkit, upload UI, build/lint/browser smoke đều PASS. |
+| 3 | OFFLINE_LOCAL_TEST_PASS | Import, MIME/size validation, SHA-256, SQLite persistence và restart PASS. |
+| 4 | OFFLINE_LOCAL_TEST_PASS | Heuristic nhận đúng synthetic 2-panel, bbox/manual flow chạy; irregular real comic cần AI/manual test. |
+| 5 | OFFLINE_LOCAL_TEST_PASS | Multi-dialogue/speaker CRUD và exact Vietnamese text PASS; Vision recognition thật còn pending. |
+| 6 | OFFLINE_LOCAL_TEST_PASS | Crop/mask và pixel-preservation tests PASS. |
+| 7 | OFFLINE_LOCAL_TEST_PASS | Local mask compositor chạy và bảo toàn ngoài mask; AI inpaint chất lượng thật còn pending. |
+| 8 | OFFLINE_LOCAL_TEST_PASS | 9:16 canvas và protected source pixels PASS. |
+| 9 | OFFLINE_LOCAL_TEST_PASS | SHA approval gate và dependency invalidation PASS. |
+| 10 | OFFLINE_LOCAL_TEST_PASS | Shot split/duration/speaker lock, exact dialogue PASS. |
+| 11 | OFFLINE_LOCAL_TEST_PASS | Prompt locks, backup/restore và UI storyboard PASS. |
+| 12 | EXTERNAL_TEST_PENDING | Offline preflight đúng ready=false; cần Flow Extension/project thật để test tiếp. |
+| 13 | EXTERNAL_TEST_PENDING | Paid guard 409 PASS; chưa gửi video thật, chưa phát sinh phí. |
+| 14 | EXTERNAL_TEST_PENDING | Batch code có guard/idempotency; chưa chạy batch thật trước single-shot Flow pass. |
+| 15 | OFFLINE_LOCAL_TEST_PASS + EXTERNAL QA PENDING | Register/review/ffmpeg assemble PASS với video synthetic; video AI thật chưa kiểm tra lip-sync/voice. |
+| 16 | OFFLINE_LOCAL_TEST_PASS_WITH_GAPS | Backup/restore, macOS shell launcher logic và runtime-cache design được test; PowerShell/Windows chưa test. |
 
-## Nhánh triển khai tổng
-- Branch: feature/comicreels-segments-03-16.
-- Base: nhánh Đoạn 2, vì PR #1/#2 vẫn Draft và chưa merge vào main.
-- Không thay đổi main, không gọi Google Flow có phí, không test local trong giai đoạn code theo chỉ đạo của anh.
-- Test files đã viết nhưng chưa thực thi: tests/unit/test_comicreels_images.py, test_comicreels_prompts.py, test_comicreels_store.py.
-- Kịch bản test sau cùng: LOCAL-TEST-PLAN.md.
+## Regression evidence
+- Python unit tests: 378/378 PASS.
+- npm ci: PASS.
+- Vite production build: PASS.
+- ESLint: PASS.
+- npm audit: 0 vulnerabilities after lockfile refresh.
+- Offline API E2E and browser/CDP E2E: PASS.
+- Backend restart persistence: PASS.
+- Bash launcher syntax: PASS; PowerShell execution is pending because pwsh is unavailable on this Mac.
+- Full detail: [LOCAL-TEST-RESULTS-2026-09-25.md](LOCAL-TEST-RESULTS-2026-09-25.md).
 
-## Điều kiện để đổi sang ACCEPTED
-Sau khi anh yêu cầu test local: dependency install + Python tests + TypeScript build/lint + browser workflow + dữ liệu thật + Flow preflight; sau đó chỉ khi anh cho phép mới test một shot có phí. Bug tìm thấy phải sửa trên nhánh tổng rồi chạy regression. Không đổi trạng thái sang ACCEPTED chỉ dựa vào code review.
+## Current hard stop
+The next meaningful quality gates require either:
+- a real comic plus ChatGPT/vision/inpaint capability for AI-assisted panel/dialogue/image reconstruction testing; or
+- the user's Google Flow account/Extension/project for a real video generation test.
+
+Do not cross either gate without notifying anh first. No paid Google Flow request has been made in this local-test cycle.

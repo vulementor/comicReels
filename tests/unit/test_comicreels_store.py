@@ -7,7 +7,8 @@ from agent.comicreels.store import ComicStore
 async def test_store_project_roundtrip(tmp_path, monkeypatch):
     # This test documents the storage contract. Local test setup can monkeypatch
     # module DB_PATH/ROOT to tmp_path before constructing the store.
-    import agent.comicreels.store as module
+    import importlib
+    module = importlib.import_module("agent.comicreels.store")
     monkeypatch.setattr(module, "ROOT", tmp_path)
     monkeypatch.setattr(module, "DB_PATH", tmp_path / "comicreels.db")
     s = ComicStore()
