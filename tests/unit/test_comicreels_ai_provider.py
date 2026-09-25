@@ -1,3 +1,4 @@
+import importlib
 from types import SimpleNamespace
 
 import pytest
@@ -5,7 +6,10 @@ from PIL import Image
 
 import agent.comicreels.ai_provider as provider
 import agent.api.comicreels as comic_api
+from agent.comicreels.store import ComicStore
 from fastapi import HTTPException
+
+store_module = importlib.import_module("agent.comicreels.store")
 
 
 def test_provider_status_uses_explicit_profile_without_session_secrets(tmp_path, monkeypatch):
@@ -555,3 +559,157 @@ async def test_verify_endpoint_rejects_unverified_result_without_partial_commit(
     assert "không cập nhật" in str(exc_info.value.detail)
     assert writes == []
     assert clears == []
+
+
+async def _seed_three_dialogue_verify_project(tmp_path, monkeypatch, project_id: str):
+    monkeypatch.setattr(store_module, "ROOT", tmp_path / "comicreels")
+    monkeypatch.setattr(store_module, "DB_PATH", tmp_path / "comicreels" / "comicreels.db")
+    test_store = ComicStore()
+    monkeypatch.setattr(comic_api, "store", test_store)
+
+    await test_store.create_project(
+        project_id=project_id,
+        name="verify-regression",
+        source_path=str(tmp_path / "source.png"),
+        sha256="a" * 64,
+        mime="image/png",
+        width=1200,
+        height=1800,
+    )
+    conversation_url = "https://chatgpt.com/c/6ab651a6-9940-83ec-87d9-854057fa2af0"
+    await test_store.set_project_ai_session(
+        project_id,
+        conversation_url=conversation_url,
+        assistant_message_id="analysis-message",
+    )
+    texts = [
+        "LŨ KHỐN NẠN, SAO TỤI MÀY DÁM CẮM SỪNG TAO!!",
+        "NHƯNG ỔNG CÓ SỪNG SẴN RỒI MÀ",
+        "Ừ, QUÊN.",
+    ]
+    speakers = ["CHAR_1", "CHAR_2", "CHAR_1"]
+    await test_store.replace_analysis(
+        project_id,
+        panels=[
+            {"x": 0, "y": 0, "w": 1200, "h": 600},
+            {"x": 0, "y": 600, "w": 1200, "h": 600},
+            {"x": 0, "y": 1200, "w": 1200, "h": 600},
+        ],
+        dialogues=[
+            {
+                "panel_index": index,
+                "display_order": 0,
+                "speaker_id": speaker,
+                "text": text,
+                "confidence": 0.95,
+                "verified": False,
+            }
+            for index, (speaker, text) in enumerate(zip(speakers, texts, strict=True))
+        ],
+    )
+    seeded = await test_store.get_project(project_id)
+    first_panel_id = seeded["panels"][0]["id"]
+    await test_store.insert_shot({
+        "id": "stale-shot",
+        "project_id": project_id,
+        "panel_id": first_panel_id,
+        "display_order": 0,
+        "speaker_id": "CHAR_1",
+        "dialogue_text": texts[0],
+        "duration_s": 8,
+        "model_family": "omni_flash",
+        "prompt": "stale prompt",
+        "image_sha256": "b" * 64,
+    })
+    return test_store, conversation_url, texts, speakers
+
+
+@pytest.mark.asyncio
+async def test_verify_endpoint_three_panel_receipt_persists_all_verified_and_clears_stale_shots(
+    tmp_path, monkeypatch
+):
+    project_id = "project-three-panel-success"
+    test_store, conversation_url, texts, speakers = await _seed_three_dialogue_verify_project(
+        tmp_path, monkeypatch, project_id
+    )
+
+    async def fake_verify(observed_conversation_url, candidates):
+        assert observed_conversation_url == conversation_url
+        assert candidates == [
+            {
+                "panel_index": index,
+                "display_order": 0,
+                "speaker_id": speaker,
+                "text": text,
+            }
+            for index, (speaker, text) in enumerate(zip(speakers, texts, strict=True))
+        ]
+        return [
+            {
+                "panel_index": index,
+                "display_order": 0,
+                "speaker_id": speaker,
+                "text": text,
+                "verified": True,
+            }
+            for index, (speaker, text) in enumerate(zip(speakers, texts, strict=True))
+        ]
+
+    monkeypatch.setattr(comic_api, "verify_dialogues_in_conversation", fake_verify)
+
+    response = await comic_api.verify_project_dialogues(project_id)
+
+    assert response["project"]["ai_conversation_url"] == conversation_url
+    persisted = await test_store.get_project(project_id)
+    assert [
+        (panel["dialogues"][0]["speaker_id"], panel["dialogues"][0]["text"], panel["dialogues"][0]["verified"])
+        for panel in persisted["panels"]
+    ] == [
+        (speaker, text, 1)
+        for speaker, text in zip(speakers, texts, strict=True)
+    ]
+    assert persisted["shots"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_mode", ["partial", "false_row"])
+async def test_verify_endpoint_three_panel_invalid_receipt_is_atomic(
+    tmp_path, monkeypatch, invalid_mode
+):
+    project_id = f"project-three-panel-{invalid_mode}"
+    test_store, conversation_url, texts, speakers = await _seed_three_dialogue_verify_project(
+        tmp_path, monkeypatch, project_id
+    )
+
+    async def fake_verify(observed_conversation_url, candidates):
+        assert observed_conversation_url == conversation_url
+        rows = [
+            {
+                "panel_index": index,
+                "display_order": 0,
+                "speaker_id": speaker,
+                "text": text,
+                "verified": True,
+            }
+            for index, (speaker, text) in enumerate(zip(speakers, texts, strict=True))
+        ]
+        if invalid_mode == "partial":
+            return rows[:2]
+        rows[1]["verified"] = False
+        return rows
+
+    monkeypatch.setattr(comic_api, "verify_dialogues_in_conversation", fake_verify)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await comic_api.verify_project_dialogues(project_id)
+
+    assert exc_info.value.status_code == 422
+    persisted = await test_store.get_project(project_id)
+    assert [
+        (panel["dialogues"][0]["speaker_id"], panel["dialogues"][0]["text"], panel["dialogues"][0]["verified"])
+        for panel in persisted["panels"]
+    ] == [
+        (speaker, text, 0)
+        for speaker, text in zip(speakers, texts, strict=True)
+    ]
+    assert [shot["id"] for shot in persisted["shots"]] == ["stale-shot"]
