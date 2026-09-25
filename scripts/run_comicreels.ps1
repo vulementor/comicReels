@@ -10,6 +10,11 @@ $CacheBase = if ($env:LOCALAPPDATA) {
 $RuntimeRoot = if ($env:COMICREELS_RUNTIME_DIR) { $env:COMICREELS_RUNTIME_DIR } else { Join-Path $CacheBase "runtime" }
 $Venv = if ($env:COMICREELS_VENV) { $env:COMICREELS_VENV } else { Join-Path $CacheBase "venv" }
 $RuntimeRef = if ($env:COMICREELS_RUNTIME_REF) { $env:COMICREELS_RUNTIME_REF } else { "HEAD" }
+$GptfpRequiredRef = if ($env:COMICREELS_GPTFP_REF) {
+  $env:COMICREELS_GPTFP_REF
+} else {
+  "27b4e5b75b771bde683e274aa212ac291a8d3b8c"
+}
 
 New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Venv) | Out-Null
@@ -50,6 +55,31 @@ if ($OldReqHash -ne $ReqHash) {
   Set-Content -NoNewline -Encoding ASCII $ReqStamp $ReqHash
 }
 
+# Optional browser-native ChatGPT AI integration. Session material stays in the
+# physical profile; ComicReels only passes the profile directory to GPT FullProxy.
+$GptfpDir = if ($env:COMICREELS_GPTFP_DIR) { $env:COMICREELS_GPTFP_DIR } else { "" }
+$SiblingGptfp = Join-Path (Split-Path -Parent $SourceRoot) "gpt_fullproxy"
+if ((-not $GptfpDir) -and (Test-Path (Join-Path $SiblingGptfp ".git"))) {
+  $GptfpDir = (Resolve-Path $SiblingGptfp).Path
+}
+if ($GptfpDir) {
+  if (-not (Test-Path (Join-Path $GptfpDir "pyproject.toml"))) {
+    throw "COMICREELS_GPTFP_DIR is not a GPT FullProxy checkout: $GptfpDir"
+  }
+  $GptfpHead = (& git -C $GptfpDir rev-parse HEAD).Trim()
+  if (($env:COMICREELS_GPTFP_ALLOW_UNPINNED -ne "1") -and ($GptfpHead -ne $GptfpRequiredRef)) {
+    throw "GPT FullProxy HEAD $GptfpHead does not match required $GptfpRequiredRef"
+  }
+  $GptfpStamp = Join-Path $Venv ".comicreels-gptfp.sha"
+  $OldGptfpHead = if (Test-Path $GptfpStamp) { (Get-Content -Raw $GptfpStamp).Trim() } else { "" }
+  if ($OldGptfpHead -ne $GptfpHead) {
+    & $VenvPython -m pip install -e "$GptfpDir[browser]"
+    & $VenvPython -m camoufox fetch
+    Set-Content -NoNewline -Encoding ASCII $GptfpStamp $GptfpHead
+  }
+  $env:COMICREELS_GPTFP_DIR = $GptfpDir
+}
+
 $LockHash = (Get-FileHash "dashboard\package-lock.json" -Algorithm SHA256).Hash
 $LockStamp = Join-Path $RuntimeRoot ".comicreels-package-lock.sha"
 $OldLockHash = if (Test-Path $LockStamp) { (Get-Content -Raw $LockStamp).Trim() } else { "" }
@@ -67,6 +97,8 @@ $frontend = Start-Process -PassThru -NoNewWindow "npm" -WorkingDirectory "$Runti
 Write-Host "ComicReels source:  $SourceRoot"
 Write-Host "Runtime commit:     $Commit"
 Write-Host "ComicReels runtime: $RuntimeRoot"
+Write-Host "GPT FullProxy:       $GptfpDir"
+Write-Host "ChatGPT profile:     $env:COMICREELS_GPTFP_PROFILE_DIR"
 Write-Host "Backend PID $($backend.Id), Frontend PID $($frontend.Id)"
 Write-Host "Open http://127.0.0.1:5173/"
 Write-Host "Stop both child processes when finished."
