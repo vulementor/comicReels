@@ -35,6 +35,7 @@ from agent.comicreels.images import (
 )
 from agent.comicreels.prompts import SUPPORTED_DURATIONS, build_shots
 from agent.comicreels.store import ROOT, store
+from agent.comicreels.ai_provider import analyze_comic, generate_clean_portrait, provider_status
 from agent.comicreels.vision import analyze as vision_analyze
 from agent.config import FLOW_PROJECT_ID
 from agent.services.flow_client import get_flow_client
@@ -96,7 +97,12 @@ async def _details(project_id: str) -> dict[str, Any]:
 
 
 class AnalyzeBody(BaseModel):
-    mode: Literal["heuristic", "vision"] = "heuristic"
+    mode: Literal["ai", "heuristic", "vision"] = "ai"
+    confirm_paid: bool = False
+
+
+class AIImageBody(BaseModel):
+    confirm_paid: bool = False
 
 
 class Box(BaseModel):
@@ -186,6 +192,7 @@ async def comicreels_status():
             "session_project": session or None,
             "ready": bool(client.connected and pid),
         },
+        "ai": provider_status(),
         "supported_video_durations": SUPPORTED_DURATIONS,
         "local_test_state": "OFFLINE_PASS_EXTERNAL_GATES_PENDING",
     }
@@ -244,7 +251,14 @@ async def _apply_analysis(project_id: str, panels: list[dict[str, Any]],
     details = await _details(project_id)
     project = details["project"]
     width, height = project["source_width"], project["source_height"]
-    safe = [clamp_box(p, width, height) for p in panels]
+    safe: list[dict[str, Any]] = []
+    for panel in panels:
+        box = clamp_box(panel, width, height)
+        box["mask"] = [
+            clamp_box(region, box["w"], box["h"])
+            for region in (panel.get("mask") or [])
+        ]
+        safe.append(box)
     if not safe or len(safe) > 32:
         raise HTTPException(400, "Số panel phải từ 1 đến 32.")
     await store.replace_analysis(project_id, safe, dialogues)
@@ -262,6 +276,28 @@ async def analyze_project(project_id: str, body: AnalyzeBody):
     details = await _details(project_id)
     project = details["project"]
     source = Path(project["source_path"])
+    if body.mode == "ai":
+        if not body.confirm_paid:
+            raise HTTPException(409, "AI phân tích có thể phát sinh chi phí. Cần xác nhận thao tác AI.")
+        if not provider_status()["configured"]:
+            raise HTTPException(503, "AI ChatGPT/OpenAI chưa kết nối. Cần cấu hình API trước.")
+        try:
+            result = await analyze_comic(
+                source, project["source_mime"], project["source_width"], project["source_height"]
+            )
+        except Exception as exc:
+            raise HTTPException(502, f"AI phân tích thất bại: {exc}") from exc
+        panels = sorted(result.get("panels", []), key=lambda x: x.get("order", 0))
+        dialogues = []
+        for item in result.get("dialogues", []):
+            row = dict(item)
+            row["verified"] = True
+            dialogues.append(row)
+        response = await _apply_analysis(project_id, panels, dialogues)
+        response["analysis_warnings"] = result.get("warnings", [])
+        response["characters"] = result.get("characters", [])
+        response["analysis_mode"] = "ai"
+        return response
     if body.mode == "vision":
         try:
             result = await vision_analyze(
@@ -341,6 +377,74 @@ async def delete_dialogue(dialogue_id: str):
     return {"deleted": dialogue_id}
 
 
+@router.put("/panels/{panel_id}/mask")
+async def update_panel_mask(panel_id: str, body: MaskBody):
+    panel = await store.panel(panel_id)
+    if not panel:
+        raise HTTPException(404, "Không tìm thấy panel.")
+    rects = [r.model_dump() for r in body.rects]
+    await store.update_panel(
+        panel_id,
+        mask_json=json.dumps(rects),
+        portrait_path=None,
+        portrait_sha256=None,
+        approved_sha256=None,
+        protected_json=None,
+        status="ANALYZED",
+    )
+    await store.clear_shots(panel["project_id"])
+    return {"panel_id": panel_id, "mask": rects}
+
+
+@router.post("/panels/{panel_id}/ai-generate")
+async def ai_generate_panel(panel_id: str, body: AIImageBody):
+    if not body.confirm_paid:
+        raise HTTPException(409, "AI Generate có thể phát sinh chi phí. Cần xác nhận thao tác AI.")
+    if not provider_status()["configured"]:
+        raise HTTPException(503, "AI hình ảnh chưa kết nối. Cần cấu hình ChatGPT/OpenAI API trước.")
+    raw_panel = await store.panel(panel_id)
+    if not raw_panel:
+        raise HTTPException(404, "Không tìm thấy panel.")
+    crop = _safe_file(raw_panel.get("crop_path"))
+    try:
+        regions = json.loads(raw_panel.get("mask_json") or "[]")
+    except json.JSONDecodeError:
+        regions = []
+    details = await _details(raw_panel["project_id"])
+    parsed = next((p for p in details["panels"] if p["id"] == panel_id), None)
+    dialogue_context = ""
+    if parsed:
+        lines = [
+            f'{d.get("speaker_id")}: {d.get("text")}'
+            for d in parsed.get("dialogues", [])
+            if d.get("text")
+        ]
+        if lines:
+            dialogue_context = "Detected dialogue context only; do NOT render it as text: " + " | ".join(lines)
+    out = project_dir(raw_panel["project_id"]) / "panels" / panel_id / "portrait.png"
+    try:
+        _, protected, digest = await generate_clean_portrait(
+            crop, regions, out, panel_context=dialogue_context
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"AI Generate ảnh thất bại: {exc}") from exc
+    await store.update_panel(
+        panel_id,
+        portrait_path=str(out),
+        portrait_sha256=digest,
+        approved_sha256=None,
+        protected_json=json.dumps(protected),
+        status="AI_IMAGE_READY",
+    )
+    await store.clear_shots(raw_panel["project_id"])
+    return {
+        "panel_id": panel_id,
+        "portrait_sha256": digest,
+        "protected_region": protected,
+        "status": "AI_IMAGE_READY",
+    }
+
+
 @router.post("/panels/{panel_id}/clean")
 async def clean_panel(panel_id: str, body: MaskBody):
     panel = await store.panel(panel_id)
@@ -348,6 +452,8 @@ async def clean_panel(panel_id: str, body: MaskBody):
         raise HTTPException(404, "Không tìm thấy panel.")
     crop = _safe_file(panel["crop_path"])
     rects = [r.model_dump() for r in body.rects]
+    if not rects:
+        raise HTTPException(400, "Cần ít nhất một vùng mask trước khi xóa chữ / bong bóng.")
     out = project_dir(panel["project_id"]) / "panels" / panel_id / "clean.png"
     _, applied = clean_with_rect_masks(crop, rects, out)
     await store.update_panel(
@@ -383,8 +489,9 @@ async def approve_panel(panel_id: str):
     digest = sha256_file(_safe_file(panel["portrait_path"]))
     if digest != panel.get("portrait_sha256"):
         raise HTTPException(409, "Ảnh 9:16 đã thay đổi ngoài state; hãy tạo lại trước khi OK.")
-    await store.update_panel(panel_id, approved_sha256=digest, status="IMAGE_APPROVED")
-    return {"panel_id": panel_id, "approved_sha256": digest}
+    next_status = "AI_IMAGE_APPROVED" if panel.get("status") == "AI_IMAGE_READY" else "IMAGE_APPROVED"
+    await store.update_panel(panel_id, approved_sha256=digest, status=next_status)
+    return {"panel_id": panel_id, "approved_sha256": digest, "status": next_status}
 
 
 @router.post("/projects/{project_id}/storyboard")
@@ -394,6 +501,8 @@ async def storyboard(project_id: str, body: StoryboardBody):
     if not panels:
         raise HTTPException(409, "Dự án chưa có panel.")
     for panel in panels:
+        if panel.get("status") != "AI_IMAGE_APPROVED":
+            raise HTTPException(409, f"Panel {panel['display_order'] + 1} chưa được duyệt từ ảnh AI Generate.")
         if not panel.get("portrait_sha256") or panel.get("approved_sha256") != panel.get("portrait_sha256"):
             raise HTTPException(409, f"Panel {panel['display_order'] + 1} chưa OK đúng phiên bản ảnh hiện tại.")
         for dialogue in panel["dialogues"]:

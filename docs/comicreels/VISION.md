@@ -6,8 +6,10 @@ Dán **một ảnh truyện** có 2/3/4/nhiều khung. Tự tìm thứ tự đ�
 ## Tính đúng trước tiện lợi
 - Không tự đổi nhân vật, thoại nguyên văn, thêm narrator, rút ngắn thoại cho vừa 10 giây hoặc bắt người nghe cử động miệng.
 - Không giả định truyện đều là Câu/Mèo Léo; nhân vật theo từng ảnh input.
-- Pixel ngoài vùng mask giữ nguyên; chỗ ảnh bị bong bóng che không có dữ liệu thật, AI tái tạo chỉ là phỏng đoán phải đánh dấu cho anh duyệt.
-- Mở rộng 9:16 bằng canvas/padding/outpaint **ngoài nguồn**, không biến yêu cầu giữ nguyên thành tạo tranh mới.
+- AI phải tự nhận panel, thứ tự đọc, nguyên văn thoại, speaker và toàn bộ vùng chữ/bong bóng cần xóa; người dùng chỉ sửa khi AI nhận sai.
+- Ảnh sạch 9:16 là kết quả **AI Generate**: AI xóa text/bubble, tái tạo phần tranh bị che và outpaint thành 9:16. Không dùng compositor tô rectangle/padding làm đầu ra chính.
+- Sau khi AI Generate, hệ thống ghép trả các pixel nguồn không thuộc vùng AI-edit để khóa nhân vật/nét vẽ/bố cục gốc ở mức deterministic.
+- Chỗ bong bóng che mất dữ liệu gốc là phần AI phải tái tạo và luôn cần anh review trước khi OK.
 - Prompt đúng chưa bảo đảm video sinh ra đúng phát âm/lip-sync: phải xem và nghe thực tế.
 
 ## MVP và ngoài phạm vi

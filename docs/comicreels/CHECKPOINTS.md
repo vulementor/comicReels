@@ -10,11 +10,11 @@ Trạng thái mới: OFFLINE_LOCAL_TEST_PASS = code và workflow local đã ch�
 | 1 | ACCEPTED_WITH_GAPS | Public fork và docs có trên GitHub; lịch sử/parent đã xác minh. |
 | 2 | OFFLINE_LOCAL_TEST_PASS | Studio tiếng Việt, route root và /flowkit, upload UI, build/lint/browser smoke đều PASS. |
 | 3 | OFFLINE_LOCAL_TEST_PASS | Import, MIME/size validation, SHA-256, SQLite persistence và restart PASS. |
-| 4 | OFFLINE_LOCAL_TEST_PASS | Heuristic nhận đúng synthetic 2-panel, bbox/manual flow chạy; irregular real comic cần AI/manual test. |
-| 5 | OFFLINE_LOCAL_TEST_PASS | Multi-dialogue/speaker CRUD và exact Vietnamese text PASS; Vision recognition thật còn pending. |
-| 6 | OFFLINE_LOCAL_TEST_PASS | Crop/mask và pixel-preservation tests PASS. |
-| 7 | OFFLINE_LOCAL_TEST_PASS | Local mask compositor chạy và bảo toàn ngoài mask; AI inpaint chất lượng thật còn pending. |
-| 8 | OFFLINE_LOCAL_TEST_PASS | 9:16 canvas và protected source pixels PASS. |
+| 4 | OFFLINE_LOCAL_TEST_PASS + EXTERNAL_AI_PENDING | Heuristic nhận đúng synthetic 2-panel và comic thật 3-panel; luồng chính đã đổi sang AI tự nhận panel/thứ tự. |
+| 5 | OFFLINE_LOCAL_TEST_PASS + EXTERNAL_AI_PENDING | CRUD exact dialogue/speaker PASS; UI chính không còn bắt nhập tay, AI tự nhận thoại/speaker khi provider được kết nối. |
+| 6 | OFFLINE_LOCAL_TEST_PASS + EXTERNAL_AI_PENDING | AI speech-region mask được lưu tự động; chỉnh tay chỉ còn trong mục nâng cao. |
+| 7 | EXTERNAL_AI_PENDING | Compositor local bị loại khỏi luồng chính sau test comic thật; ảnh sạch phải do AI Generate/inpaint. |
+| 8 | OFFLINE_LOCAL_TEST_PASS + EXTERNAL_AI_PENDING | Đã có AI edit canvas/mask 9:16 + source-pixel re-lock; chưa gọi provider thật vì chưa có API credential. |
 | 9 | OFFLINE_LOCAL_TEST_PASS | SHA approval gate và dependency invalidation PASS. |
 | 10 | OFFLINE_LOCAL_TEST_PASS | Shot split/duration/speaker lock, exact dialogue PASS. |
 | 11 | OFFLINE_LOCAL_TEST_PASS | Prompt locks, backup/restore và UI storyboard PASS. |
@@ -25,7 +25,7 @@ Trạng thái mới: OFFLINE_LOCAL_TEST_PASS = code và workflow local đã ch�
 | 16 | OFFLINE_LOCAL_TEST_PASS_WITH_GAPS | Backup/restore PASS; launcher macOS đã chạy thực tế từ source iCloud và dựng runtime cache ngoài iCloud; PowerShell/Windows chưa test. |
 
 ## Regression evidence
-- Python unit tests: 378/378 PASS.
+- Python unit tests: 380/380 PASS.
 - npm ci: PASS.
 - Vite production build: PASS.
 - ESLint: PASS.

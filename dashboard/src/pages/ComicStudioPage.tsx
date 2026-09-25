@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CheckCircle2, CircleAlert, Download, FileImage, Film, ImagePlus, Loader2,
+  CheckCircle2, CircleAlert, Download, Film, ImagePlus, Loader2,
   Play, RefreshCcw, Save, Scissors, ShieldCheck, Sparkles, Trash2, UploadCloud,
 } from 'lucide-react'
 
 type FlowState = { extension_connected: boolean; project_id: string | null; ready: boolean }
-type ComicStatus = { status: string; flow: FlowState; local_test_state: string }
+type AIState = { provider: string; configured: boolean; vision_model: string; image_model: string }
+type ComicStatus = { status: string; flow: FlowState; ai: AIState; local_test_state: string }
 type Dialogue = {
   id: string; panel_id: string; display_order: number; speaker_id: string; text: string
   verified: number; confidence: number | null
@@ -14,7 +15,7 @@ type Panel = {
   id: string; display_order: number; x: number; y: number; w: number; h: number
   crop_path: string | null; clean_path: string | null; portrait_path: string | null
   portrait_sha256: string | null; approved_sha256: string | null
-  status: string; mask: Array<{x:number;y:number;w:number;h:number}>; dialogues: Dialogue[]
+  status: string; updated_at?: string; mask: Array<{x:number;y:number;w:number;h:number}>; dialogues: Dialogue[]
 }
 type Shot = {
   id: string; display_order: number; panel_id: string; speaker_id: string | null
@@ -62,9 +63,9 @@ function parseMask(text: string) {
 }
 
 function PanelEditor({
-  panel, reload, setNotice,
+  panel, reload, setNotice, aiConfigured,
 }: {
-  panel: Panel; reload: () => Promise<void>; setNotice: (x: string) => void
+  panel: Panel; reload: () => Promise<void>; setNotice: (x: string) => void; aiConfigured: boolean
 }) {
   const [maskText, setMaskText] = useState(JSON.stringify(panel.mask ?? [], null, 2))
   const [bbox, setBbox] = useState({ x: panel.x, y: panel.y, w: panel.w, h: panel.h })
@@ -74,15 +75,24 @@ function PanelEditor({
   )
   const [working, setWorking] = useState(false)
 
+  const maskSignature = JSON.stringify(panel.mask ?? [])
+
   useEffect(() => {
     setBbox({ x: panel.x, y: panel.y, w: panel.w, h: panel.h })
+  }, [panel.id, panel.x, panel.y, panel.w, panel.h])
+
+  useEffect(() => {
     setDialogues(panel.dialogues.length ? panel.dialogues.map(d => ({ ...d })) :
       [{ id: '', panel_id: panel.id, display_order: 0, speaker_id: 'CHAR_1', text: '', verified: 1, confidence: null }])
-    setMaskText(JSON.stringify(panel.mask ?? [], null, 2))
-  }, [panel.id, panel.x, panel.y, panel.w, panel.h, panel.dialogues, panel.mask])
+  }, [panel.id, panel.dialogues])
+
+  useEffect(() => {
+    setMaskText(JSON.stringify(JSON.parse(maskSignature), null, 2))
+  }, [panel.id, maskSignature])
   const base = `/api/comicreels/panels/${panel.id}/asset`
-  const imageUrl = panel.portrait_path ? `${base}/portrait?d=${panel.portrait_sha256 ?? ''}`
-    : panel.clean_path ? `${base}/clean` : `${base}/crop`
+  const version = encodeURIComponent(panel.updated_at ?? panel.portrait_sha256 ?? panel.status)
+  const hasAIPortrait = Boolean(panel.portrait_path && (panel.status === 'AI_IMAGE_READY' || panel.status === 'AI_IMAGE_APPROVED'))
+  const imageUrl = hasAIPortrait ? `${base}/portrait?v=${version}` : `${base}/crop?v=${version}`
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setWorking(true)
@@ -116,11 +126,25 @@ function PanelEditor({
     }
   }, 'Đã lưu danh sách thoại theo thứ tự và speaker. Storyboard cũ đã bị hủy.')
 
+  const saveMask = () => run(async () => {
+    await apiJson(`/api/comicreels/panels/${panel.id}/mask`, {
+      method: 'PUT',
+      body: JSON.stringify({ rects: parseMask(maskText) }),
+    })
+  }, 'Đã sửa vùng chữ/bong bóng AI cần xóa.')
+
   const removeDialogue = (index: number) => run(async () => {
     const d = dialogues[index]
     if (d.id) await apiJson(`/api/comicreels/dialogues/${d.id}`, { method: 'DELETE' })
     setDialogues(current => current.filter((_, i) => i !== index))
   }, 'Đã xóa lời thoại khỏi panel.')
+
+  const generateAI = () => run(async () => {
+    await apiJson(`/api/comicreels/panels/${panel.id}/ai-generate`, {
+      method: 'POST',
+      body: JSON.stringify({ confirm_paid: true }),
+    })
+  }, 'AI đã tạo ảnh sạch 9:16. Hãy xem kỹ trước khi OK.')
 
   return (
     <article className="rounded-xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
@@ -131,7 +155,7 @@ function PanelEditor({
             {panel.w}×{panel.h} · {panel.status}
           </div>
         </div>
-        {panel.approved_sha256 && panel.approved_sha256 === panel.portrait_sha256
+        {panel.status === 'AI_IMAGE_APPROVED' && panel.approved_sha256 && panel.approved_sha256 === panel.portrait_sha256
           ? <span className="flex items-center gap-1 text-xs text-green-400"><ShieldCheck size={14}/>Đã OK</span>
           : <span className="text-xs text-amber-400">Chưa duyệt</span>}
       </div>
@@ -140,7 +164,27 @@ function PanelEditor({
         <img src={imageUrl} alt={`Khung ${panel.display_order + 1}`} className="mx-auto max-h-96 max-w-full rounded object-contain" />
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
+      <div className="mt-3 rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'var(--card)' }}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold">AI nhận diện</span>
+          <span className="text-[10px]" style={{ color: 'var(--muted)' }}>{panel.mask.length} vùng chữ / bong bóng</span>
+        </div>
+        <div className="mt-2 space-y-2">
+          {panel.dialogues.length === 0 ? (
+            <div className="text-xs" style={{ color: 'var(--muted)' }}>Chưa có thoại AI nhận diện.</div>
+          ) : panel.dialogues.map((d, index) => (
+            <div key={d.id || index} className="rounded border px-3 py-2 text-xs" style={{ borderColor: 'var(--border)' }}>
+              <strong>{d.speaker_id}</strong>
+              <span className="mx-2" style={{ color: 'var(--muted)' }}>→</span>
+              <span>{d.text}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <details className="mt-4 rounded-lg border p-3" style={{ borderColor: 'var(--border)' }}>
+        <summary className="cursor-pointer text-xs font-semibold">Sửa nhận diện nếu AI sai</summary>
+      <div className="mt-3 grid gap-3 md:grid-cols-4">
         {(['x','y','w','h'] as const).map(key => (
           <label key={key} className="text-xs">{key.toUpperCase()}
             <input type="number" min={key === 'w' || key === 'h' ? 1 : 0} value={bbox[key]}
@@ -186,33 +230,38 @@ function PanelEditor({
             className="mt-1 w-full rounded border px-3 py-2 font-mono text-[11px]"
             style={{ background: 'var(--card)', borderColor: 'var(--border)' }} />
         </label>
+        <div className="md:col-span-4">
+          <button disabled={working} onClick={saveMask} className="rounded border px-3 py-2 text-xs" style={{ borderColor: 'var(--border)' }}>
+            <Save size={14} className="mr-1 inline"/>Lưu vùng AI cần xóa
+          </button>
+        </div>
       </div>
+      </details>
 
       <div className="mt-3 flex flex-wrap gap-2">
-        <button disabled={working} onClick={() => run(async () => {
-          await apiJson(`/api/comicreels/panels/${panel.id}/clean`, {
-            method: 'POST', body: JSON.stringify({ rects: parseMask(maskText) }),
-          })
-        }, 'Đã tạo ảnh sạch bằng compositor local, chỉ thay pixel nằm trong mask.')}
-          className="rounded border px-3 py-2 text-xs" style={{ borderColor: 'var(--border)' }}>
-          <Scissors size={14} className="mr-1 inline"/>Xóa vùng mask
-        </button>
-
-        <button disabled={working} onClick={() => run(async () => {
-          await apiJson(`/api/comicreels/panels/${panel.id}/portrait`, { method: 'POST' })
-        }, 'Đã đặt ảnh lên canvas 9:16 mà không resize vùng tranh gốc.')}
-          className="rounded border px-3 py-2 text-xs" style={{ borderColor: 'var(--border)' }}>
-          <FileImage size={14} className="mr-1 inline"/>Tạo 9:16
-        </button>
-
-        <button disabled={working || !panel.portrait_path} onClick={() => run(async () => {
-          await apiJson(`/api/comicreels/panels/${panel.id}/approve`, { method: 'POST' })
-        }, 'Đã OK đúng hash ảnh hiện tại.')}
+        <button
+          disabled={working || !aiConfigured || panel.mask.length === 0}
+          onClick={generateAI}
           className="rounded px-3 py-2 text-xs font-semibold disabled:opacity-40"
-          style={{ background: 'var(--accent)', color: 'white' }}>
+          style={{ background: 'var(--accent)', color: 'white' }}
+        >
+          {working ? <Loader2 size={14} className="mr-1 inline animate-spin"/> : <Sparkles size={14} className="mr-1 inline"/>}
+          {hasAIPortrait ? 'AI Generate lại ảnh 9:16' : 'AI Generate ảnh sạch 9:16'}
+        </button>
+
+        <button disabled={working || !hasAIPortrait} onClick={() => run(async () => {
+          await apiJson(`/api/comicreels/panels/${panel.id}/approve`, { method: 'POST' })
+        }, 'Đã OK đúng hash ảnh AI hiện tại.')}
+          className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-40"
+          style={{ borderColor: 'var(--border)' }}>
           <CheckCircle2 size={14} className="mr-1 inline"/>OK ảnh này
         </button>
       </div>
+      {!aiConfigured && (
+        <div className="mt-2 text-xs text-amber-400">
+          AI hình ảnh chưa được kết nối. ComicReels sẽ không dùng compositor kéo-che làm kết quả chính.
+        </div>
+      )}
     </article>
   )
 }
@@ -229,7 +278,6 @@ export default function ComicStudioPage() {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [paidConsent, setPaidConsent] = useState(false)
   const [flowProjectId, setFlowProjectId] = useState('')
-  const [visionConsent, setVisionConsent] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const refreshStatus = useCallback(async () => {
@@ -289,33 +337,59 @@ export default function ComicStudioPage() {
       form.append('name', pendingFile.name.replace(/\.[^.]+$/, ''))
       const imported = await apiJson<{project: Project}>('/api/comicreels/projects/import', { method: 'POST', body: form })
       const loaded = await apiJson<Details>(`/api/comicreels/projects/${imported.project.id}`)
-      setDetails(loaded)
-      setStep('analyze')
       setPendingFile(null)
-      setNotice('Đã lưu ảnh nguồn bất biến và SHA-256 vào local ComicReels storage.')
+      if (status?.ai.configured) {
+        const analyzed = await apiJson<Details>(`/api/comicreels/projects/${imported.project.id}/analyze`, {
+          method: 'POST',
+          body: JSON.stringify({ mode: 'ai', confirm_paid: true }),
+        })
+        setDetails(analyzed)
+        setStep('images')
+        setNotice('Đã lưu ảnh và AI tự nhận panel, thoại, speaker, vùng chữ/bong bóng.')
+      } else {
+        setDetails(loaded)
+        setStep('analyze')
+        setNotice('Đã lưu ảnh. Cần kết nối AI để tự nhận diện panel/thoại/speaker.')
+      }
       await refreshProjects()
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)) }
     finally { setWorking(false) }
   }
 
-  const analyze = async (mode: 'heuristic' | 'vision') => {
+  const analyze = async (mode: 'ai' | 'heuristic') => {
     if (!details) return
-    if (mode === 'vision' && !visionConsent) {
-      setNotice('Vision sẽ gửi ảnh nguồn tới provider AI. Hãy tick xác nhận trước.')
-      return
-    }
     setWorking(true)
     try {
       const next = await apiJson<Details>(`/api/comicreels/projects/${details.project.id}/analyze`, {
-        method: 'POST', body: JSON.stringify({ mode }),
+        method: 'POST', body: JSON.stringify({ mode, confirm_paid: mode === 'ai' }),
       })
       setDetails(next)
       setStep('images')
-      setNotice(mode === 'vision'
-        ? 'Đã phân tích bằng provider Vision. Hãy kiểm tra khung, nguyên văn thoại và speaker trước khi xử lý ảnh.'
-        : 'Đã tách khung bằng heuristic gutter. Trang bất quy tắc cần sửa tay hoặc dùng Vision.')
+      setNotice(mode === 'ai'
+        ? 'AI đã tự nhận panel, thoại, speaker và vùng chữ/bong bóng. Chỉ sửa khi nhận diện sai.'
+        : 'Fallback local đã tách panel bằng gutter; không tự đọc thoại/speaker.')
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)) }
     finally { setWorking(false) }
+  }
+
+  const generateAllImages = async () => {
+    if (!details || !status?.ai.configured) return
+    setWorking(true)
+    try {
+      for (const panel of details.panels) {
+        await apiJson(`/api/comicreels/panels/${panel.id}/ai-generate`, {
+          method: 'POST',
+          body: JSON.stringify({ confirm_paid: true }),
+        })
+      }
+      const next = await apiJson<Details>(`/api/comicreels/projects/${details.project.id}`)
+      setDetails(next)
+      setNotice(`AI đã Generate xong ${next.panels.length} ảnh sạch 9:16. Hãy review trước khi OK.`)
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWorking(false)
+    }
   }
 
   const storyboard = async () => {
@@ -350,7 +424,9 @@ export default function ComicStudioPage() {
   }
 
   const allApproved = useMemo(() =>
-    Boolean(details?.panels.length) && (details?.panels.every(p => p.portrait_sha256 && p.approved_sha256 === p.portrait_sha256) ?? false),
+    Boolean(details?.panels.length) && (details?.panels.every(
+      p => p.status === 'AI_IMAGE_APPROVED' && p.portrait_sha256 && p.approved_sha256 === p.portrait_sha256
+    ) ?? false),
     [details])
 
   return (
@@ -361,15 +437,23 @@ export default function ComicStudioPage() {
             <div className="text-xs font-semibold uppercase tracking-[.2em]" style={{ color: 'var(--accent)' }}>ComicReels Studio</div>
             <h1 className="mt-2 text-3xl font-bold">Một ảnh truyện → ảnh 9:16 → shot video</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6" style={{ color: 'var(--muted)' }}>
-              Ảnh và metadata lưu cục bộ. Vision chỉ gửi ảnh ra provider khi anh chủ động chọn. Video chỉ gọi Google Flow khi anh tick xác nhận chi phí.
+              AI tự nhận panel, thoại, speaker và vùng cần xóa; sau đó AI Generate ảnh sạch 9:16. Google Flow chỉ dùng ở bước dựng video.
             </p>
           </div>
-          <div className="rounded-xl border p-3 text-xs" style={{ borderColor: 'var(--border)', background: 'var(--card)' }}>
-            <div className="font-semibold">{status?.flow.ready ? '● Google Flow sẵn sàng' : '○ Google Flow chưa sẵn sàng'}</div>
-            <div className="mt-1" style={{ color: 'var(--muted)' }}>
-              Extension: {status?.flow.extension_connected ? 'đã nối' : 'chưa nối'} · Project: {status?.flow.project_id ?? 'chưa chọn'}
+          <div className="space-y-2 rounded-xl border p-3 text-xs" style={{ borderColor: 'var(--border)', background: 'var(--card)' }}>
+            <div>
+              <div className="font-semibold">{status?.ai.configured ? '● AI hình ảnh đã kết nối' : '○ AI hình ảnh chưa kết nối'}</div>
+              <div className="mt-1" style={{ color: 'var(--muted)' }}>
+                {status?.ai.provider ?? 'openai'} · {status?.ai.image_model ?? 'chưa cấu hình'}
+              </div>
             </div>
-            <button onClick={() => void refreshStatus()} className="mt-2 rounded border px-2 py-1" style={{ borderColor: 'var(--border)' }}>
+            <div className="border-t pt-2" style={{ borderColor: 'var(--border)' }}>
+              <div className="font-semibold">{status?.flow.ready ? '● Google Flow sẵn sàng' : '○ Google Flow chưa sẵn sàng'}</div>
+              <div className="mt-1" style={{ color: 'var(--muted)' }}>
+                Extension: {status?.flow.extension_connected ? 'đã nối' : 'chưa nối'} · Project: {status?.flow.project_id ?? 'chưa chọn'}
+              </div>
+            </div>
+            <button onClick={() => void refreshStatus()} className="rounded border px-2 py-1" style={{ borderColor: 'var(--border)' }}>
               <RefreshCcw size={12} className="mr-1 inline"/>Kiểm tra lại
             </button>
           </div>
@@ -423,7 +507,7 @@ export default function ComicStudioPage() {
             <div className="flex gap-2">
               <button onClick={()=>inputRef.current?.click()} className="rounded border px-4 py-2 text-sm" style={{borderColor:'var(--border)'}}><UploadCloud size={16} className="mr-1 inline"/>Chọn ảnh</button>
               <button disabled={!pendingFile||working} onClick={()=>void importSource()} className="rounded px-4 py-2 text-sm font-semibold disabled:opacity-40" style={{background:'var(--accent)',color:'white'}}>
-                {working?<Loader2 size={16} className="mr-1 inline animate-spin"/>:<Save size={16} className="mr-1 inline"/>}Lưu dự án
+                {working?<Loader2 size={16} className="mr-1 inline animate-spin"/>:<Save size={16} className="mr-1 inline"/>}{status?.ai.configured ? 'Lưu & AI phân tích' : 'Lưu dự án'}
               </button>
               {pendingFile && <button onClick={()=>setPendingFile(null)} className="rounded border px-3 py-2 text-sm" style={{borderColor:'var(--border)'}}><Trash2 size={15}/></button>}
             </div>
@@ -433,27 +517,54 @@ export default function ComicStudioPage() {
 
       {step === 'analyze' && details && (
         <section className="rounded-2xl border p-5" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
-          <h2 className="text-lg font-semibold">Tách khung và lấy lời thoại</h2>
-          <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>Heuristic chỉ đọc gutter trên máy. Vision phù hợp bố cục khó nhưng gửi ảnh nguồn tới provider được cấu hình.</p>
+          <h2 className="text-lg font-semibold">AI tự phân tích truyện</h2>
+          <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>
+            AI tự nhận số khung, thứ tự đọc, nguyên văn thoại, người nói và vùng chữ/bong bóng cần xóa.
+          </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button disabled={working} onClick={()=>void analyze('heuristic')} className="rounded border px-4 py-2 text-sm" style={{borderColor:'var(--border)'}}><Scissors size={15} className="mr-1 inline"/>Tách khung local</button>
-            <button disabled={working||!visionConsent} onClick={()=>void analyze('vision')} className="rounded border px-4 py-2 text-sm disabled:opacity-40" style={{borderColor:'var(--border)'}}><Sparkles size={15} className="mr-1 inline"/>Phân tích Vision</button>
+            <button
+              disabled={working || !status?.ai.configured}
+              onClick={()=>void analyze('ai')}
+              className="rounded px-4 py-2 text-sm font-semibold disabled:opacity-40"
+              style={{background:'var(--accent)',color:'white'}}
+            >
+              {working?<Loader2 size={15} className="mr-1 inline animate-spin"/>:<Sparkles size={15} className="mr-1 inline"/>}
+              AI tự nhận diện toàn bộ
+            </button>
+            <button disabled={working} onClick={()=>void analyze('heuristic')} className="rounded border px-4 py-2 text-sm" style={{borderColor:'var(--border)'}}>
+              <Scissors size={15} className="mr-1 inline"/>Fallback tách panel local
+            </button>
           </div>
-          <label className="mt-3 flex items-start gap-2 text-xs"><input type="checkbox" checked={visionConsent} onChange={e=>setVisionConsent(e.target.checked)}/>
-            <span>Tôi hiểu chế độ Vision gửi ảnh nguồn tới provider AI đã cấu hình; sẽ kiểm tra lại bbox, thoại và speaker.</span>
-          </label>
-          {details.panels.length>0 && <div className="mt-4 text-sm">Đang có <strong>{details.panels.length}</strong> khung. <button className="underline" onClick={()=>setStep('images')}>Mở gallery xử lý</button></div>}
+          {!status?.ai.configured && (
+            <div className="mt-3 text-xs text-amber-400">
+              AI ChatGPT/OpenAI chưa kết nối nên nút nhận diện tự động đang khóa.
+            </div>
+          )}
+          {details.panels.length>0 && <div className="mt-4 text-sm">Đang có <strong>{details.panels.length}</strong> khung. <button className="underline" onClick={()=>setStep('images')}>Mở kết quả AI</button></div>}
         </section>
       )}
 
       {(step === 'images' || step === 'approve') && details && (
         <section className="space-y-4">
           <div className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
-            <h2 className="font-semibold">Gallery {details.panels.length} khung</h2>
-            <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>Kiểm tra lời thoại trước, khai báo mask vùng chữ, tạo 9:16 rồi OK từng ảnh. Ảnh sửa lại sẽ tự mất OK.</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold">Gallery {details.panels.length} khung</h2>
+                <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>AI đã nhận thoại/speaker/vùng cần xóa. AI Generate sẽ xóa chữ, tái tạo phần bị che và outpaint thẳng thành 9:16.</p>
+              </div>
+              <button
+                disabled={working || !status?.ai.configured || details.panels.some(p => p.mask.length === 0)}
+                onClick={()=>void generateAllImages()}
+                className="rounded px-4 py-2 text-sm font-semibold disabled:opacity-40"
+                style={{background:'var(--accent)',color:'white'}}
+              >
+                {working?<Loader2 size={15} className="mr-1 inline animate-spin"/>:<Sparkles size={15} className="mr-1 inline"/>}
+                AI Generate toàn bộ {details.panels.length} khung
+              </button>
+            </div>
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
-            {details.panels.map(p => <PanelEditor key={p.id} panel={p} reload={reload} setNotice={setNotice}/>)}
+            {details.panels.map(p => <PanelEditor key={p.id} panel={p} reload={reload} setNotice={setNotice} aiConfigured={Boolean(status?.ai.configured)}/>)}
           </div>
           <div className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
             <div className="flex flex-wrap items-center justify-between gap-3">

@@ -196,9 +196,14 @@ class ComicStore:
                 panel_ids.append(pid)
                 await db.execute(
                     """INSERT INTO comic_panel
-                    (id,project_id,display_order,x,y,w,h,status,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?,?,'ANALYZED',?,?)""",
-                    (pid, project_id, idx, int(panel["x"]), int(panel["y"]), int(panel["w"]), int(panel["h"]), ts, ts),
+                    (id,project_id,display_order,x,y,w,h,mask_json,status,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,'ANALYZED',?,?)""",
+                    (
+                        pid, project_id, idx,
+                        int(panel["x"]), int(panel["y"]), int(panel["w"]), int(panel["h"]),
+                        json.dumps(panel.get("mask") or []),
+                        ts, ts,
+                    ),
                 )
             for idx, dialogue in enumerate(dialogues):
                 panel_index = int(dialogue.get("panel_index", 0))
