@@ -226,7 +226,7 @@ async def verify_dialogues_in_conversation(
         sort_keys=True,
     )
     digest = hashlib.sha256((conversation_url + "\n" + payload).encode("utf-8")).hexdigest()[:32]
-    idempotency_key = f"comicreels-dialogue-verify:{digest}"
+    idempotency_key = f"comicreels-dialogue-verify-v2:{digest}"
 
     def _run():
         handle = active_client.chat.open(conversation_url)
