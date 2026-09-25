@@ -330,9 +330,23 @@ async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[
     for item in parsed["dialogues"]:
         item["verified"] = False
     warnings = [str(item) for item in (parsed.get("warnings") or [])]
-    warnings.append(
-        "Transcript là kết quả một lượt trong cùng conversation; hãy review nếu câu thoại quan trọng tuyệt đối."
-    )
+
+    conversation_url = str(result.conversation_url or "").strip()
+    if conversation_url and parsed["dialogues"]:
+        try:
+            parsed["dialogues"] = await verify_dialogues_in_conversation(
+                conversation_url,
+                parsed["dialogues"],
+                client=client,
+            )
+            warnings.append(
+                "Transcript đã được kiểm tra lại trong cùng ChatGPT conversation, không upload lại ảnh."
+            )
+        except Exception as exc:
+            warnings.append(
+                f"Transcript follow-up trong cùng conversation chưa xác minh ({type(exc).__name__}); cần review."
+            )
+
     parsed["warnings"] = warnings
     parsed["provider_receipt"] = {
         "provider": _PROVIDER,
