@@ -184,6 +184,27 @@ async def delete_panel(panel_id: str) -> None:
         await db.execute("DELETE FROM comic_panel WHERE id=?", (panel_id,))
         await db.commit()
 
+async def reorder_panels(project_id: str, panel_ids: list[str]) -> list[dict]:
+    current = await list_panels(project_id)
+    current_ids = [p["id"] for p in current]
+    if len(panel_ids) != len(current_ids) or set(panel_ids) != set(current_ids):
+        raise ValueError("Danh sách thứ tự phải chứa đúng toàn bộ panel của dự án")
+    db = await get_db()
+    now = _now()
+    async with _db_lock:
+        for i, panel_id in enumerate(panel_ids):
+            await db.execute(
+                "UPDATE comic_panel SET display_order=?,updated_at=? WHERE id=? AND project_id=?",
+                (100000 + i, now, panel_id, project_id),
+            )
+        for i, panel_id in enumerate(panel_ids):
+            await db.execute(
+                "UPDATE comic_panel SET display_order=?,updated_at=? WHERE id=? AND project_id=?",
+                (i, now, panel_id, project_id),
+            )
+        await db.commit()
+    return await list_panels(project_id)
+
 async def replace_dialogues(panel_id: str, dialogues: list[dict]) -> list[dict]:
     db = await get_db()
     now = _now()
