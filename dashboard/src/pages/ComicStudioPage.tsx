@@ -444,7 +444,7 @@ export default function ComicStudioPage() {
             <div>
               <div className="font-semibold">{status?.ai.configured ? '● AI hình ảnh đã kết nối' : '○ AI hình ảnh chưa kết nối'}</div>
               <div className="mt-1" style={{ color: 'var(--muted)' }}>
-                {status?.ai.provider ?? 'openai'} · {status?.ai.image_model ?? 'chưa cấu hình'}
+                {status?.ai.provider ?? 'gpt_fullproxy'} · {status?.ai.image_model ?? 'ChatGPT Create image'}
               </div>
             </div>
             <div className="border-t pt-2" style={{ borderColor: 'var(--border)' }}>
@@ -537,7 +537,7 @@ export default function ComicStudioPage() {
           </div>
           {!status?.ai.configured && (
             <div className="mt-3 text-xs text-amber-400">
-              AI ChatGPT/OpenAI chưa kết nối nên nút nhận diện tự động đang khóa.
+              GPT FullProxy / ChatGPT Web chưa kết nối nên nút nhận diện tự động đang khóa.
             </div>
           )}
           {details.panels.length>0 && <div className="mt-4 text-sm">Đang có <strong>{details.panels.length}</strong> khung. <button className="underline" onClick={()=>setStep('images')}>Mở kết quả AI</button></div>}
