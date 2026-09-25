@@ -24,6 +24,7 @@ async def status():
     return {
         "ok": True,
         "worker_active_generation_id": worker.active_generation_id,
+        "worker_paused": worker.paused,
         "pipeline": {
             "import": True, "panel_detection": True, "dialogue_edit": True,
             "local_inpaint": True, "vertical_9_16": True, "approval_gate": True,
@@ -239,6 +240,27 @@ async def enqueue_batch(project_id: str, body: BatchGenerationRequest):
 @router.get("/projects/{project_id}/generations")
 async def generations(project_id: str):
     return await repo.list_generations(project_id)
+
+@router.post("/queue/pause")
+async def pause_queue():
+    worker = get_comic_generation_worker()
+    worker.pause()
+    return {"ok": True, "paused": True, "active_generation_id": worker.active_generation_id}
+
+@router.post("/queue/resume")
+async def resume_queue():
+    worker = get_comic_generation_worker()
+    worker.resume()
+    return {"ok": True, "paused": False, "active_generation_id": worker.active_generation_id}
+
+@router.post("/generations/{generation_id}/cancel")
+async def cancel_generation(generation_id: str):
+    value = await repo.get_generation(generation_id)
+    if not value:
+        raise HTTPException(404, "Không tìm thấy generation")
+    if value["status"] != "QUEUED":
+        raise HTTPException(409, "Chỉ hủy job đang QUEUED; job đã gửi Flow không bị hủy ngầm")
+    return await repo.update_generation(generation_id, status="CANCELLED", error_message="cancelled by user")
 
 @router.get("/generations/{generation_id}/video")
 async def generated_video(generation_id: str):
