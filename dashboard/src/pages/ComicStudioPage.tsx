@@ -26,7 +26,7 @@ type Project = {
   id: string; name: string; status: string; source_width: number; source_height: number
   source_sha256: string; source_mime: string
 }
-type Details = { project: Project; panels: Panel[]; shots: Shot[] }
+type Details = { project: Project; panels: Panel[]; shots: Shot[]; analysis_warnings?: string[] }
 type Step = 'import' | 'analyze' | 'images' | 'approve' | 'storyboard' | 'video'
 
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024
@@ -71,7 +71,7 @@ function PanelEditor({
   const [bbox, setBbox] = useState({ x: panel.x, y: panel.y, w: panel.w, h: panel.h })
   const [dialogues, setDialogues] = useState(() =>
     panel.dialogues.length ? panel.dialogues.map(d => ({ ...d })) :
-      [{ id: '', panel_id: panel.id, display_order: 0, speaker_id: 'CHAR_1', text: '', verified: 1, confidence: null }]
+      [{ id: '', panel_id: panel.id, display_order: 0, speaker_id: 'CHAR_1', text: '', verified: 0, confidence: null }]
   )
   const [working, setWorking] = useState(false)
 
@@ -83,7 +83,7 @@ function PanelEditor({
 
   useEffect(() => {
     setDialogues(panel.dialogues.length ? panel.dialogues.map(d => ({ ...d })) :
-      [{ id: '', panel_id: panel.id, display_order: 0, speaker_id: 'CHAR_1', text: '', verified: 1, confidence: null }])
+      [{ id: '', panel_id: panel.id, display_order: 0, speaker_id: 'CHAR_1', text: '', verified: 0, confidence: null }])
   }, [panel.id, panel.dialogues])
 
   useEffect(() => {
@@ -174,9 +174,14 @@ function PanelEditor({
             <div className="text-xs" style={{ color: 'var(--muted)' }}>Chưa có thoại AI nhận diện.</div>
           ) : panel.dialogues.map((d, index) => (
             <div key={d.id || index} className="rounded border px-3 py-2 text-xs" style={{ borderColor: 'var(--border)' }}>
-              <strong>{d.speaker_id}</strong>
-              <span className="mx-2" style={{ color: 'var(--muted)' }}>→</span>
-              <span>{d.text}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <strong>{d.speaker_id}</strong>
+                <span style={{ color: 'var(--muted)' }}>→</span>
+                <span className="flex-1">{d.text}</span>
+                {d.verified
+                  ? <span className="rounded-full border px-2 py-0.5 text-[10px] text-green-400" style={{borderColor:'var(--border)'}}>✓ AI đã đối chiếu</span>
+                  : <span className="rounded-full border px-2 py-0.5 text-[10px] text-amber-400" style={{borderColor:'var(--border)'}}>⚠ Cần review</span>}
+              </div>
             </div>
           ))}
         </div>
@@ -204,7 +209,7 @@ function PanelEditor({
             <button className="rounded border px-2 py-1 text-xs" style={{borderColor:'var(--border)'}}
               onClick={() => setDialogues(current => [...current, {
                 id:'', panel_id:panel.id, display_order:current.length, speaker_id:`CHAR_${current.length+1}`,
-                text:'', verified:1, confidence:null,
+                text:'', verified:0, confidence:null,
               }])}>+ Thêm câu</button>
           </div>
           {dialogues.map((d, index) => (
@@ -345,7 +350,9 @@ export default function ComicStudioPage() {
         })
         setDetails(analyzed)
         setStep('images')
-        setNotice('Đã lưu ảnh và AI tự nhận panel, thoại, speaker, vùng chữ/bong bóng.')
+        setNotice(analyzed.analysis_warnings?.length
+          ? 'AI đã phân tích và đối chiếu transcript. Có ' + analyzed.analysis_warnings.length + ' cảnh báo cần xem trong gallery.'
+          : 'AI đã phân tích và đối chiếu nguyên văn transcript từng khung.')
       } else {
         setDetails(loaded)
         setStep('analyze')
@@ -366,7 +373,9 @@ export default function ComicStudioPage() {
       setDetails(next)
       setStep('images')
       setNotice(mode === 'ai'
-        ? 'AI đã tự nhận panel, thoại, speaker và vùng chữ/bong bóng. Chỉ sửa khi nhận diện sai.'
+        ? (next.analysis_warnings?.length
+          ? 'AI đã phân tích và đối chiếu transcript. Có ' + next.analysis_warnings.length + ' cảnh báo cần xem trong gallery.'
+          : 'AI đã tự nhận panel/thoại/speaker và đối chiếu nguyên văn từng khung.')
         : 'Fallback local đã tách panel bằng gutter; không tự đọc thoại/speaker.')
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)) }
     finally { setWorking(false) }
@@ -546,6 +555,14 @@ export default function ComicStudioPage() {
 
       {(step === 'images' || step === 'approve') && details && (
         <section className="space-y-4">
+          {details.analysis_warnings && details.analysis_warnings.length > 0 && (
+            <div className="rounded-xl border p-4 text-xs text-amber-300" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
+              <div className="mb-2 font-semibold">AI transcript có cảnh báo</div>
+              <div className="space-y-1">
+                {details.analysis_warnings.map((warning, index) => <div key={index}>• {warning}</div>)}
+              </div>
+            </div>
+          )}
           <div className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
