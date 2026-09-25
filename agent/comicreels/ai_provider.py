@@ -422,8 +422,12 @@ async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[
 
     parsed["panels"] = normalized
     parsed["dialogues"] = [dict(item) for item in (parsed.get("dialogues") or []) if isinstance(item, dict)]
+    for item in parsed["dialogues"]:
+        item["verified"] = False
     warnings = [str(item) for item in (parsed.get("warnings") or [])]
-    await _cross_check_dialogues(client, path, normalized, parsed["dialogues"], warnings)
+    warnings.append(
+        "Transcript là kết quả một lượt trong cùng conversation; hãy review nếu câu thoại quan trọng tuyệt đối."
+    )
     parsed["warnings"] = warnings
     parsed["provider_receipt"] = {
         "provider": _PROVIDER,
