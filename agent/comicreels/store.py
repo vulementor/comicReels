@@ -146,8 +146,8 @@ class ComicStore:
             await db.close()
 
     async def create_project(self, *, name: str, source_path: str, sha256: str, mime: str,
-                             width: int, height: int) -> dict[str, Any]:
-        project_id = uuid.uuid4().hex
+                             width: int, height: int, project_id: str | None = None) -> dict[str, Any]:
+        project_id = project_id or uuid.uuid4().hex
         ts = now()
         await self.execute(
             """INSERT INTO comic_project
