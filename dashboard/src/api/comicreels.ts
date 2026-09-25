@@ -122,6 +122,10 @@ export const comic = {
     }),
   patchPanel: (panelId: string, data: unknown) =>
     api<ComicPanel>(`/api/comicreels/panels/${panelId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  reorderPanels: (projectId: string, panelIds: string[]) =>
+    api<ComicPanel[]>(`/api/comicreels/projects/${projectId}/reorder-panels`, {
+      method: 'POST', body: JSON.stringify({ panel_ids: panelIds }),
+    }),
   saveDialogues: (panelId: string, dialogues: unknown[]) =>
     api<ComicDialogue[]>(`/api/comicreels/panels/${panelId}/dialogues`, {
       method: 'PUT', body: JSON.stringify({ dialogues }),
