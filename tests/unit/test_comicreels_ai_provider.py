@@ -4,6 +4,8 @@ import pytest
 from PIL import Image
 
 import agent.comicreels.ai_provider as provider
+import agent.api.comicreels as comic_api
+from fastapi import HTTPException
 
 
 def test_provider_status_uses_explicit_profile_without_session_secrets(tmp_path, monkeypatch):
@@ -109,7 +111,7 @@ async def test_analyze_comic_preserves_exact_single_pass_transcript(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_generate_clean_portrait_reuses_source_conversation_without_attachment(tmp_path, monkeypatch):
+async def test_generate_clean_portrait_reuses_source_conversation_with_reference_attachment(tmp_path, monkeypatch):
     crop = tmp_path / "crop.png"
     Image.new("RGB", (800, 500), (120, 130, 140)).save(crop)
     artifact = tmp_path / "generated.png"
@@ -141,10 +143,45 @@ async def test_generate_clean_portrait_reuses_source_conversation_without_attach
     )
 
     assert calls["kwargs"]["conversation"] == conversation
-    assert "attachments" not in calls["kwargs"]
+    assert calls["kwargs"]["attachments"] == [crop]
     assert "TURN ĐẦU" in calls["prompt"]
     assert "KHUNG 1" in calls["prompt"]
     assert "9:16" in calls["prompt"]
     assert path == output
     assert protected == {"x": 0, "y": 0, "w": 576, "h": 1024}
     assert len(digest) == 64
+
+
+@pytest.mark.asyncio
+async def test_ai_generate_requires_source_conversation(tmp_path, monkeypatch):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (100, 100), (255, 255, 255)).save(crop)
+
+    async def fake_panel(_panel_id):
+        return {
+            "id": "panel-1",
+            "project_id": "project-1",
+            "crop_path": str(crop),
+            "mask_json": '[{"x":1,"y":2,"w":20,"h":10}]',
+            "display_order": 0,
+        }
+
+    async def fake_details(_project_id):
+        return {
+            "project": {"id": "project-1", "ai_conversation_url": None},
+            "panels": [],
+        }
+
+    monkeypatch.setattr(comic_api.store, "panel", fake_panel)
+    monkeypatch.setattr(comic_api, "_details", fake_details)
+    monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
+    monkeypatch.setattr(comic_api, "project_dir", lambda _project_id: tmp_path)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await comic_api.ai_generate_panel(
+            "panel-1",
+            comic_api.AIImageBody(confirm_paid=True),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "conversation" in str(exc_info.value.detail).lower()
