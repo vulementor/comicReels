@@ -22,8 +22,8 @@
 | 15 | Kiểm duyệt và ghép video | Đối chiếu thoại/nhân vật bằng công cụ hỗ trợ + anh nghe xem; lỗi được tạo lại riêng; chỉ ghép các shot đạt yêu cầu |
 | 16 | Đóng gói và bảo trì | Hướng dẫn sử dụng, cách backup, phục hồi kết nối, kiểm tra cập nhật upstream, checklist bản phát hành |
 
-## Trạng thái và phân đoạn kế tiếp
-Đoạn 1: fork công khai đã được xác minh; nhánh `segment/01-foundation` chứa đặc tả và chờ nghiệm thu. Chỉ khi anh xác nhận OK báo cáo Đoạn 1 thì mới bắt đầu Đoạn 2 (khởi động và khung giao diện). Không triển khai Đoạn 2 trong PR tài liệu này.
+## Checkpoint chính thức
+Đoạn 0/1 đã được anh đồng ý cho chuyển bước, vẫn thiếu kiểm thử runtime; Đoạn 2 có PR #2 đang chờ nghiệm thu kỹ thuật và anh duyệt; Đoạn 3–16 chưa được phép triển khai. PR #1/#2 vẫn Draft, chưa merge vào main. Xem [CHECKPOINTS.md](CHECKPOINTS.md) và [đặc tả từng đoạn](stages/).
 
 ## Mẫu báo cáo kết thúc một đoạn
 - Phạm vi đã được anh duyệt; những gì thực sự hoàn thành.
