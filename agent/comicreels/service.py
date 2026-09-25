@@ -53,6 +53,10 @@ async def import_source(name: str, data: bytes, mime: str) -> dict:
             im.verify()
         with Image.open(path) as im:
             width, height = im.size
+            actual_format = (im.format or "").upper()
+            expected_formats = {"image/png": {"PNG"}, "image/jpeg": {"JPEG"}, "image/webp": {"WEBP"}}
+            if actual_format not in expected_formats[mime]:
+                raise ValueError("MIME khai báo không khớp định dạng ảnh thực tế")
             if width <= 0 or height <= 0 or width * height > MAX_PIXELS:
                 raise ValueError("Kích thước ảnh không hợp lệ hoặc vượt giới hạn an toàn")
     except Exception:
@@ -364,6 +368,13 @@ async def restore_project_backup(data: bytes, *, name_override: str | None = Non
                 if not source_name:
                     raise ValueError("Backup thiếu ảnh nguồn")
                 source_data=z.read(source_name)
+                source_digest=_sha(source_data)
+                existing=next((p for p in await repo.list_projects() if p.get("source_sha256")==source_digest),None)
+                if existing:
+                    raise ValueError(
+                        "Ảnh nguồn của backup đã tồn tại trong dự án khác. "
+                        "Hãy mở dự án hiện có hoặc xóa dự án đó trước khi restore để tránh ghi đè."
+                    )
                 mime=bundle.get("source_mime") or mimetypes.guess_type(source_name)[0] or "image/png"
                 project=await import_source(name_override or bundle.get("name") or "ComicReels restore", source_data, mime)
                 pid=project["id"]
