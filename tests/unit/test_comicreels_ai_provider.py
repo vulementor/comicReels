@@ -224,3 +224,68 @@ async def test_three_panels_reuse_one_conversation_without_reupload(tmp_path, mo
     assert all(call["conversation"] == conversation for call in calls)
     assert all(call["attachments"] == [] for call in calls)
     assert ["KHUNG 1" in calls[0]["prompt"], "KHUNG 2" in calls[1]["prompt"], "KHUNG 3" in calls[2]["prompt"]] == [True, True, True]
+
+
+@pytest.mark.asyncio
+async def test_verify_dialogues_reuses_exact_conversation_without_attachments(monkeypatch):
+    calls = {"open": [], "reply": [], "wait": []}
+
+    class FakeHandle:
+        def reply(self, *, text, idempotency_key, visible):
+            calls["reply"].append({
+                "text": text,
+                "idempotency_key": idempotency_key,
+                "visible": visible,
+            })
+            return SimpleNamespace(
+                state="completed",
+                reason=None,
+                user_message=SimpleNamespace(provider_message_id="user-msg-1"),
+            )
+
+        def wait_for_new_message(self, *, after_message_id, role, timeout, visible):
+            calls["wait"].append({
+                "after_message_id": after_message_id,
+                "role": role,
+                "timeout": timeout,
+                "visible": visible,
+            })
+            return SimpleNamespace(
+                text='''{
+                  "dialogues":[
+                    {"panel_index":0,"display_order":0,"speaker_id":"CHAR_1","text":"LŨ KHỐN NẠN"},
+                    {"panel_index":1,"display_order":0,"speaker_id":"CHAR_2","text":"NHƯNG ÔNG CÓ SỪNG SẴN RỒI MÀ"},
+                    {"panel_index":2,"display_order":0,"speaker_id":"CHAR_1","text":"Ừ, QUÊN."}
+                  ]
+                }'''
+            )
+
+    class FakeChat:
+        def open(self, conversation):
+            calls["open"].append(conversation)
+            return FakeHandle()
+
+    conversation = "https://chatgpt.com/c/one-comic-session"
+    rows = [
+        {"panel_index":0,"display_order":0,"speaker_id":"CHAR_1","text":"LŨ KHỐN NẠN","verified":False},
+        {"panel_index":1,"display_order":0,"speaker_id":"CHAR_2","text":"NHƯNG ỔNG CÓ SỪNG SẴN RỒI MÀ","verified":False},
+        {"panel_index":2,"display_order":0,"speaker_id":"CHAR_1","text":"Ừ, QUÊN.","verified":False},
+    ]
+
+    result = await provider.verify_dialogues_in_conversation(
+        conversation,
+        rows,
+        client=SimpleNamespace(chat=FakeChat()),
+    )
+
+    assert calls["open"] == [conversation]
+    assert len(calls["reply"]) == 1
+    assert "upload" in calls["reply"][0]["text"].lower()
+    assert calls["wait"][0]["after_message_id"] == "user-msg-1"
+    assert calls["wait"][0]["role"] == "assistant"
+    assert [row["text"] for row in result] == [
+        "LŨ KHỐN NẠN",
+        "NHƯNG ÔNG CÓ SỪNG SẴN RỒI MÀ",
+        "Ừ, QUÊN.",
+    ]
+    assert all(row["verified"] is True for row in result)
