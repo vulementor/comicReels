@@ -289,3 +289,52 @@ async def test_verify_dialogues_reuses_exact_conversation_without_attachments(mo
         "Ừ, QUÊN.",
     ]
     assert all(row["verified"] is True for row in result)
+
+
+@pytest.mark.asyncio
+async def test_verify_dialogues_consumes_stable_assistant_receipt_without_second_wait():
+    calls = {"open": [], "reply": 0, "wait": 0}
+
+    class FakeHandle:
+        def reply(self, *, text, idempotency_key, visible):
+            calls["reply"] += 1
+            return SimpleNamespace(
+                state="completed",
+                reason=None,
+                assistant_text='''{
+                  "dialogues":[
+                    {"panel_index":0,"display_order":0,"speaker_id":"CHAR_1","text":"LŨ KHỐN NẠN"},
+                    {"panel_index":1,"display_order":0,"speaker_id":"CHAR_2","text":"NHƯNG ÔNG CÓ SỪNG SẴN RỒI MÀ"}
+                  ]
+                }''',
+                user_message=None,
+            )
+
+        def wait_for_new_message(self, **_kwargs):
+            calls["wait"] += 1
+            raise AssertionError("assistant receipt should avoid a second browser wait")
+
+    class FakeChat:
+        def open(self, conversation):
+            calls["open"].append(conversation)
+            return FakeHandle()
+
+    rows = [
+        {"panel_index":0,"display_order":0,"speaker_id":"CHAR_1","text":"LŨ KHỐN NẠN"},
+        {"panel_index":1,"display_order":0,"speaker_id":"CHAR_2","text":"NHƯNG ỔNG CÓ SỪNG SẴN RỒI MÀ"},
+    ]
+
+    result = await provider.verify_dialogues_in_conversation(
+        "https://chatgpt.com/c/existing",
+        rows,
+        client=SimpleNamespace(chat=FakeChat()),
+    )
+
+    assert calls["open"] == ["https://chatgpt.com/c/existing"]
+    assert calls["reply"] == 1
+    assert calls["wait"] == 0
+    assert [row["text"] for row in result] == [
+        "LŨ KHỐN NẠN",
+        "NHƯNG ÔNG CÓ SỪNG SẴN RỒI MÀ",
+    ]
+    assert all(row["verified"] is True for row in result)
