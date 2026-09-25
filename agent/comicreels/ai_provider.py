@@ -445,14 +445,20 @@ async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[
     return parsed
 
 
-def _image_prompt(regions: list[dict[str, int]], panel_context: str) -> str:
+def _image_prompt(
+    regions: list[dict[str, int]],
+    panel_context: str,
+    panel_index: int,
+) -> str:
     region_text = ", ".join(
         f"(x={r['x']},y={r['y']},w={r['w']},h={r['h']})" for r in regions
     ) or "các speech bubble/text nhìn thấy trong ảnh"
     return f"""
-Dùng CHÍNH ảnh đính kèm làm reference bắt buộc.
+Dùng CHÍNH ảnh nguồn đã được upload ở TURN ĐẦU của conversation này làm reference bắt buộc.
+Không yêu cầu upload lại ảnh và không dùng ảnh từ conversation khác.
 
-Tạo lại cảnh truyện thành ảnh dọc 9:16 hoàn chỉnh dùng cho video.
+Chỉ xử lý KHUNG ${panel_index + 1} của ảnh nguồn.
+Tạo lại riêng cảnh của khung đó thành ảnh dọc 9:16 hoàn chỉnh dùng cho video.
 
 BẮT BUỘC:
 - Giữ nguyên tuyệt đối thiết kế nhân vật, khuôn mặt, biểu cảm, tỷ lệ cơ thể,
@@ -476,10 +482,14 @@ async def generate_clean_portrait(
     regions: list[dict[str, int]],
     output_path: Path,
     *,
+    conversation_url: str,
+    panel_index: int,
     panel_context: str = "",
 ) -> tuple[Path, dict[str, int], str]:
     if not crop_path.is_file():
-        raise RuntimeError("Không tìm thấy crop panel để gửi ChatGPT.")
+        raise RuntimeError("Không tìm thấy crop panel local để đối chiếu kết quả.")
+    if not conversation_url:
+        raise RuntimeError("Project chưa có ChatGPT conversation từ lần phân tích đầu.")
     if not regions:
         raise RuntimeError(
             "AI chưa xác định vùng chữ/bong bóng cho panel này. "
@@ -489,12 +499,12 @@ async def generate_clean_portrait(
     client = _client()
     artifact_dir = output_path.parent / "gptfp-artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    prompt = _image_prompt(regions, panel_context)
+    prompt = _image_prompt(regions, panel_context, panel_index)
 
     result = await asyncio.to_thread(
         client.image.generate,
         prompt,
-        attachments=[crop_path],
+        conversation=conversation_url,
         output_dir=artifact_dir,
         visible=_VISIBLE,
     )
