@@ -6,6 +6,7 @@ ChatGPT Web browser identity through the public gpt_fullproxy Python SDK.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib.util
 import json
 import os
@@ -159,6 +160,135 @@ Schema:
 """.strip()
 
 
+
+
+def _dialogue_verification_prompt(dialogues: list[dict[str, Any]]) -> str:
+    rows = [
+        {
+            "panel_index": int(item.get("panel_index", 0)),
+            "display_order": int(item.get("display_order", 0)),
+            "speaker_id": str(item.get("speaker_id") or "UNKNOWN"),
+            "text": str(item.get("text") or ""),
+        }
+        for item in dialogues
+    ]
+    return f"""
+Dựa CHỈ vào ảnh nguồn đã upload ở TURN ĐẦU của chính conversation này.
+KHÔNG yêu cầu upload lại ảnh, KHÔNG dùng ảnh từ chat khác.
+
+Hãy đọc lại TOÀN BỘ lời thoại của mọi panel theo thứ tự đọc và kiểm tra từng ký tự.
+Giữ nguyên panel_index, display_order và speaker_id của danh sách ứng viên bên dưới.
+Chỉ sửa trường text nếu ảnh nguồn cho thấy ứng viên đọc sai.
+Đặc biệt phân biệt chính xác Ô/Ơ/Ổ/Ỗ/Ộ, Ă/Â, Ê, Ư và mọi dấu tiếng Việt.
+Không sửa chính tả theo ngữ cảnh, không dịch, không thêm bớt câu.
+
+Ứng viên:
+{json.dumps(rows, ensure_ascii=False)}
+
+Trả DUY NHẤT JSON:
+{{
+  "dialogues": [
+    {{
+      "panel_index": 0,
+      "display_order": 0,
+      "speaker_id": "CHAR_1",
+      "text": "NGUYÊN VĂN TRONG ẢNH"
+    }}
+  ]
+}}
+""".strip()
+
+
+async def verify_dialogues_in_conversation(
+    conversation_url: str,
+    dialogues: list[dict[str, Any]],
+    *,
+    client=None,
+) -> list[dict[str, Any]]:
+    if not conversation_url:
+        raise RuntimeError("Thiếu ChatGPT conversation URL để kiểm tra thoại.")
+    if not dialogues:
+        return []
+
+    active_client = client or _client()
+    prompt = _dialogue_verification_prompt(dialogues)
+    payload = json.dumps(
+        [
+            {
+                "panel_index": int(item.get("panel_index", 0)),
+                "display_order": int(item.get("display_order", 0)),
+                "speaker_id": str(item.get("speaker_id") or "UNKNOWN"),
+                "text": str(item.get("text") or ""),
+            }
+            for item in dialogues
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    digest = hashlib.sha256((conversation_url + "\n" + payload).encode("utf-8")).hexdigest()[:32]
+    idempotency_key = f"comicreels-dialogue-verify:{digest}"
+
+    def _run():
+        handle = active_client.chat.open(conversation_url)
+        reply = handle.reply(
+            text=prompt,
+            idempotency_key=idempotency_key,
+            visible=_VISIBLE,
+        )
+        if reply.state != "completed" or reply.user_message is None:
+            raise RuntimeError(
+                f"GPT FullProxy dialogue verify chưa gửi được: {reply.state}: {reply.reason or 'không có user receipt'}"
+            )
+        anchor = reply.user_message.provider_message_id
+        if not anchor:
+            raise RuntimeError("GPT FullProxy dialogue verify thiếu provider user-message id.")
+        message = handle.wait_for_new_message(
+            after_message_id=anchor,
+            role="assistant",
+            timeout=180.0,
+            visible=_VISIBLE,
+        )
+        if message is None or not message.text:
+            raise RuntimeError("ChatGPT không trả transcript verification trong thời gian chờ.")
+        return message.text
+
+    verified_text = await asyncio.to_thread(_run)
+    parsed = _extract_json(verified_text)
+    raw = parsed.get("dialogues")
+    if not isinstance(raw, list):
+        raise RuntimeError("ChatGPT dialogue verification thiếu mảng dialogues.")
+
+    candidates = {
+        (int(item.get("panel_index", 0)), int(item.get("display_order", 0))): item
+        for item in dialogues
+    }
+    verified: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        key = (int(item.get("panel_index", -1)), int(item.get("display_order", -1)))
+        current = candidates.get(key)
+        if current is None:
+            raise RuntimeError("ChatGPT dialogue verification đổi panel/order ngoài contract.")
+        speaker_id = str(item.get("speaker_id") or "")
+        if speaker_id != str(current.get("speaker_id") or ""):
+            raise RuntimeError("ChatGPT dialogue verification đổi speaker_id ngoài contract.")
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("ChatGPT dialogue verification trả text rỗng.")
+        row = dict(current)
+        row["text"] = text
+        row["verified"] = True
+        verified.append(row)
+
+    if len(verified) != len(dialogues):
+        raise RuntimeError(
+            f"ChatGPT dialogue verification trả {len(verified)}/{len(dialogues)} câu; không áp dụng một phần."
+        )
+    return sorted(
+        verified,
+        key=lambda item: (int(item.get("panel_index", 0)), int(item.get("display_order", 0))),
+    )
 
 
 async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[str, Any]:
