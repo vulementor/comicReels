@@ -35,7 +35,12 @@ from agent.comicreels.images import (
 )
 from agent.comicreels.prompts import SUPPORTED_DURATIONS, build_shots
 from agent.comicreels.store import ROOT, store
-from agent.comicreels.ai_provider import analyze_comic, generate_clean_portrait, provider_status
+from agent.comicreels.ai_provider import (
+    analyze_comic,
+    generate_clean_portrait,
+    provider_status,
+    verify_dialogues_in_conversation,
+)
 from agent.comicreels.vision import analyze as vision_analyze
 from agent.config import FLOW_PROJECT_ID
 from agent.services.flow_client import get_flow_client
@@ -332,6 +337,54 @@ async def analyze_project(project_id: str, body: AnalyzeBody):
     ]
     response["analysis_mode"] = "heuristic"
     return response
+
+
+@router.post("/projects/{project_id}/verify-dialogues")
+async def verify_project_dialogues(project_id: str):
+    details = await _details(project_id)
+    project = details["project"]
+    conversation_url = str(project.get("ai_conversation_url") or "").strip()
+    if not conversation_url:
+        raise HTTPException(409, "Project chưa có ChatGPT conversation nguồn.")
+
+    candidates: list[dict[str, Any]] = []
+    dialogue_index: dict[tuple[int, int], dict[str, Any]] = {}
+    for panel in details["panels"]:
+        panel_index = int(panel["display_order"])
+        for dialogue in panel.get("dialogues", []):
+            order = int(dialogue.get("display_order", 0))
+            candidates.append({
+                "panel_index": panel_index,
+                "display_order": order,
+                "speaker_id": str(dialogue.get("speaker_id") or "UNKNOWN"),
+                "text": str(dialogue.get("text") or ""),
+            })
+            dialogue_index[(panel_index, order)] = dialogue
+
+    if not candidates:
+        raise HTTPException(409, "Project chưa có lời thoại để kiểm tra.")
+
+    try:
+        verified = await verify_dialogues_in_conversation(conversation_url, candidates)
+    except Exception as exc:
+        raise HTTPException(502, f"AI kiểm tra thoại thất bại: {exc}") from exc
+
+    for row in verified:
+        key = (int(row["panel_index"]), int(row["display_order"]))
+        current = dialogue_index.get(key)
+        if current is None:
+            raise HTTPException(502, "AI trả dialogue ngoài mapping hiện tại.")
+        await store.upsert_dialogue(
+            current["panel_id"],
+            dialogue_id=current["id"],
+            order=int(row["display_order"]),
+            speaker_id=str(row["speaker_id"]),
+            text=str(row["text"]),
+            verified=True,
+            confidence=current.get("confidence"),
+        )
+    await store.clear_shots(project_id)
+    return await _details(project_id)
 
 
 @router.put("/projects/{project_id}/analysis")
