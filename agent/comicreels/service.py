@@ -206,7 +206,10 @@ async def process_panel(panel_id: str, *, boxes: list[dict] | None = None,
     vertical = pdir / "vertical.png"
     image_ops.crop_panel(project["source_path"], panel, crop)
     if boxes is None:
-        boxes = [d["bbox"] for d in await repo.list_dialogues(panel_id) if d.get("bbox")]
+        dialogues = await repo.list_dialogues(panel_id)
+        if dialogues and any(not d.get("bbox") for d in dialogues):
+            raise ValueError("Panel còn thoại chưa có bbox; không xử lý để tránh sót chữ hoặc xóa sai vùng")
+        boxes = [d["bbox"] for d in dialogues if d.get("bbox")]
     with Image.open(crop) as im:
         size = im.size
     image_ops.make_mask(size, boxes or [], mask, padding=padding)
@@ -345,7 +348,10 @@ async def restore_project_backup(data: bytes, *, name_override: str | None = Non
     with tempfile.TemporaryDirectory(prefix="comicreels-restore-") as td:
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as z:
-                names=z.namelist()
+                infos=z.infolist()
+                names=[i.filename for i in infos]
+                if len(infos) > 5000 or sum(i.file_size for i in infos) > 1024 * 1024 * 1024:
+                    raise ValueError("Backup có quá nhiều file hoặc vượt 1 GB sau giải nén")
                 if "comicreels-backup.json" not in names:
                     raise ValueError("ZIP không phải backup ComicReels")
                 for name in names:
