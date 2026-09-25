@@ -505,6 +505,7 @@ async def generate_clean_portrait(
         client.image.generate,
         prompt,
         conversation=conversation_url,
+        attachments=[crop_path],
         output_dir=artifact_dir,
         visible=_VISIBLE,
     )
