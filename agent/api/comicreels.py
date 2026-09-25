@@ -380,7 +380,7 @@ async def verify_project_dialogues(project_id: str):
             order=int(row["display_order"]),
             speaker_id=str(row["speaker_id"]),
             text=str(row["text"]),
-            verified=True,
+            verified=False,
             confidence=current.get("confidence"),
         )
     await store.clear_shots(project_id)
