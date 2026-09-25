@@ -178,3 +178,59 @@ async def test_apply_visual_anchors_rejects_partial_set_without_mutation(tmp_pat
     assert [panel["status"] for panel in loaded["panels"]] == ["AI_IMAGE_READY", "AI_IMAGE_READY"]
     assert all(panel["visual_anchor"] is None for panel in loaded["panels"])
     assert all(panel["portrait_path"] == "/tmp/legacy.png" for panel in loaded["panels"])
+
+
+@pytest.mark.asyncio
+async def test_apply_visual_anchor_validation_invalidates_only_changed_panel(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_module, "ROOT", tmp_path / "comicreels")
+    monkeypatch.setattr(store_module, "DB_PATH", tmp_path / "comicreels" / "comicreels.db")
+    s = ComicStore()
+    await s.create_project(
+        project_id="p-validate",
+        name="Validate",
+        source_path=str(tmp_path / "source.png"),
+        sha256="e" * 64,
+        mime="image/png",
+        width=1200,
+        height=1600,
+    )
+    await s.replace_analysis(
+        "p-validate",
+        panels=[
+            {"x": 0, "y": 0, "w": 1200, "h": 500, "mask": [], "visual_anchor": "anchor-0-current-source-geometry"},
+            {"x": 0, "y": 500, "w": 1200, "h": 500, "mask": [], "visual_anchor": "anchor-1-current-source-geometry"},
+            {"x": 0, "y": 1000, "w": 1200, "h": 600, "mask": [], "visual_anchor": "anchor-2-current-source-geometry"},
+        ],
+        dialogues=[],
+    )
+    seeded = await s.get_project("p-validate")
+    for index, panel in enumerate(seeded["panels"]):
+        await s.update_panel(
+            panel["id"],
+            portrait_path=f"/tmp/portrait-{index}.png",
+            portrait_sha256=str(index + 3) * 64,
+            status="AI_IMAGE_READY",
+        )
+
+    changed = await s.apply_visual_anchor_validation(
+        "p-validate",
+        {
+            0: {"matches_source": True, "corrected_anchor": ""},
+            1: {"matches_source": True, "corrected_anchor": ""},
+            2: {
+                "matches_source": False,
+                "corrected_anchor": "panel 3 corrected: orange bull turned left; rabbit and cow remain on bed right",
+            },
+        },
+    )
+
+    loaded = await s.get_project("p-validate")
+    assert changed == [2]
+    assert loaded["panels"][0]["status"] == "AI_IMAGE_READY"
+    assert loaded["panels"][0]["portrait_path"] == "/tmp/portrait-0.png"
+    assert loaded["panels"][1]["status"] == "AI_IMAGE_READY"
+    assert loaded["panels"][1]["portrait_path"] == "/tmp/portrait-1.png"
+    assert loaded["panels"][2]["status"] == "EXTRACTED"
+    assert loaded["panels"][2]["portrait_path"] is None
+    assert loaded["panels"][2]["portrait_sha256"] is None
+    assert "turned left" in loaded["panels"][2]["visual_anchor"]

@@ -392,6 +392,103 @@ async def test_backfill_visual_anchors_rejects_partial_receipt(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_validate_visual_anchors_marks_only_wrong_panel(monkeypatch):
+    calls = {"open": [], "reply": 0}
+
+    class FakeHandle:
+        def reply(self, *, text, idempotency_key, visible):
+            calls["reply"] += 1
+            assert "TURN ĐẦU" in text
+            assert "matches_source" in text
+            assert idempotency_key.startswith("comicreels-visual-anchor-validate-v1:")
+            return SimpleNamespace(
+                state="completed",
+                reason=None,
+                assistant_text='''{
+                  "panels":[
+                    {"panel_index":0,"matches_source":true,"corrected_anchor":"","reason":"đúng"},
+                    {"panel_index":1,"matches_source":true,"corrected_anchor":"","reason":"đúng"},
+                    {"panel_index":2,"matches_source":false,
+                     "corrected_anchor":"Bò cam ở bên trái đã quay đầu và thân sang trái; thỏ trắng ngồi trên giường giữa-phải, bò sữa nằm bên phải.",
+                     "reason":"anchor cũ ghi sai hướng bò"}
+                  ]
+                }''',
+                user_message=None,
+            )
+
+    class FakeChat:
+        def open(self, conversation):
+            calls["open"].append(conversation)
+            return FakeHandle()
+
+    panels = [
+        {
+            "panel_index": index,
+            "x": 0,
+            "y": index * 100,
+            "w": 800,
+            "h": 500,
+            "visual_anchor": f"CURRENT_ANCHOR_PANEL_{index + 1} đủ dài để validate.",
+            "dialogues": [],
+        }
+        for index in range(3)
+    ]
+    conversation = "https://chatgpt.com/c/existing-comic"
+
+    result = await provider.validate_visual_anchors_in_conversation(
+        conversation,
+        panels,
+        source_width=1200,
+        source_height=1600,
+        client=SimpleNamespace(chat=FakeChat()),
+    )
+
+    assert calls == {"open": [conversation], "reply": 1}
+    assert result[0]["matches_source"] is True
+    assert result[1]["matches_source"] is True
+    assert result[2]["matches_source"] is False
+    assert "quay đầu và thân sang trái" in result[2]["corrected_anchor"]
+
+
+@pytest.mark.asyncio
+async def test_validate_visual_anchors_rejects_partial_response():
+    class FakeHandle:
+        def reply(self, **_kwargs):
+            return SimpleNamespace(
+                state="completed",
+                reason=None,
+                assistant_text='''{
+                  "panels":[
+                    {"panel_index":0,"matches_source":true,"corrected_anchor":"","reason":"ok"}
+                  ]
+                }''',
+                user_message=None,
+            )
+
+    panels = [
+        {
+            "panel_index": index,
+            "x": 0,
+            "y": index * 100,
+            "w": 800,
+            "h": 500,
+            "visual_anchor": f"CURRENT_ANCHOR_PANEL_{index + 1} đủ dài để validate.",
+            "dialogues": [],
+        }
+        for index in range(2)
+    ]
+
+    with pytest.raises(RuntimeError, match="1/2"):
+        await provider.validate_visual_anchors_in_conversation(
+            "https://chatgpt.com/c/existing-comic",
+            panels,
+            source_width=1200,
+            source_height=1600,
+            client=SimpleNamespace(chat=SimpleNamespace(open=lambda _url: FakeHandle())),
+        )
+
+
+@pytest.mark.asyncio
 async def test_verify_dialogues_reuses_exact_conversation_without_attachments(monkeypatch):
     calls = {"open": [], "reply": [], "wait": []}
 
@@ -661,6 +758,86 @@ async def test_backfill_route_applies_all_anchors_atomically(monkeypatch):
             2: "Anchor two with enough panel-specific geometry for generation.",
         },
     )]
+
+
+@pytest.mark.asyncio
+async def test_validate_visual_anchor_route_changes_only_reported_panel(monkeypatch):
+    details = {
+        "project": {
+            "id": "project-anchor-validate",
+            "ai_conversation_url": "https://chatgpt.com/c/existing",
+            "source_width": 1200,
+            "source_height": 1600,
+        },
+        "panels": [
+            {
+                "id": f"panel-{index}",
+                "display_order": index,
+                "x": 0,
+                "y": index * 500,
+                "w": 1200,
+                "h": 500,
+                "visual_anchor": f"current anchor {index} with enough source geometry",
+                "dialogues": [],
+            }
+            for index in range(3)
+        ],
+        "shots": [],
+    }
+    calls = {"provider": [], "apply": []}
+
+    async def fake_details(_project_id):
+        return details
+
+    async def fake_validate(conversation_url, panels, *, source_width, source_height):
+        calls["provider"].append((conversation_url, panels, source_width, source_height))
+        return {
+            0: {
+                "matches_source": True,
+                "current_anchor": details["panels"][0]["visual_anchor"],
+                "corrected_anchor": "",
+                "reason": "ok",
+            },
+            1: {
+                "matches_source": True,
+                "current_anchor": details["panels"][1]["visual_anchor"],
+                "corrected_anchor": "",
+                "reason": "ok",
+            },
+            2: {
+                "matches_source": False,
+                "current_anchor": details["panels"][2]["visual_anchor"],
+                "corrected_anchor": "corrected panel 3 anchor: orange bull turns left, bed remains on right",
+                "reason": "wrong direction",
+            },
+        }
+
+    async def fake_apply(project_id, validations):
+        calls["apply"].append((project_id, validations))
+        return [2]
+
+    monkeypatch.setattr(comic_api, "_details", fake_details)
+    monkeypatch.setattr(
+        comic_api,
+        "validate_visual_anchors_in_conversation",
+        fake_validate,
+    )
+    monkeypatch.setattr(
+        comic_api.store,
+        "apply_visual_anchor_validation",
+        fake_apply,
+    )
+
+    result = await comic_api.validate_project_visual_anchors("project-anchor-validate")
+
+    assert len(calls["provider"]) == 1
+    assert len(calls["apply"]) == 1
+    assert result["visual_anchor_validation"]["changed_panel_indexes"] == [2]
+    assert result["visual_anchor_validation"]["panels"] == [
+        {"panel_index": 0, "matches_source": True, "reason": "ok"},
+        {"panel_index": 1, "matches_source": True, "reason": "ok"},
+        {"panel_index": 2, "matches_source": False, "reason": "wrong direction"},
+    ]
 
 
 @pytest.mark.asyncio

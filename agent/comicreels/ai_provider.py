@@ -23,6 +23,7 @@ from agent.comicreels.images import clamp_box, sha256_file
 _PROVIDER = "gpt_fullproxy"
 _DIALOGUE_VERIFY_REVISION = "v3"
 _VISUAL_ANCHOR_REVISION = "v1"
+_VISUAL_ANCHOR_VALIDATE_REVISION = "v1"
 _PROFILE_NAME = os.environ.get("COMICREELS_GPTFP_PROFILE", "zaloconnect-chatgpt")
 _VISIBLE = os.environ.get("COMICREELS_GPTFP_VISIBLE", "1").strip().lower() not in {
     "0", "false", "no", "off",
@@ -469,6 +470,196 @@ async def backfill_visual_anchors_in_conversation(
             "không áp dụng một phần."
         )
     return anchors
+
+
+def _visual_anchor_validation_prompt(
+    panels: list[dict[str, Any]],
+    *,
+    source_width: int,
+    source_height: int,
+) -> str:
+    rows = [
+        {
+            "panel_index": int(panel.get("panel_index", panel.get("display_order", 0))),
+            "x": int(panel["x"]),
+            "y": int(panel["y"]),
+            "w": int(panel["w"]),
+            "h": int(panel["h"]),
+            "visual_anchor": str(panel.get("visual_anchor") or "").strip(),
+            "dialogues": [
+                {
+                    "speaker_id": str(item.get("speaker_id") or "UNKNOWN"),
+                    "text": str(item.get("text") or ""),
+                }
+                for item in (panel.get("dialogues") or [])
+            ],
+        }
+        for panel in panels
+    ]
+    return f"""
+ComicReels visual-anchor validation revision: {_VISUAL_ANCHOR_VALIDATE_REVISION}
+Dựa CHỈ vào ẢNH NGUỒN đã upload ở TURN ĐẦU của chính conversation này.
+KHÔNG upload lại ảnh. KHÔNG dùng bất kỳ ảnh AI nào ở các TURN SAU làm reference.
+
+Ảnh nguồn có kích thước {source_width}x{source_height}px.
+Với TỪNG panel dưới đây, hãy nhìn đúng bbox trên ảnh nguồn rồi kiểm tra visual_anchor hiện tại
+có mô tả đúng pose, hướng mặt/hướng nhìn, vị trí tương đối và framing của panel đó hay không.
+
+QUY TẮC:
+- Nếu anchor hiện tại đúng về hình học/pose/framing, matches_source=true và corrected_anchor="".
+- Nếu anchor hiện tại sai BẤT KỲ chi tiết hình học quan trọng nào, matches_source=false và corrected_anchor
+  phải là mô tả đầy đủ, chính xác thay thế anchor cũ.
+- Đặc biệt kiểm tra hướng quay trái/phải, đứng/ngồi/nằm/quay lưng, vị trí nhân vật và ai nhìn ai.
+- Không suy diễn cốt truyện. Không mượn pose từ panel khác. Không dùng output ảnh AI cũ.
+
+Panels cần kiểm tra:
+{json.dumps(rows, ensure_ascii=False)}
+
+Trả DUY NHẤT JSON:
+{{
+  "panels": [
+    {{
+      "panel_index": 0,
+      "matches_source": true,
+      "corrected_anchor": "",
+      "reason": "ngắn gọn"
+    }}
+  ]
+}}
+""".strip()
+
+
+async def validate_visual_anchors_in_conversation(
+    conversation_url: str,
+    panels: list[dict[str, Any]],
+    *,
+    source_width: int,
+    source_height: int,
+    client=None,
+) -> dict[int, dict[str, Any]]:
+    if not conversation_url:
+        raise RuntimeError("Thiếu ChatGPT conversation URL để validate visual anchor.")
+    if not panels:
+        return {}
+    for panel in panels:
+        if not str(panel.get("visual_anchor") or "").strip():
+            raise RuntimeError("Không thể validate panel chưa có visual anchor.")
+
+    active_client = client or _client()
+    prompt = _visual_anchor_validation_prompt(
+        panels,
+        source_width=source_width,
+        source_height=source_height,
+    )
+    payload = json.dumps(
+        [
+            {
+                "panel_index": int(panel.get("panel_index", panel.get("display_order", 0))),
+                "x": int(panel["x"]),
+                "y": int(panel["y"]),
+                "w": int(panel["w"]),
+                "h": int(panel["h"]),
+                "visual_anchor": str(panel.get("visual_anchor") or "").strip(),
+            }
+            for panel in panels
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    digest = hashlib.sha256(
+        (
+            conversation_url
+            + "\n"
+            + _VISUAL_ANCHOR_VALIDATE_REVISION
+            + "\n"
+            + str(source_width)
+            + "x"
+            + str(source_height)
+            + "\n"
+            + payload
+        ).encode("utf-8")
+    ).hexdigest()[:32]
+    idempotency_key = f"comicreels-visual-anchor-validate-v1:{digest}"
+
+    def _run():
+        handle = active_client.chat.open(conversation_url)
+        reply = handle.reply(
+            text=prompt,
+            idempotency_key=idempotency_key,
+            visible=_VISIBLE,
+        )
+        if reply.state != "completed":
+            raise RuntimeError(
+                f"GPT FullProxy visual-anchor validate chưa hoàn tất: "
+                f"{reply.state}: {reply.reason or 'không có receipt'}"
+            )
+        if getattr(reply, "assistant_text", None):
+            return str(reply.assistant_text)
+        if reply.user_message is None:
+            raise RuntimeError(
+                "GPT FullProxy visual-anchor validate thiếu cả assistant receipt và user receipt."
+            )
+        anchor = reply.user_message.provider_message_id
+        if not anchor:
+            raise RuntimeError("GPT FullProxy visual-anchor validate thiếu provider user-message id.")
+        message = handle.wait_for_new_message(
+            after_message_id=anchor,
+            role="assistant",
+            timeout=180.0,
+            visible=_VISIBLE,
+        )
+        if message is None or not message.text:
+            raise RuntimeError("ChatGPT không trả visual-anchor validation trong thời gian chờ.")
+        return message.text
+
+    assistant_text = await asyncio.to_thread(_run)
+    parsed = _extract_json(assistant_text)
+    raw = parsed.get("panels")
+    if not isinstance(raw, list):
+        raise RuntimeError("ChatGPT visual-anchor validation thiếu mảng panels.")
+
+    expected = {
+        int(panel.get("panel_index", panel.get("display_order", 0))): str(
+            panel.get("visual_anchor") or ""
+        ).strip()
+        for panel in panels
+    }
+    validations: dict[int, dict[str, Any]] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        panel_index = int(item.get("panel_index", -1))
+        if panel_index not in expected:
+            raise RuntimeError("ChatGPT visual-anchor validation đổi panel_index ngoài contract.")
+        if panel_index in validations:
+            raise RuntimeError("ChatGPT visual-anchor validation trả panel_index trùng lặp.")
+        matches_source = item.get("matches_source")
+        if not isinstance(matches_source, bool):
+            raise RuntimeError("ChatGPT visual-anchor validation thiếu matches_source boolean.")
+        corrected_anchor = str(item.get("corrected_anchor") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        if matches_source:
+            corrected_anchor = ""
+        else:
+            if len(corrected_anchor) < 20:
+                raise RuntimeError(
+                    "ChatGPT visual-anchor validation báo sai nhưng corrected_anchor quá ngắn hoặc rỗng."
+                )
+            if len(corrected_anchor) > 1200:
+                raise RuntimeError("ChatGPT visual-anchor validation trả corrected_anchor quá dài.")
+        validations[panel_index] = {
+            "matches_source": matches_source,
+            "current_anchor": expected[panel_index],
+            "corrected_anchor": corrected_anchor,
+            "reason": reason[:1000],
+        }
+
+    if set(validations) != set(expected):
+        raise RuntimeError(
+            f"ChatGPT visual-anchor validation trả {len(validations)}/{len(expected)} panel; "
+            "không áp dụng một phần."
+        )
+    return validations
 
 
 async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[str, Any]:

@@ -40,6 +40,7 @@ from agent.comicreels.ai_provider import (
     backfill_visual_anchors_in_conversation,
     generate_clean_portrait,
     provider_status,
+    validate_visual_anchors_in_conversation,
     verify_dialogues_in_conversation,
 )
 from agent.comicreels.vision import analyze as vision_analyze
@@ -448,6 +449,80 @@ async def backfill_project_visual_anchors(project_id: str):
     except Exception as exc:
         raise HTTPException(500, f"Không thể lưu visual anchor atomic: {type(exc).__name__}") from exc
     return await _details(project_id)
+
+
+@router.post("/projects/{project_id}/validate-visual-anchors")
+async def validate_project_visual_anchors(project_id: str):
+    details = await _details(project_id)
+    project = details["project"]
+    conversation_url = str(project.get("ai_conversation_url") or "").strip()
+    if not conversation_url:
+        raise HTTPException(409, "Project chưa có ChatGPT conversation nguồn.")
+
+    panels = []
+    for panel in details["panels"]:
+        visual_anchor = str(panel.get("visual_anchor") or "").strip()
+        if not visual_anchor:
+            raise HTTPException(
+                409,
+                f"Panel {int(panel['display_order']) + 1} chưa có visual anchor để validate.",
+            )
+        panels.append({
+            "panel_index": int(panel["display_order"]),
+            "display_order": int(panel["display_order"]),
+            "x": int(panel["x"]),
+            "y": int(panel["y"]),
+            "w": int(panel["w"]),
+            "h": int(panel["h"]),
+            "visual_anchor": visual_anchor,
+            "dialogues": [
+                {
+                    "speaker_id": str(dialogue.get("speaker_id") or "UNKNOWN"),
+                    "text": str(dialogue.get("text") or ""),
+                }
+                for dialogue in panel.get("dialogues", [])
+            ],
+        })
+    if not panels:
+        raise HTTPException(409, "Project chưa có panel để validate visual anchor.")
+
+    try:
+        validations = await validate_visual_anchors_in_conversation(
+            conversation_url,
+            panels,
+            source_width=int(project["source_width"]),
+            source_height=int(project["source_height"]),
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"AI validate visual anchor thất bại: {exc}") from exc
+
+    if len(validations) != len(panels):
+        raise HTTPException(
+            422,
+            "AI chưa validate đủ toàn bộ panel; không cập nhật một phần.",
+        )
+
+    try:
+        changed = await store.apply_visual_anchor_validation(project_id, validations)
+    except Exception as exc:
+        raise HTTPException(
+            500,
+            f"Không thể lưu visual-anchor validation atomic: {type(exc).__name__}",
+        ) from exc
+
+    response = await _details(project_id)
+    response["visual_anchor_validation"] = {
+        "changed_panel_indexes": changed,
+        "panels": [
+            {
+                "panel_index": panel_index,
+                "matches_source": bool(result.get("matches_source")),
+                "reason": str(result.get("reason") or ""),
+            }
+            for panel_index, result in sorted(validations.items())
+        ],
+    }
+    return response
 
 
 @router.put("/projects/{project_id}/analysis")

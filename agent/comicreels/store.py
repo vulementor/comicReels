@@ -340,6 +340,61 @@ class ComicStore:
         finally:
             await db.close()
 
+    async def apply_visual_anchor_validation(
+        self,
+        project_id: str,
+        validations: dict[int, dict[str, Any]],
+    ) -> list[int]:
+        ts = now()
+        db = await self._connect()
+        changed: list[int] = []
+        try:
+            rows = await (
+                await db.execute(
+                    """SELECT id,display_order,visual_anchor FROM comic_panel
+                    WHERE project_id=? ORDER BY display_order""",
+                    (project_id,),
+                )
+            ).fetchall()
+            expected = {int(row[1]) for row in rows}
+            if set(validations) != expected:
+                raise ValueError("visual-anchor validation set does not match project panels")
+            for row in rows:
+                panel_id = str(row[0])
+                display_order = int(row[1])
+                current_anchor = str(row[2] or "").strip()
+                result = validations[display_order]
+                matches_source = bool(result.get("matches_source"))
+                if matches_source:
+                    continue
+                corrected_anchor = str(result.get("corrected_anchor") or "").strip()
+                if not corrected_anchor:
+                    raise ValueError("corrected visual anchor must not be empty")
+                if corrected_anchor == current_anchor:
+                    raise ValueError("corrected visual anchor must differ from current anchor")
+                await db.execute(
+                    """UPDATE comic_panel
+                    SET visual_anchor=?,portrait_path=NULL,portrait_sha256=NULL,approved_sha256=NULL,
+                        protected_json=NULL,status='EXTRACTED',updated_at=?
+                    WHERE id=?""",
+                    (corrected_anchor, ts, panel_id),
+                )
+                changed.append(display_order)
+
+            if changed:
+                await db.execute("DELETE FROM comic_shot WHERE project_id=?", (project_id,))
+                await db.execute(
+                    "UPDATE comic_project SET status='EXTRACTED',updated_at=? WHERE id=?",
+                    (ts, project_id),
+                )
+            await db.commit()
+            return changed
+        except Exception:
+            await db.rollback()
+            raise
+        finally:
+            await db.close()
+
     async def insert_shot(self, data: dict[str, Any]) -> None:
         ts = now()
         await self.execute(
