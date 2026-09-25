@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS comic_project (
     source_mime TEXT NOT NULL,
     source_width INTEGER NOT NULL,
     source_height INTEGER NOT NULL,
+    ai_conversation_url TEXT,
+    ai_analysis_message_id TEXT,
     status TEXT NOT NULL DEFAULT 'IMPORTED',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -110,6 +112,14 @@ class ComicStore:
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute("PRAGMA foreign_keys=ON")
                 await db.executescript(SCHEMA)
+                columns = {
+                    str(row[1])
+                    for row in await (await db.execute("PRAGMA table_info(comic_project)")).fetchall()
+                }
+                if "ai_conversation_url" not in columns:
+                    await db.execute("ALTER TABLE comic_project ADD COLUMN ai_conversation_url TEXT")
+                if "ai_analysis_message_id" not in columns:
+                    await db.execute("ALTER TABLE comic_project ADD COLUMN ai_analysis_message_id TEXT")
                 await db.commit()
             self._ready = True
 
@@ -159,6 +169,21 @@ class ComicStore:
 
     async def list_projects(self) -> list[dict[str, Any]]:
         return await self.fetch_all("SELECT * FROM comic_project ORDER BY created_at DESC")
+
+    async def set_project_ai_session(
+        self,
+        project_id: str,
+        *,
+        conversation_url: str,
+        assistant_message_id: str | None = None,
+    ) -> None:
+        await self.execute(
+            """UPDATE comic_project
+            SET ai_conversation_url=?, ai_analysis_message_id=?, updated_at=?
+            WHERE id=?""",
+            (conversation_url, assistant_message_id, now(), project_id),
+        )
+
 
     async def get_project(self, project_id: str) -> dict[str, Any]:
         project = await self.fetch_one("SELECT * FROM comic_project WHERE id=?", (project_id,))
