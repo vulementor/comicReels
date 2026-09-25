@@ -392,6 +392,20 @@ export default function ComicStudioPage() {
     })
   }
 
+  const movePanel = async (panelId: string, delta: number) => {
+    if (!project) return
+    const ordered = [...project.panels].sort((a, b) => a.display_order - b.display_order)
+    const index = ordered.findIndex(p => p.id === panelId)
+    const target = index + delta
+    if (index < 0 || target < 0 || target >= ordered.length) return
+    const next = [...ordered]
+    ;[next[index], next[target]] = [next[target], next[index]]
+    await run('Đổi thứ tự đọc', async () => {
+      await comic.reorderPanels(project.id, next.map(p => p.id))
+      await load(project.id)
+    })
+  }
+
   const plan = async () => {
     if (!project) return
     await run('Tạo shot và prompt', async () => {
@@ -480,6 +494,21 @@ export default function ComicStudioPage() {
                 </div>
               </section>
 
+              {project.panels.length > 1 && (
+                <section className="rounded-2xl border p-4" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                  <div className="flex items-center gap-2"><ScanLine size={15} /><h3 className="font-bold">Thứ tự đọc</h3><span className="text-[11px]" style={{ color: 'var(--muted)' }}>Sửa trước khi xử lý ảnh để khung và thoại đi đúng mạch truyện.</span></div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {[...project.panels].sort((a,b) => a.display_order - b.display_order).map((p, index, ordered) => (
+                      <div key={p.id} className="flex items-center gap-1 rounded-lg border px-2 py-1.5" style={{ borderColor: 'var(--border)', background: 'var(--card)' }}>
+                        <span className="min-w-16 text-xs font-semibold">Khung {index + 1}</span>
+                        <button type="button" disabled={busy || index === 0} onClick={() => void movePanel(p.id, -1)} className={btn(busy || index === 0) + ' border px-2 py-1'} style={{ borderColor: 'var(--border)' }} aria-label={`Đưa khung ${index + 1} lên trước`}>↑</button>
+                        <button type="button" disabled={busy || index === ordered.length - 1} onClick={() => void movePanel(p.id, 1)} className={btn(busy || index === ordered.length - 1) + ' border px-2 py-1'} style={{ borderColor: 'var(--border)' }} aria-label={`Đưa khung ${index + 1} xuống sau`}>↓</button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               {project.panels.map(p => <PanelEditor key={p.id} project={project} panel={p} busy={busy} run={run} reload={() => load(project.id)} />)}
 
               <section className="rounded-2xl border p-4 sm:p-5" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
@@ -504,7 +533,7 @@ export default function ComicStudioPage() {
                   <button type="button" disabled={busy} onClick={() => void run('Tiếp tục queue', () => comic.resumeQueue())} className={btn(busy) + ' border'} style={{ borderColor: 'var(--border)' }}>Tiếp tục queue</button>
                   <button type="button" disabled={busy || !videosApproved} onClick={() => void concat()} className={btn(busy || !videosApproved) + ' border'} style={{ borderColor: videosApproved ? 'var(--green)' : 'var(--border)' }}><Film size={14} />Ghép Reel</button>
                 </div>
-                {project.generations.length > 0 && <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[650px] text-left text-xs"><thead style={{ color: 'var(--muted)' }}><tr><th className="py-2">Job</th><th>Shot</th><th>Model</th><th>Giây</th><th>Credits ước tính</th><th>Trạng thái</th></tr></thead><tbody>{project.generations.map(g => <tr key={g.id} className="border-t" style={{ borderColor: 'var(--border)' }}><td className="py-2 font-mono">{g.id.slice(0, 8)}</td><td className="font-mono">{g.shot_id.slice(0, 8)}</td><td>{g.model_family}</td><td>{g.duration_s}</td><td>{g.cost_estimate ?? 'xem Flow'}</td><td style={{ color: g.status === 'FAILED' ? 'var(--red)' : g.status === 'COMPLETED' ? 'var(--green)' : 'var(--text)' }}>{g.status}</td></tr>)}</tbody></table></div>}
+                {project.generations.length > 0 && <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs"><thead style={{ color: 'var(--muted)' }}><tr><th className="py-2">Job</th><th>Shot</th><th>Model</th><th>Giây</th><th>Credits ước tính</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{project.generations.map(g => <tr key={g.id} className="border-t" style={{ borderColor: 'var(--border)' }}><td className="py-2 font-mono">{g.id.slice(0, 8)}</td><td className="font-mono">{g.shot_id.slice(0, 8)}</td><td>{g.model_family}</td><td>{g.duration_s}</td><td>{g.cost_estimate ?? 'xem Flow'}</td><td style={{ color: g.status === 'FAILED' ? 'var(--red)' : g.status === 'COMPLETED' ? 'var(--green)' : 'var(--text)' }}>{g.status}</td><td>{g.status === 'QUEUED' ? <button type="button" disabled={busy} onClick={() => void run('Hủy job', async () => { await comic.cancelGeneration(g.id); await load(project.id) })} className={btn(busy) + ' border py-1'} style={{ borderColor: 'var(--red)', color: 'var(--red)' }}>Hủy job</button> : <span style={{ color: 'var(--muted)' }}>—</span>}</td></tr>)}</tbody></table></div>}
               </section>
             </div>
           )}
