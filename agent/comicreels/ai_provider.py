@@ -286,7 +286,7 @@ async def verify_dialogues_in_conversation(
             raise RuntimeError("ChatGPT dialogue verification trả text rỗng.")
         row = dict(current)
         row["text"] = text
-        row["verified"] = True
+        row["verified"] = False
         verified.append(row)
 
     if len(verified) != len(dialogues):
