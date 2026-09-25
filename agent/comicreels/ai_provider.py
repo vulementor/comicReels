@@ -457,7 +457,7 @@ def _image_prompt(
 Dùng CHÍNH ảnh nguồn đã được upload ở TURN ĐẦU của conversation này làm reference bắt buộc.
 Không yêu cầu upload lại ảnh và không dùng ảnh từ conversation khác.
 
-Chỉ xử lý KHUNG ${panel_index + 1} của ảnh nguồn.
+Chỉ xử lý KHUNG {panel_index + 1} của ảnh nguồn.
 Tạo lại riêng cảnh của khung đó thành ảnh dọc 9:16 hoàn chỉnh dùng cho video.
 
 BẮT BUỘC:
