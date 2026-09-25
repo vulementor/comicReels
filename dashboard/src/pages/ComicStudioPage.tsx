@@ -142,7 +142,7 @@ function PanelEditor({
   const generateAI = () => run(async () => {
     await apiJson(`/api/comicreels/panels/${panel.id}/ai-generate`, {
       method: 'POST',
-      body: JSON.stringify({ confirm_paid: true }),
+      body: JSON.stringify({ confirm_paid: true, force: false }),
     })
   }, 'AI đã tạo ảnh sạch 9:16. Hãy xem kỹ trước khi OK.')
 
@@ -245,7 +245,7 @@ function PanelEditor({
 
       <div className="mt-3 flex flex-wrap gap-2">
         <button
-          disabled={working || !aiConfigured || panel.mask.length === 0}
+          disabled={working || !aiConfigured || panel.mask.length === 0 || hasAIPortrait}
           onClick={generateAI}
           className="rounded px-3 py-2 text-xs font-semibold disabled:opacity-40"
           style={{ background: 'var(--accent)', color: 'white' }}
@@ -399,17 +399,24 @@ export default function ComicStudioPage() {
 
   const generateAllImages = async () => {
     if (!details || !status?.ai.configured) return
+    const pending = details.panels.filter(
+      panel => !['AI_IMAGE_READY', 'AI_IMAGE_APPROVED'].includes(panel.status) || !panel.portrait_sha256
+    )
+    if (pending.length === 0) {
+      setNotice('Tất cả khung đã có ảnh AI 9:16. Không gọi Generate lại.')
+      return
+    }
     setWorking(true)
     try {
-      for (const panel of details.panels) {
+      for (const panel of pending) {
         await apiJson(`/api/comicreels/panels/${panel.id}/ai-generate`, {
           method: 'POST',
-          body: JSON.stringify({ confirm_paid: true }),
+          body: JSON.stringify({ confirm_paid: true, force: false }),
         })
       }
       const next = await apiJson<Details>(`/api/comicreels/projects/${details.project.id}`)
       setDetails(next)
-      setNotice(`AI đã Generate xong ${next.panels.length} ảnh sạch 9:16. Hãy review trước khi OK.`)
+      setNotice(`AI đã Generate xong ${pending.length} khung còn thiếu. Các khung đã có ảnh được giữ nguyên.`)
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
@@ -447,6 +454,13 @@ export default function ComicStudioPage() {
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)) }
     finally { setWorking(false) }
   }
+
+  const pendingImageCount = useMemo(
+    () => details?.panels.filter(
+      panel => !['AI_IMAGE_READY', 'AI_IMAGE_APPROVED'].includes(panel.status) || !panel.portrait_sha256
+    ).length ?? 0,
+    [details],
+  )
 
   const allApproved = useMemo(() =>
     Boolean(details?.panels.length) && (details?.panels.every(
@@ -596,13 +610,13 @@ export default function ComicStudioPage() {
                   AI đọc lại thoại
                 </button>
                 <button
-                  disabled={working || !status?.ai.configured || details.panels.some(p => p.mask.length === 0)}
+                  disabled={working || !status?.ai.configured || pendingImageCount === 0 || details.panels.some(p => p.mask.length === 0)}
                   onClick={()=>void generateAllImages()}
                   className="rounded px-4 py-2 text-sm font-semibold disabled:opacity-40"
                   style={{background:'var(--accent)',color:'white'}}
                 >
                   {working?<Loader2 size={15} className="mr-1 inline animate-spin"/>:<Sparkles size={15} className="mr-1 inline"/>}
-                  AI Generate toàn bộ {details.panels.length} khung
+                  {pendingImageCount > 0 ? `AI Generate ${pendingImageCount} khung còn thiếu` : 'Tất cả khung đã có ảnh AI'}
                 </button>
               </div>
             </div>
