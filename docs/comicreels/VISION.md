@@ -8,12 +8,15 @@ Dán **một ảnh truyện** có 2/3/4/nhiều khung. Tự tìm thứ tự đ�
 - Không giả định truyện đều là Câu/Mèo Léo; nhân vật theo từng ảnh input.
 - AI phải tự nhận panel, thứ tự đọc, nguyên văn thoại, speaker và toàn bộ vùng chữ/bong bóng cần xóa; người dùng chỉ sửa khi AI nhận sai.
 - Ảnh sạch 9:16 là kết quả **AI Generate**: AI xóa text/bubble, tái tạo phần tranh bị che và outpaint thành 9:16. Không dùng compositor tô rectangle/padding làm đầu ra chính.
-- Sau khi AI Generate, hệ thống ghép trả các pixel nguồn không thuộc vùng AI-edit để khóa nhân vật/nét vẽ/bố cục gốc ở mức deterministic.
+- AI Generate dùng panel gốc làm **reference attachment** qua GPT FullProxy → ChatGPT Web Create image; không dùng rectangle fill, padding hay API key OpenAI làm luồng chính.
 - Chỗ bong bóng che mất dữ liệu gốc là phần AI phải tái tạo và luôn cần anh review trước khi OK.
 - Prompt đúng chưa bảo đảm video sinh ra đúng phát âm/lip-sync: phải xem và nghe thực tế.
 
 ## MVP và ngoài phạm vi
 MVP kết thúc ở ảnh 9:16 được duyệt, transcript và speaker mapping đã xác minh, shot plan + prompt và xuất thủ công. Tích hợp Flow có phí, video batch, ghép và đóng gói là các đoạn riêng. Tận dụng nền FastAPI/React/Chrome Extension của FlowKit, không viết lại toàn app và không âm thầm đăng YouTube.
 
+## Browser-native ChatGPT AI
+ComicReels tích hợp public Python SDK của `vulementor/gpt_fullproxy`. SDK điều khiển phiên ChatGPT Web đã đăng nhập qua physical browser profile, upload ảnh nguồn/reference và tải artifact đã xác minh. ComicReels chỉ truyền **đường dẫn profile**, không đọc/xuất cookie, token, password hay session secret. Trên macOS của anh, launcher ưu tiên profile `~/Library/Application Support/ZaloConnect/chatgpt-web-profile` khi tồn tại.
+
 ## Bảo mật
-Ảnh truyện, bản audio/video, cookie, token và dữ liệu riêng không commit lên public fork. Mọi chi phí Google Flow cần bấm lệnh có thông tin rõ, không tự chạy retry cả loạt.
+Ảnh truyện, bản audio/video, cookie, token và dữ liệu riêng không commit lên public fork. Profile browser vật lý luôn ở ngoài repo. Mọi chi phí Google Flow cần bấm lệnh có thông tin rõ, không tự chạy retry cả loạt.
