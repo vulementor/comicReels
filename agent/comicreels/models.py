@@ -13,6 +13,9 @@ class PanelPatch(BaseModel):
     display_order: int | None = Field(default=None, ge=0)
     bbox: BBox | None = None
 
+class PanelOrderRequest(BaseModel):
+    panel_ids: list[str] = Field(min_length=1)
+
 class DialogueInput(BaseModel):
     id: str | None = None
     sequence: int = Field(ge=0)
