@@ -376,6 +376,10 @@ def _image_prompt(
     regions: list[dict[str, int]],
     panel_context: str,
     panel_index: int,
+    *,
+    panel_box: dict[str, int],
+    source_width: int,
+    source_height: int,
 ) -> str:
     region_text = ", ".join(
         f"(x={r['x']},y={r['y']},w={r['w']},h={r['h']})" for r in regions
@@ -385,11 +389,19 @@ Dùng CHÍNH ảnh nguồn đã được upload ở TURN ĐẦU của conversati
 Không yêu cầu upload lại ảnh và không dùng ảnh từ conversation khác.
 
 Chỉ xử lý KHUNG {panel_index + 1} của ảnh nguồn.
+Vùng panel mục tiêu trong ẢNH NGUỒN {source_width}x{source_height}px là:
+x={panel_box['x']}, y={panel_box['y']}, w={panel_box['w']}, h={panel_box['h']}.
+
+Trước khi tạo ảnh, hãy coi CHÍNH hình ảnh bên trong bbox này là reference hình học bắt buộc.
 Tạo lại riêng cảnh của khung đó thành ảnh dọc 9:16 hoàn chỉnh dùng cho video.
 
 BẮT BUỘC:
 - Giữ nguyên tuyệt đối thiết kế nhân vật, khuôn mặt, biểu cảm, tỷ lệ cơ thể,
   trang phục, đạo cụ, nét vẽ, palette và phong cách minh họa của ảnh gốc.
+- Giữ ĐÚNG pose, hướng nhìn, vị trí tương đối, khoảng cách và framing của nhân vật trong bbox panel mục tiêu.
+- TUYỆT ĐỐI KHÔNG mượn pose/composition từ panel khác trong cùng ảnh nguồn.
+- Phần hình ảnh gốc bên trong bbox panel mục tiêu phải được xem là protected visual reference;
+  chỉ được thay đổi nơi có chữ/bubble hoặc phần cần outpaint để mở rộng ra 9:16.
 - Xóa toàn bộ chữ, speech bubble, caption và đuôi bong bóng.
 - Các vùng AI đã nhận cần xóa: {region_text}.
 - Tái tạo tự nhiên phần nền/nhân vật vốn bị bong bóng hoặc chữ che mất.
@@ -412,6 +424,9 @@ async def generate_clean_portrait(
     conversation_url: str,
     panel_index: int,
     panel_context: str = "",
+    panel_box: dict[str, int] | None = None,
+    source_width: int | None = None,
+    source_height: int | None = None,
 ) -> tuple[Path, dict[str, int], str]:
     if not crop_path.is_file():
         raise RuntimeError("Không tìm thấy crop panel local để đối chiếu kết quả.")
@@ -426,7 +441,16 @@ async def generate_clean_portrait(
     client = _client()
     artifact_dir = output_path.parent / "gptfp-artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    prompt = _image_prompt(regions, panel_context, panel_index)
+    if not panel_box or not source_width or not source_height:
+        raise RuntimeError("Thiếu bbox/source size để khóa AI Generate vào đúng panel nguồn.")
+    prompt = _image_prompt(
+        regions,
+        panel_context,
+        panel_index,
+        panel_box=panel_box,
+        source_width=source_width,
+        source_height=source_height,
+    )
 
     result = await asyncio.to_thread(
         client.image.generate,
