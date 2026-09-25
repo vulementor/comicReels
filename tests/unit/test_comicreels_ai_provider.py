@@ -176,6 +176,7 @@ async def test_ai_generate_requires_source_conversation(tmp_path, monkeypatch):
     monkeypatch.setattr(comic_api, "_details", fake_details)
     monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
     monkeypatch.setattr(comic_api, "project_dir", lambda _project_id: tmp_path)
+    monkeypatch.setattr(comic_api, "_safe_file", lambda _value: crop)
 
     with pytest.raises(HTTPException) as exc_info:
         await comic_api.ai_generate_panel(
