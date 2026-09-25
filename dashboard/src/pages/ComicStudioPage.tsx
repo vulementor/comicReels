@@ -179,7 +179,7 @@ function PanelEditor({
                 <span style={{ color: 'var(--muted)' }}>→</span>
                 <span className="flex-1">{d.text}</span>
                 {d.verified
-                  ? <span className="rounded-full border px-2 py-0.5 text-[10px] text-green-400" style={{borderColor:'var(--border)'}}>✓ AI đã đối chiếu</span>
+                  ? <span className="rounded-full border px-2 py-0.5 text-[10px] text-green-400" style={{borderColor:'var(--border)'}}>✓ Đã xác nhận</span>
                   : <span className="rounded-full border px-2 py-0.5 text-[10px] text-amber-400" style={{borderColor:'var(--border)'}}>⚠ Cần review</span>}
               </div>
             </div>
@@ -389,7 +389,7 @@ export default function ComicStudioPage() {
         method: 'POST',
       })
       setDetails(next)
-      setNotice('AI đã kiểm tra lại toàn bộ thoại trong chính ChatGPT conversation hiện tại, không upload lại ảnh.')
+      setNotice('AI đã đọc lại toàn bộ thoại trong chính ChatGPT conversation hiện tại, không upload lại ảnh. Hãy review trước khi xác nhận.')
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
@@ -593,7 +593,7 @@ export default function ComicStudioPage() {
                   style={{borderColor:'var(--border)'}}
                 >
                   {working?<Loader2 size={15} className="mr-1 inline animate-spin"/>:<RefreshCcw size={15} className="mr-1 inline"/>}
-                  AI kiểm tra lại thoại
+                  AI đọc lại thoại
                 </button>
                 <button
                   disabled={working || !status?.ai.configured || details.panels.some(p => p.mask.length === 0)}
