@@ -10,7 +10,7 @@ from agent.comicreels import service
 from agent.comicreels.flow import estimate_cost, get_comic_generation_worker
 from agent.comicreels.models import (
     AnalyzeRequest, ApprovalRequest, BatchGenerationRequest, BBox, DialogueBatch,
-    GenerationRequest, MaskRequest, PanelPatch, ReviewRequest, ShotPlanRequest,
+    GenerationRequest, MaskRequest, PanelOrderRequest, PanelPatch, ReviewRequest, ShotPlanRequest,
 )
 
 router = APIRouter(prefix="/comicreels", tags=["comicreels"])
@@ -85,6 +85,16 @@ async def analyze(project_id: str, body: AnalyzeRequest):
         return await service.analyze_project(project_id, use_vision=body.use_vision, replace_existing=body.replace_existing)
     except Exception as exc:
         _bad(exc)
+
+@router.post("/projects/{project_id}/reorder-panels")
+async def reorder_panels(project_id: str, body: PanelOrderRequest):
+    if not await repo.get_project(project_id):
+        raise HTTPException(404, "Không tìm thấy dự án")
+    try:
+        return await repo.reorder_panels(project_id, body.panel_ids)
+    except Exception as exc:
+        _bad(exc)
+
 
 @router.post("/projects/{project_id}/panels")
 async def create_panel(project_id: str, bbox: BBox, display_order: int | None = Query(default=None, ge=0)):
