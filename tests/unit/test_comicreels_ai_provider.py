@@ -286,6 +286,7 @@ async def test_verify_dialogues_reuses_exact_conversation_without_attachments(mo
 
     assert calls["open"] == [conversation]
     assert len(calls["reply"]) == 1
+    assert calls["reply"][0]["idempotency_key"].startswith("comicreels-dialogue-verify-v3:")
     assert "upload" in calls["reply"][0]["text"].lower()
     assert calls["wait"][0]["after_message_id"] == "user-msg-1"
     assert calls["wait"][0]["role"] == "assistant"
@@ -294,7 +295,7 @@ async def test_verify_dialogues_reuses_exact_conversation_without_attachments(mo
         "NHƯNG ÔNG CÓ SỪNG SẴN RỒI MÀ",
         "Ừ, QUÊN.",
     ]
-    assert all(row["verified"] is False for row in result)
+    assert all(row["verified"] is True for row in result)
 
 
 @pytest.mark.asyncio
@@ -343,7 +344,39 @@ async def test_verify_dialogues_consumes_stable_assistant_receipt_without_second
         "LŨ KHỐN NẠN",
         "NHƯNG ÔNG CÓ SỪNG SẴN RỒI MÀ",
     ]
-    assert all(row["verified"] is False for row in result)
+    assert all(row["verified"] is True for row in result)
+
+
+@pytest.mark.asyncio
+async def test_verify_dialogues_rejects_partial_assistant_receipt():
+    class FakeHandle:
+        def reply(self, *, text, idempotency_key, visible):
+            return SimpleNamespace(
+                state="completed",
+                reason=None,
+                assistant_text='''{
+                  "dialogues":[
+                    {"panel_index":0,"display_order":0,"speaker_id":"CHAR_1","text":"ONE"}
+                  ]
+                }''',
+                user_message=None,
+            )
+
+    class FakeChat:
+        def open(self, _conversation):
+            return FakeHandle()
+
+    rows = [
+        {"panel_index":0,"display_order":0,"speaker_id":"CHAR_1","text":"ONE"},
+        {"panel_index":1,"display_order":0,"speaker_id":"CHAR_2","text":"TWO"},
+    ]
+
+    with pytest.raises(RuntimeError, match="1/2"):
+        await provider.verify_dialogues_in_conversation(
+            "https://chatgpt.com/c/existing",
+            rows,
+            client=SimpleNamespace(chat=FakeChat()),
+        )
 
 
 @pytest.mark.asyncio

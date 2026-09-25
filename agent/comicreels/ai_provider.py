@@ -21,7 +21,7 @@ from agent.comicreels.images import clamp_box, sha256_file
 
 
 _PROVIDER = "gpt_fullproxy"
-_DIALOGUE_VERIFY_REVISION = "v2"
+_DIALOGUE_VERIFY_REVISION = "v3"
 _PROFILE_NAME = os.environ.get("COMICREELS_GPTFP_PROFILE", "zaloconnect-chatgpt")
 _VISIBLE = os.environ.get("COMICREELS_GPTFP_VISIBLE", "1").strip().lower() not in {
     "0", "false", "no", "off",
@@ -230,7 +230,7 @@ async def verify_dialogues_in_conversation(
     digest = hashlib.sha256(
         (conversation_url + "\n" + _DIALOGUE_VERIFY_REVISION + "\n" + payload).encode("utf-8")
     ).hexdigest()[:32]
-    idempotency_key = f"comicreels-dialogue-verify-v2:{digest}"
+    idempotency_key = f"comicreels-dialogue-verify-v3:{digest}"
 
     def _run():
         handle = active_client.chat.open(conversation_url)
@@ -286,7 +286,7 @@ async def verify_dialogues_in_conversation(
             raise RuntimeError("ChatGPT dialogue verification trả text rỗng.")
         row = dict(current)
         row["text"] = text
-        row["verified"] = False
+        row["verified"] = True
         verified.append(row)
 
     if len(verified) != len(dialogues):
