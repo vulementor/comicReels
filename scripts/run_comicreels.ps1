@@ -13,7 +13,7 @@ $RuntimeRef = if ($env:COMICREELS_RUNTIME_REF) { $env:COMICREELS_RUNTIME_REF } e
 $GptfpRequiredRef = if ($env:COMICREELS_GPTFP_REF) {
   $env:COMICREELS_GPTFP_REF
 } else {
-  "27b4e5b75b771bde683e274aa212ac291a8d3b8c"
+  "603a1601fdcf3677b5a360a16864cb84a835e47a"
 }
 
 New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
