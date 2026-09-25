@@ -13,7 +13,7 @@ $RuntimeRef = if ($env:COMICREELS_RUNTIME_REF) { $env:COMICREELS_RUNTIME_REF } e
 $GptfpRequiredRef = if ($env:COMICREELS_GPTFP_REF) {
   $env:COMICREELS_GPTFP_REF
 } else {
-  "077d40a670550744785b2e06b4d1485705a8f63b"
+  "8ae68597232edaf7129a73920d46569e128529b4"
 }
 $GptfpBranch = if ($env:COMICREELS_GPTFP_BRANCH) { $env:COMICREELS_GPTFP_BRANCH } else { "feature/comicreels-image-attachments" }
 $GptfpRepo = if ($env:COMICREELS_GPTFP_REPO) { $env:COMICREELS_GPTFP_REPO } else { "https://github.com/vulementor/gpt_fullproxy.git" }
