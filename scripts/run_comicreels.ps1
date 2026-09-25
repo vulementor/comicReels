@@ -13,8 +13,10 @@ $RuntimeRef = if ($env:COMICREELS_RUNTIME_REF) { $env:COMICREELS_RUNTIME_REF } e
 $GptfpRequiredRef = if ($env:COMICREELS_GPTFP_REF) {
   $env:COMICREELS_GPTFP_REF
 } else {
-  "603a1601fdcf3677b5a360a16864cb84a835e47a"
+  "077d40a670550744785b2e06b4d1485705a8f63b"
 }
+$GptfpBranch = if ($env:COMICREELS_GPTFP_BRANCH) { $env:COMICREELS_GPTFP_BRANCH } else { "feature/comicreels-image-attachments" }
+$GptfpRepo = if ($env:COMICREELS_GPTFP_REPO) { $env:COMICREELS_GPTFP_REPO } else { "https://github.com/vulementor/gpt_fullproxy.git" }
 
 New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Venv) | Out-Null
@@ -55,30 +57,31 @@ if ($OldReqHash -ne $ReqHash) {
   Set-Content -NoNewline -Encoding ASCII $ReqStamp $ReqHash
 }
 
-# Optional browser-native ChatGPT AI integration. Session material stays in the
+# Browser-native ChatGPT AI integration. Session material stays in the
 # physical profile; ComicReels only passes the profile directory to GPT FullProxy.
-$GptfpDir = if ($env:COMICREELS_GPTFP_DIR) { $env:COMICREELS_GPTFP_DIR } else { "" }
-$SiblingGptfp = Join-Path (Split-Path -Parent $SourceRoot) "gpt_fullproxy"
-if ((-not $GptfpDir) -and (Test-Path (Join-Path $SiblingGptfp ".git"))) {
-  $GptfpDir = (Resolve-Path $SiblingGptfp).Path
+$GptfpDir = if ($env:COMICREELS_GPTFP_DIR) {
+  $env:COMICREELS_GPTFP_DIR
+} else {
+  Join-Path $CacheBase "gpt_fullproxy-src"
 }
-if ($GptfpDir) {
-  if (-not (Test-Path (Join-Path $GptfpDir "pyproject.toml"))) {
-    throw "COMICREELS_GPTFP_DIR is not a GPT FullProxy checkout: $GptfpDir"
-  }
-  $GptfpHead = (& git -C $GptfpDir rev-parse HEAD).Trim()
-  if (($env:COMICREELS_GPTFP_ALLOW_UNPINNED -ne "1") -and ($GptfpHead -ne $GptfpRequiredRef)) {
-    throw "GPT FullProxy HEAD $GptfpHead does not match required $GptfpRequiredRef"
-  }
-  $GptfpStamp = Join-Path $Venv ".comicreels-gptfp.sha"
-  $OldGptfpHead = if (Test-Path $GptfpStamp) { (Get-Content -Raw $GptfpStamp).Trim() } else { "" }
-  if ($OldGptfpHead -ne $GptfpHead) {
-    & $VenvPython -m pip install -e "$GptfpDir[browser]"
-    & $VenvPython -m camoufox fetch
-    Set-Content -NoNewline -Encoding ASCII $GptfpStamp $GptfpHead
-  }
-  $env:COMICREELS_GPTFP_DIR = $GptfpDir
+if (-not (Test-Path (Join-Path $GptfpDir ".git"))) {
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $GptfpDir) | Out-Null
+  & git clone --filter=blob:none --no-checkout $GptfpRepo $GptfpDir
 }
+& git -C $GptfpDir fetch --force --depth=1 origin $GptfpBranch
+& git -C $GptfpDir checkout --detach $GptfpRequiredRef
+$GptfpHead = (& git -C $GptfpDir rev-parse HEAD).Trim()
+if (($env:COMICREELS_GPTFP_ALLOW_UNPINNED -ne "1") -and ($GptfpHead -ne $GptfpRequiredRef)) {
+  throw "GPT FullProxy HEAD $GptfpHead does not match required $GptfpRequiredRef"
+}
+$GptfpStamp = Join-Path $Venv ".comicreels-gptfp.sha"
+$OldGptfpHead = if (Test-Path $GptfpStamp) { (Get-Content -Raw $GptfpStamp).Trim() } else { "" }
+if ($OldGptfpHead -ne $GptfpHead) {
+  & $VenvPython -m pip install -e "$GptfpDir[browser]"
+  & $VenvPython -m camoufox fetch
+  Set-Content -NoNewline -Encoding ASCII $GptfpStamp $GptfpHead
+}
+$env:COMICREELS_GPTFP_DIR = $GptfpDir
 
 $LockHash = (Get-FileHash "dashboard\package-lock.json" -Algorithm SHA256).Hash
 $LockStamp = Join-Path $RuntimeRoot ".comicreels-package-lock.sha"
