@@ -235,10 +235,14 @@ async def verify_dialogues_in_conversation(
             idempotency_key=idempotency_key,
             visible=_VISIBLE,
         )
-        if reply.state != "completed" or reply.user_message is None:
+        if reply.state != "completed":
             raise RuntimeError(
-                f"GPT FullProxy dialogue verify chưa gửi được: {reply.state}: {reply.reason or 'không có user receipt'}"
+                f"GPT FullProxy dialogue verify chưa hoàn tất: {reply.state}: {reply.reason or 'không có receipt'}"
             )
+        if getattr(reply, "assistant_text", None):
+            return str(reply.assistant_text)
+        if reply.user_message is None:
+            raise RuntimeError("GPT FullProxy dialogue verify thiếu cả assistant receipt và user receipt.")
         anchor = reply.user_message.provider_message_id
         if not anchor:
             raise RuntimeError("GPT FullProxy dialogue verify thiếu provider user-message id.")
