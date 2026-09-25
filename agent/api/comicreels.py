@@ -280,7 +280,7 @@ async def analyze_project(project_id: str, body: AnalyzeBody):
         if not body.confirm_paid:
             raise HTTPException(409, "AI phân tích có thể phát sinh chi phí. Cần xác nhận thao tác AI.")
         if not provider_status()["configured"]:
-            raise HTTPException(503, "AI ChatGPT/OpenAI chưa kết nối. Cần cấu hình API trước.")
+            raise HTTPException(503, "ChatGPT Web chưa kết nối qua GPT FullProxy. Cần SDK + profile ZaloConnect đã đăng nhập.")
         try:
             result = await analyze_comic(
                 source, project["source_mime"], project["source_width"], project["source_height"]
@@ -401,7 +401,7 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
     if not body.confirm_paid:
         raise HTTPException(409, "AI Generate có thể phát sinh chi phí. Cần xác nhận thao tác AI.")
     if not provider_status()["configured"]:
-        raise HTTPException(503, "AI hình ảnh chưa kết nối. Cần cấu hình ChatGPT/OpenAI API trước.")
+        raise HTTPException(503, "AI hình ảnh chưa kết nối qua GPT FullProxy. Cần SDK + profile ZaloConnect đã đăng nhập.")
     raw_panel = await store.panel(panel_id)
     if not raw_panel:
         raise HTTPException(404, "Không tìm thấy panel.")
