@@ -329,6 +329,18 @@ async def update_dialogue(panel_id: str, body: DialogueUpdate):
     return row
 
 
+@router.delete("/dialogues/{dialogue_id}")
+async def delete_dialogue(dialogue_id: str):
+    row = await store.fetch_one("SELECT panel_id FROM comic_dialogue WHERE id=?", (dialogue_id,))
+    if not row:
+        raise HTTPException(404, "Không tìm thấy lời thoại.")
+    panel = await store.panel(row["panel_id"])
+    await store.execute("DELETE FROM comic_dialogue WHERE id=?", (dialogue_id,))
+    if panel:
+        await store.clear_shots(panel["project_id"])
+    return {"deleted": dialogue_id}
+
+
 @router.post("/panels/{panel_id}/clean")
 async def clean_panel(panel_id: str, body: MaskBody):
     panel = await store.panel(panel_id)

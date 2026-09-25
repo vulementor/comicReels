@@ -67,9 +67,19 @@ function PanelEditor({
   panel: Panel; reload: () => Promise<void>; setNotice: (x: string) => void
 }) {
   const [maskText, setMaskText] = useState(JSON.stringify(panel.mask ?? [], null, 2))
-  const [speaker, setSpeaker] = useState(panel.dialogues[0]?.speaker_id ?? 'CHAR_1')
-  const [dialogue, setDialogue] = useState(panel.dialogues[0]?.text ?? '')
+  const [bbox, setBbox] = useState({ x: panel.x, y: panel.y, w: panel.w, h: panel.h })
+  const [dialogues, setDialogues] = useState(() =>
+    panel.dialogues.length ? panel.dialogues.map(d => ({ ...d })) :
+      [{ id: '', panel_id: panel.id, display_order: 0, speaker_id: 'CHAR_1', text: '', verified: 1, confidence: null }]
+  )
   const [working, setWorking] = useState(false)
+
+  useEffect(() => {
+    setBbox({ x: panel.x, y: panel.y, w: panel.w, h: panel.h })
+    setDialogues(panel.dialogues.length ? panel.dialogues.map(d => ({ ...d })) :
+      [{ id: '', panel_id: panel.id, display_order: 0, speaker_id: 'CHAR_1', text: '', verified: 1, confidence: null }])
+    setMaskText(JSON.stringify(panel.mask ?? [], null, 2))
+  }, [panel.id, panel.x, panel.y, panel.w, panel.h, panel.dialogues, panel.mask])
   const base = `/api/comicreels/panels/${panel.id}/asset`
   const imageUrl = panel.portrait_path ? `${base}/portrait?d=${panel.portrait_sha256 ?? ''}`
     : panel.clean_path ? `${base}/clean` : `${base}/crop`
@@ -81,18 +91,36 @@ function PanelEditor({
     finally { setWorking(false) }
   }
 
-  const saveDialogue = () => run(async () => {
-    await apiJson(`/api/comicreels/panels/${panel.id}/dialogue`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        id: panel.dialogues[0]?.id ?? null,
-        display_order: 0,
-        speaker_id: speaker.trim() || 'UNKNOWN',
-        text: dialogue,
-        verified: true,
-      }),
+  const saveBbox = () => run(async () => {
+    await apiJson(`/api/comicreels/panels/${panel.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ box: bbox, display_order: panel.display_order }),
     })
-  }, 'Đã lưu nguyên văn thoại và speaker. Storyboard cũ (nếu có) đã bị hủy.')
+  }, 'Đã cập nhật vùng cắt. Ảnh sạch, 9:16, approval và storyboard phụ thuộc đã bị hủy.')
+
+  const saveDialogues = () => run(async () => {
+    for (let index = 0; index < dialogues.length; index++) {
+      const d = dialogues[index]
+      if (!d.text && !d.id) continue
+      await apiJson(`/api/comicreels/panels/${panel.id}/dialogue`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          id: d.id || null,
+          display_order: index,
+          speaker_id: d.speaker_id.trim() || 'UNKNOWN',
+          text: d.text,
+          confidence: d.confidence,
+          verified: true,
+        }),
+      })
+    }
+  }, 'Đã lưu danh sách thoại theo thứ tự và speaker. Storyboard cũ đã bị hủy.')
+
+  const removeDialogue = (index: number) => run(async () => {
+    const d = dialogues[index]
+    if (d.id) await apiJson(`/api/comicreels/dialogues/${d.id}`, { method: 'DELETE' })
+    setDialogues(current => current.filter((_, i) => i !== index))
+  }, 'Đã xóa lời thoại khỏi panel.')
 
   return (
     <article className="rounded-xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
@@ -112,25 +140,46 @@ function PanelEditor({
         <img src={imageUrl} alt={`Khung ${panel.display_order + 1}`} className="mx-auto max-h-96 max-w-full rounded object-contain" />
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <label className="text-xs">
-          Speaker ID
-          <input value={speaker} onChange={e => setSpeaker(e.target.value)}
-            className="mt-1 w-full rounded border px-3 py-2" style={{ background: 'var(--card)', borderColor: 'var(--border)' }} />
-        </label>
-        <label className="text-xs md:col-span-2">
-          Lời thoại nguyên văn
-          <textarea value={dialogue} onChange={e => setDialogue(e.target.value)} rows={3}
-            placeholder="Để trống nếu khung không có thoại."
-            className="mt-1 w-full rounded border px-3 py-2" style={{ background: 'var(--card)', borderColor: 'var(--border)' }} />
-        </label>
-        <div className="md:col-span-2 flex flex-wrap gap-2">
-          <button disabled={working} onClick={saveDialogue} className="rounded border px-3 py-2 text-xs" style={{ borderColor: 'var(--border)' }}>
-            <Save size={14} className="mr-1 inline"/>Lưu thoại
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        {(['x','y','w','h'] as const).map(key => (
+          <label key={key} className="text-xs">{key.toUpperCase()}
+            <input type="number" min={key === 'w' || key === 'h' ? 1 : 0} value={bbox[key]}
+              onChange={e => setBbox(current => ({ ...current, [key]: Number(e.target.value) }))}
+              className="mt-1 w-full rounded border px-2 py-2" style={{background:'var(--card)',borderColor:'var(--border)'}}/>
+          </label>
+        ))}
+        <div className="md:col-span-4">
+          <button disabled={working} onClick={saveBbox} className="rounded border px-3 py-2 text-xs" style={{borderColor:'var(--border)'}}>
+            <Scissors size={14} className="mr-1 inline"/>Lưu vùng cắt
           </button>
         </div>
 
-        <label className="text-xs md:col-span-2">
+        <div className="md:col-span-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold">Lời thoại theo thứ tự</span>
+            <button className="rounded border px-2 py-1 text-xs" style={{borderColor:'var(--border)'}}
+              onClick={() => setDialogues(current => [...current, {
+                id:'', panel_id:panel.id, display_order:current.length, speaker_id:`CHAR_${current.length+1}`,
+                text:'', verified:1, confidence:null,
+              }])}>+ Thêm câu</button>
+          </div>
+          {dialogues.map((d, index) => (
+            <div key={d.id || `new-${index}`} className="grid gap-2 rounded-lg border p-3 md:grid-cols-[140px_1fr_auto]" style={{borderColor:'var(--border)'}}>
+              <input value={d.speaker_id} aria-label={`Speaker câu ${index+1}`}
+                onChange={e => setDialogues(current => current.map((x,i)=>i===index?{...x,speaker_id:e.target.value}:x))}
+                className="rounded border px-2 py-2 text-xs" style={{background:'var(--card)',borderColor:'var(--border)'}}/>
+              <textarea value={d.text} rows={2} aria-label={`Lời thoại câu ${index+1}`}
+                onChange={e => setDialogues(current => current.map((x,i)=>i===index?{...x,text:e.target.value}:x))}
+                className="rounded border px-2 py-2 text-xs" style={{background:'var(--card)',borderColor:'var(--border)'}}/>
+              <button onClick={()=>void removeDialogue(index)} className="rounded border px-2" style={{borderColor:'var(--border)'}} title="Xóa câu"><Trash2 size={14}/></button>
+            </div>
+          ))}
+          <button disabled={working} onClick={saveDialogues} className="rounded border px-3 py-2 text-xs" style={{ borderColor: 'var(--border)' }}>
+            <Save size={14} className="mr-1 inline"/>Lưu toàn bộ thoại
+          </button>
+        </div>
+
+        <label className="text-xs md:col-span-4">
           Mask chữ / bong bóng (JSON tọa độ trong crop)
           <textarea value={maskText} onChange={e => setMaskText(e.target.value)} rows={4}
             placeholder={'[{"x":20,"y":15,"w":180,"h":90}]'}
@@ -462,8 +511,39 @@ export default function ComicStudioPage() {
               }} className="rounded border px-3 py-2 text-xs disabled:opacity-40" style={{borderColor:'var(--border)'}}>Kiểm tra trạng thái</button>
             </article>
           ))}
+          <div className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <strong className="text-sm">Review & ghép Reel</strong>
+                <div className="mt-1 text-xs" style={{color:'var(--muted)'}}>Duyệt từng file video sau khi xem/nghe. Chỉ ghép khi tất cả shot APPROVED.</div>
+              </div>
+              <a className="rounded border px-3 py-2 text-xs" style={{borderColor:'var(--border)'}}
+                href={`/api/comicreels/projects/${details.project.id}/assemble`}
+                onClick={e => {
+                  if (!details.shots.length || !details.shots.every(s=>s.video_path && s.review_status==='APPROVED')) {
+                    e.preventDefault(); setNotice('Chưa thể ghép: mọi shot phải có video local và được APPROVED.')
+                  }
+                }}>Ghép Reel đã duyệt</a>
+            </div>
+            <div className="mt-3 space-y-2">
+              {details.shots.filter(s=>s.video_path).map(s=>(
+                <div key={s.id} className="flex flex-wrap items-center gap-2 rounded border p-2 text-xs" style={{borderColor:'var(--border)'}}>
+                  <span className="font-semibold">Shot {s.display_order+1}</span>
+                  <span style={{color:'var(--muted)'}}>{s.video_path}</span>
+                  <span className="ml-auto">{s.review_status}</span>
+                  <button className="rounded border px-2 py-1" style={{borderColor:'var(--border)'}} onClick={async()=>{
+                    await apiJson(`/api/comicreels/shots/${s.id}/review`,{method:'PUT',body:JSON.stringify({status:'APPROVED',notes:'Đã duyệt từ ComicReels Studio.'})}); await reload()
+                  }}>Duyệt</button>
+                  <button className="rounded border px-2 py-1" style={{borderColor:'var(--border)'}} onClick={async()=>{
+                    await apiJson(`/api/comicreels/shots/${s.id}/review`,{method:'PUT',body:JSON.stringify({status:'REJECTED',notes:'Cần tạo lại shot.'})}); await reload()
+                  }}>Lỗi / tạo lại</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="rounded-xl border p-4 text-xs" style={{background:'var(--surface)',borderColor:'var(--border)',color:'var(--muted)'}}>
-            Review/ghép chỉ hoạt động sau khi từng shot có file video và được APPROVED. API hỗ trợ đăng ký file video, review từng shot và ghép ffmpeg; local test sẽ kiểm tra luồng này sau.
+            Batch generation được API bảo vệ bằng confirm_paid + idempotency key. Studio cố ý ưu tiên nút tạo từng shot; chỉ khi local test đạt và anh muốn mới bật thao tác batch trong UI để tránh một cú click tiêu nhiều tín dụng.
           </div>
         </section>
       )}
