@@ -14,7 +14,7 @@ Trạng thái mới: OFFLINE_LOCAL_TEST_PASS = code và workflow local đã ch�
 | 5 | OFFLINE_LOCAL_TEST_PASS + EXTERNAL_AI_PENDING | CRUD exact dialogue/speaker PASS; UI chính không còn bắt nhập tay, AI tự nhận thoại/speaker khi provider được kết nối. |
 | 6 | OFFLINE_LOCAL_TEST_PASS + EXTERNAL_AI_PENDING | AI speech-region mask được lưu tự động; chỉnh tay chỉ còn trong mục nâng cao. |
 | 7 | EXTERNAL_AI_PENDING | Compositor local bị loại khỏi luồng chính sau test comic thật; ảnh sạch phải do AI Generate/inpaint. |
-| 8 | OFFLINE_LOCAL_TEST_PASS + EXTERNAL_AI_PENDING | Đã có AI edit canvas/mask 9:16 + source-pixel re-lock; chưa gọi provider thật vì chưa có API credential. |
+| 8 | EXTERNAL_AI_PENDING | Luồng chính đã chuyển sang GPT FullProxy + ChatGPT Web Create image với reference attachment; cần live-test profile ZaloConnect và chất lượng 9:16 thật. |
 | 9 | OFFLINE_LOCAL_TEST_PASS | SHA approval gate và dependency invalidation PASS. |
 | 10 | OFFLINE_LOCAL_TEST_PASS | Shot split/duration/speaker lock, exact dialogue PASS. |
 | 11 | OFFLINE_LOCAL_TEST_PASS | Prompt locks, backup/restore và UI storyboard PASS. |
@@ -25,7 +25,7 @@ Trạng thái mới: OFFLINE_LOCAL_TEST_PASS = code và workflow local đã ch�
 | 16 | OFFLINE_LOCAL_TEST_PASS_WITH_GAPS | Backup/restore PASS; launcher macOS đã chạy thực tế từ source iCloud và dựng runtime cache ngoài iCloud; PowerShell/Windows chưa test. |
 
 ## Regression evidence
-- Python unit tests: 380/380 PASS.
+- Python unit tests: **cần chạy lại sau provider swap sang GPT FullProxy**; mốc trước đó 380/380 PASS.
 - npm ci: PASS.
 - Vite production build: PASS.
 - ESLint: PASS.
@@ -37,7 +37,7 @@ Trạng thái mới: OFFLINE_LOCAL_TEST_PASS = code và workflow local đã ch�
 
 ## Current hard stop
 The next meaningful quality gates require either:
-- a real comic plus ChatGPT/vision/inpaint capability for AI-assisted panel/dialogue/image reconstruction testing; or
+- live GPT FullProxy validation với profile ZaloConnect cho auto-analysis + reference-image generation; or
 - the user's Google Flow account/Extension/project for a real video generation test.
 
-Do not cross either gate without notifying anh first. No paid Google Flow request has been made in this local-test cycle.
+Anh đã yêu cầu dùng GPT FullProxy + profile ZaloConnect cho gate ChatGPT, nên gate này được phép test. Google Flow vẫn phải báo anh trước khi tạo video thật.
