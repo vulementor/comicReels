@@ -140,6 +140,9 @@ async def test_generate_clean_portrait_reuses_source_conversation_without_reuplo
         conversation_url=conversation,
         panel_index=0,
         panel_context="CHAR_1: Xin chào",
+        panel_box={"x": 10, "y": 20, "w": 800, "h": 500},
+        source_width=1200,
+        source_height=1600,
     )
 
     assert calls["kwargs"]["conversation"] == conversation
@@ -218,6 +221,9 @@ async def test_three_panels_reuse_one_conversation_without_reupload(tmp_path, mo
             conversation_url=conversation,
             panel_index=panel_index,
             panel_context=f"CHAR_{panel_index + 1}: dialogue",
+            panel_box={"x": 10, "y": 20 + panel_index * 100, "w": 800, "h": 500},
+            source_width=1200,
+            source_height=1600,
         )
 
     assert len(calls) == 3
@@ -371,3 +377,19 @@ async def test_ai_generate_deduplicates_existing_ready_portrait(tmp_path, monkey
     assert result["deduplicated"] is True
     assert result["portrait_sha256"] == digest
     assert result["status"] == "AI_IMAGE_READY"
+
+
+def test_image_prompt_locks_exact_source_panel_geometry():
+    prompt = provider._image_prompt(
+        [{"x": 5, "y": 6, "w": 40, "h": 30}],
+        "CHAR_2: dialogue",
+        1,
+        panel_box={"x": 205, "y": 741, "w": 1379, "h": 563},
+        source_width=1780,
+        source_height=2048,
+    )
+
+    assert "KHUNG 2" in prompt
+    assert "x=205, y=741, w=1379, h=563" in prompt
+    assert "1780x2048" in prompt
+    assert "KHÔNG mượn pose/composition từ panel khác" in prompt
