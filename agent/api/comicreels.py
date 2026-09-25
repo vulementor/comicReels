@@ -293,6 +293,19 @@ async def analyze_project(project_id: str, body: AnalyzeBody):
             row = dict(item)
             row["verified"] = bool(item.get("verified", False))
             dialogues.append(row)
+        receipt = result.get("provider_receipt") or {}
+        conversation_url = str(receipt.get("conversation_url") or "").strip()
+        if not conversation_url:
+            raise HTTPException(502, "AI phân tích không trả ChatGPT conversation URL; không thể tái sử dụng cùng chat.")
+        await store.set_project_ai_session(
+            project_id,
+            conversation_url=conversation_url,
+            assistant_message_id=(
+                str(receipt.get("assistant_message_id"))
+                if receipt.get("assistant_message_id")
+                else None
+            ),
+        )
         response = await _apply_analysis(project_id, panels, dialogues)
         response["analysis_warnings"] = result.get("warnings", [])
         response["characters"] = result.get("characters", [])
@@ -423,8 +436,20 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
             dialogue_context = "Detected dialogue context only; do NOT render it as text: " + " | ".join(lines)
     out = project_dir(raw_panel["project_id"]) / "panels" / panel_id / "portrait.png"
     try:
+        project = details["project"]
+        conversation_url = str(project.get("ai_conversation_url") or "").strip()
+        if not conversation_url:
+            raise HTTPException(
+                409,
+                "Project chưa có ChatGPT conversation nguồn. Hãy chạy AI phân tích ảnh nguồn trước.",
+            )
         _, protected, digest = await generate_clean_portrait(
-            crop, regions, out, panel_context=dialogue_context
+            crop,
+            regions,
+            out,
+            conversation_url=conversation_url,
+            panel_index=int(raw_panel["display_order"]),
+            panel_context=dialogue_context,
         )
     except Exception as exc:
         raise HTTPException(502, f"AI Generate ảnh thất bại: {exc}") from exc
