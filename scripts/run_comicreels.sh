@@ -80,7 +80,7 @@ fi
 
 GPTFP_STAMP="$VENV/.comicreels-gptfp.sha"
 if [ ! -f "$GPTFP_STAMP" ] || [ "$(cat "$GPTFP_STAMP")" != "$GPTFP_HEAD" ]; then
-  "$VENV/bin/python" -m pip install -e "$GPTFP_DIR[browser]"
+  "$VENV/bin/python" -m pip install -e "${GPTFP_DIR}[browser]"
   "$VENV/bin/python" -m camoufox fetch
   printf '%s' "$GPTFP_HEAD" > "$GPTFP_STAMP"
 fi
