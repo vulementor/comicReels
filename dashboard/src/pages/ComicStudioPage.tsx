@@ -24,7 +24,7 @@ type Shot = {
 }
 type Project = {
   id: string; name: string; status: string; source_width: number; source_height: number
-  source_sha256: string; source_mime: string
+  source_sha256: string; source_mime: string; ai_conversation_url: string | null
 }
 type Details = { project: Project; panels: Panel[]; shots: Shot[]; analysis_warnings?: string[] }
 type Step = 'import' | 'analyze' | 'images' | 'approve' | 'storyboard' | 'video'
@@ -381,6 +381,22 @@ export default function ComicStudioPage() {
     finally { setWorking(false) }
   }
 
+  const verifyDialogues = async () => {
+    if (!details?.project.ai_conversation_url || !status?.ai.configured) return
+    setWorking(true)
+    try {
+      const next = await apiJson<Details>(`/api/comicreels/projects/${details.project.id}/verify-dialogues`, {
+        method: 'POST',
+      })
+      setDetails(next)
+      setNotice('AI đã kiểm tra lại toàn bộ thoại trong chính ChatGPT conversation hiện tại, không upload lại ảnh.')
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWorking(false)
+    }
+  }
+
   const generateAllImages = async () => {
     if (!details || !status?.ai.configured) return
     setWorking(true)
@@ -569,15 +585,26 @@ export default function ComicStudioPage() {
                 <h2 className="font-semibold">Gallery {details.panels.length} khung</h2>
                 <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>AI đã nhận thoại/speaker/vùng cần xóa. AI Generate sẽ xóa chữ, tái tạo phần bị che và outpaint thẳng thành 9:16.</p>
               </div>
-              <button
-                disabled={working || !status?.ai.configured || details.panels.some(p => p.mask.length === 0)}
-                onClick={()=>void generateAllImages()}
-                className="rounded px-4 py-2 text-sm font-semibold disabled:opacity-40"
-                style={{background:'var(--accent)',color:'white'}}
-              >
-                {working?<Loader2 size={15} className="mr-1 inline animate-spin"/>:<Sparkles size={15} className="mr-1 inline"/>}
-                AI Generate toàn bộ {details.panels.length} khung
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  disabled={working || !status?.ai.configured || !details.project.ai_conversation_url}
+                  onClick={()=>void verifyDialogues()}
+                  className="rounded border px-4 py-2 text-sm font-semibold disabled:opacity-40"
+                  style={{borderColor:'var(--border)'}}
+                >
+                  {working?<Loader2 size={15} className="mr-1 inline animate-spin"/>:<RefreshCcw size={15} className="mr-1 inline"/>}
+                  AI kiểm tra lại thoại
+                </button>
+                <button
+                  disabled={working || !status?.ai.configured || details.panels.some(p => p.mask.length === 0)}
+                  onClick={()=>void generateAllImages()}
+                  className="rounded px-4 py-2 text-sm font-semibold disabled:opacity-40"
+                  style={{background:'var(--accent)',color:'white'}}
+                >
+                  {working?<Loader2 size={15} className="mr-1 inline animate-spin"/>:<Sparkles size={15} className="mr-1 inline"/>}
+                  AI Generate toàn bộ {details.panels.length} khung
+                </button>
+              </div>
             </div>
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
