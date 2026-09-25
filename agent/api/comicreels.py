@@ -60,6 +60,17 @@ async def get_project(project_id: str):
         raise HTTPException(404, "Không tìm thấy dự án")
     return value
 
+@router.get("/projects/{project_id}/source")
+async def project_source(project_id: str):
+    value = await repo.get_project(project_id)
+    if not value:
+        raise HTTPException(404, "Không tìm thấy dự án")
+    path = Path(value["source_path"])
+    if not path.exists():
+        raise HTTPException(404, "Ảnh nguồn không còn trên đĩa")
+    return FileResponse(path, media_type=value.get("source_mime") or "application/octet-stream", filename=path.name)
+
+
 @router.delete("/projects/{project_id}")
 async def delete_project(project_id: str):
     if not await repo.get_project(project_id):
