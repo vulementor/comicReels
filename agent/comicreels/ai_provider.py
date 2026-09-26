@@ -914,6 +914,7 @@ async def generate_clean_portrait(
     source_width: int | None = None,
     source_height: int | None = None,
     visual_anchor: str = "",
+    force_regenerate: bool = False,
 ) -> tuple[Path, dict[str, int], str]:
     if not crop_path.is_file():
         raise RuntimeError("Không tìm thấy crop panel local để đối chiếu kết quả.")
@@ -956,15 +957,16 @@ async def generate_clean_portrait(
         reference_height=reference_height,
     )
     receipt_path, cache_path = _generation_cache_paths(output_path, intent_sha256)
-    cached = _reuse_generation_cache(
-        receipt_path=receipt_path,
-        cache_path=cache_path,
-        output_path=output_path,
-        intent_sha256=intent_sha256,
-        selector=selector,
-    )
-    if cached is not None:
-        return cached
+    if not force_regenerate:
+        cached = _reuse_generation_cache(
+            receipt_path=receipt_path,
+            cache_path=cache_path,
+            output_path=output_path,
+            intent_sha256=intent_sha256,
+            selector=selector,
+        )
+        if cached is not None:
+            return cached
 
     client = _client()
     result = await asyncio.to_thread(
