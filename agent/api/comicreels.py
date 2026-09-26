@@ -38,7 +38,7 @@ from agent.comicreels.images import (
     save_source,
     sha256_file,
 )
-from agent.comicreels.prompts import SUPPORTED_DURATIONS, build_shots
+from agent.comicreels.prompts import SUPPORTED_DURATIONS, build_shots, reference_video_prompt
 from agent.comicreels.store import ROOT, store
 from agent.comicreels.ai_provider import (
     analyze_comic,
@@ -181,6 +181,15 @@ class BatchGenerateBody(BaseModel):
     batch_key: str = Field(min_length=8, max_length=160)
     project_id: str = ""
     resolution: Literal["360p", "720p"] = "720p"
+
+
+class ReferenceFlowGenerateBody(BaseModel):
+    confirm_paid: bool = False
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    panel_ids: list[str] = Field(min_length=1, max_length=3)
+    project_id: str = ""
+    resolution: Literal["360p", "720p"] = "720p"
+    force: bool = False
 
 
 class ReviewBody(BaseModel):
@@ -1004,6 +1013,117 @@ async def _generate_shot(shot_id: str, body: FlowGenerateBody) -> dict[str, Any]
 @router.post("/shots/{shot_id}/generate")
 async def generate_shot(shot_id: str, body: FlowGenerateBody):
     return await _generate_shot(shot_id, body)
+
+
+async def _generate_shot_from_references(
+    shot_id: str,
+    body: ReferenceFlowGenerateBody,
+) -> dict[str, Any]:
+    if not body.confirm_paid:
+        raise HTTPException(409, "Cần confirm_paid=true sau khi anh duyệt tác vụ có phí.")
+    shot = await store.shot(shot_id)
+    if not shot:
+        raise HTTPException(404, "Không tìm thấy shot.")
+    if shot.get("idempotency_key") == body.idempotency_key and shot.get("flow_payload"):
+        return {"deduplicated": True, "shot": shot}
+    if shot.get("status") in {"PROCESSING", "COMPLETED"} and not body.force:
+        raise HTTPException(409, "Shot đã được gửi. Dùng cùng idempotency_key hoặc force sau khi kiểm tra.")
+
+    panel_ids = list(dict.fromkeys(str(panel_id).strip() for panel_id in body.panel_ids if str(panel_id).strip()))
+    if not panel_ids or len(panel_ids) > 3:
+        raise HTTPException(400, "Cần chọn từ 1 đến 3 ảnh reference.")
+    details = await _details(shot["project_id"])
+    panel_index = {panel["id"]: panel for panel in details["panels"]}
+    if any(panel_id not in panel_index for panel_id in panel_ids):
+        raise HTTPException(400, "Có ảnh reference không thuộc cùng dự án ComicReels.")
+
+    selected_panels = [panel_index[panel_id] for panel_id in panel_ids]
+    portraits: list[Path] = []
+    for panel in selected_panels:
+        approved = str(panel.get("approved_sha256") or "")
+        portrait_sha = str(panel.get("portrait_sha256") or "")
+        if panel.get("status") != "AI_IMAGE_APPROVED" or not approved or approved != portrait_sha:
+            raise HTTPException(
+                409,
+                f"Khung {int(panel['display_order']) + 1} chưa được duyệt đúng phiên bản.",
+            )
+        portrait = _safe_file(panel.get("portrait_path"))
+        if sha256_file(portrait) != approved:
+            raise HTTPException(
+                409,
+                f"File ảnh khung {int(panel['display_order']) + 1} đã đổi sau khi duyệt.",
+            )
+        portraits.append(portrait)
+
+    client = get_flow_client()
+    pid = _flow_project_id(body.project_id)
+    if not client.connected or not pid:
+        raise HTTPException(503, "Google Flow chưa sẵn sàng (Extension/project).")
+
+    media_ids: list[str] = []
+    for index, (panel, portrait) in enumerate(zip(selected_panels, portraits)):
+        upload = await client.upload_image(
+            base64.b64encode(portrait.read_bytes()).decode("ascii"),
+            mime_type="image/png",
+            project_id=pid,
+            file_name=f"{shot_id}-ref-{index + 1}.png",
+        )
+        media_id = _first(upload, {"media_id", "mediaId", "id"})
+        if not isinstance(media_id, str) or not media_id:
+            raise HTTPException(502, f"Upload Flow reference {index + 1} không trả media ID.")
+        media_ids.append(media_id)
+
+    prompt = reference_video_prompt(shot["prompt"], len(media_ids))
+    if shot["model_family"] == "omni_flash":
+        result = await generate_omni_flash_video(
+            reference_media_ids=media_ids,
+            prompt=prompt,
+            project_id=pid,
+            scene_id=shot_id,
+            duration_s=int(shot["duration_s"]),
+            resolution=body.resolution,
+            aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
+        )
+    else:
+        result = await client.generate_video_from_references(
+            reference_media_ids=media_ids,
+            prompt=prompt,
+            project_id=pid,
+            scene_id=shot_id,
+            aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
+        )
+    if result.get("error") or (
+        isinstance(result.get("status"), int) and result["status"] >= 400
+    ):
+        raise HTTPException(
+            result.get("status", 502),
+            result.get("error", result.get("data")),
+        )
+
+    payload = {
+        "project_id": pid,
+        "reference_panel_ids": panel_ids,
+        "reference_image_media_ids": media_ids,
+        "script_prompt": prompt,
+        "result": result,
+    }
+    await store.update_shot(
+        shot_id,
+        status="PROCESSING",
+        idempotency_key=body.idempotency_key,
+        flow_payload_json=json.dumps(payload, ensure_ascii=False),
+    )
+    return {
+        "deduplicated": False,
+        "shot_id": shot_id,
+        "reference_panel_ids": panel_ids,
+        "payload": payload,
+    }
+
+
+@router.post("/shots/{shot_id}/generate-references")
+async def generate_shot_references(shot_id: str, body: ReferenceFlowGenerateBody):
+    return await _generate_shot_from_references(shot_id, body)
 
 
 @router.post("/projects/{project_id}/generate-batch")
