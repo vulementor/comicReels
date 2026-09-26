@@ -834,6 +834,9 @@ async def generate_clean_portrait(
         prompt,
         conversation=conversation_url,
         attachments=[],
+        conversation_attachment="first_image",
+        reference_width=source_width,
+        reference_height=source_height,
         output_dir=artifact_dir,
         visible=_VISIBLE,
     )

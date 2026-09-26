@@ -156,6 +156,9 @@ async def test_generate_clean_portrait_reuses_source_conversation_without_reuplo
 
     assert calls["kwargs"]["conversation"] == conversation
     assert calls["kwargs"]["attachments"] == []
+    assert calls["kwargs"]["conversation_attachment"] == "first_image"
+    assert calls["kwargs"]["reference_width"] == 1200
+    assert calls["kwargs"]["reference_height"] == 1600
     assert "TURN ĐẦU" in calls["prompt"]
     assert "KHUNG 1" in calls["prompt"]
     assert "9:16" in calls["prompt"]
@@ -296,6 +299,9 @@ async def test_three_panels_reuse_one_conversation_without_reupload(tmp_path, mo
     assert len(calls) == 3
     assert all(call["conversation"] == conversation for call in calls)
     assert all(call["attachments"] == [] for call in calls)
+    assert all(call["conversation_attachment"] == "first_image" for call in calls)
+    assert all(call["reference_width"] == 1200 for call in calls)
+    assert all(call["reference_height"] == 1600 for call in calls)
     assert ["KHUNG 1" in calls[0]["prompt"], "KHUNG 2" in calls[1]["prompt"], "KHUNG 3" in calls[2]["prompt"]] == [True, True, True]
     for index, call in enumerate(calls, start=1):
         assert f"ANCHOR_PANEL_{index}" in call["prompt"]
