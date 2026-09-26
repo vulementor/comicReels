@@ -2,7 +2,7 @@
 
 ## Hiện tại — 26/09/2026, sau chỉ đạo “ComicReels Latest”
 
-**Trạng thái: CODE_READY_FOR_REVIEW — LOCAL_TEST_AWAITING_USER_CONFIRMATION.**
+**Trạng thái: WINDOWS_OFFLINE_GATE_PASS — LIVE_UI_AND_VIDEO_PENDING.**
 Nhánh `feature/comicreels-segments-03-16`, Draft PR #3. Chưa merge.
 
 - FlowKit vẫn là core tại `/`; giữ Projects, Gallery, Logs, Guide, Settings và API/worker/extension gốc. ComicReels tại `/comicreels`.
@@ -16,9 +16,9 @@ Nhánh `feature/comicreels-segments-03-16`, Draft PR #3. Chưa merge.
 - Quay lại ComicReels sẽ mở dự án gần nhất; ảnh hiện có không tự Generate lại. Lỗi ở khung sau vẫn làm mới gallery các khung đã xong.
 - Không tạo Chrome/profile mới; tiếp tục dùng extension và cấu hình profile đã có.
 
-**Bằng chứng vòng này:** review source/diff và independent static review; thêm regression tests cho trạng thái, preset, thoại dài, gửi trùng, timeout, polling, review cũ và sửa dữ liệu khi job đang chạy. Chưa chạy test/build/backend/browser trên máy anh hoặc trong workspace ở vòng này. Kết quả GitHub Actions, nếu có, phải báo riêng theo commit.
+**Bằng chứng vòng này:** đã chuyển môi trường sang VULE-PC theo yêu cầu. Bản sao 30 file khớp SHA-256; giữ 3 ảnh được duyệt và 3 shot READY. Extension 0.3.2 kết nối; GPT FullProxy ghi nhận đăng nhập ChatGPT. Gate offline chạy qua Remote Desktop Commander: 460 unit tests PASS sau sửa lỗi symlink trên Windows; frontend build và lint PASS. Chi tiết và giới hạn ở [LOCAL-TEST-RESULTS-2026-09-26-WINDOWS.md](LOCAL-TEST-RESULTS-2026-09-26-WINDOWS.md). Kết quả này không thay thế kiểm thử UI hoặc video thật.
 
-**Bước tiếp theo:** anh duyệt code trên GitHub, sau đó mới bắt đầu từng bước local test bằng Remote Desktop Commander, chờ anh OK giữa các bước. Dùng lại Chrome đăng nhập sẵn; không tự mở profile khác, không gửi tác vụ Flow có phí trước bước được duyệt.
+**Bước tiếp theo:** báo kết quả bước 2 và chờ anh OK để kiểm tra FlowKit core/UI trên VULE-PC theo kế hoạch từng bước. Dùng lại Chrome đăng nhập sẵn; không tự mở profile khác, không gửi tác vụ Flow có phí trước bước được duyệt.
 
 ## Lịch sử ngày 25/09/2026 (không chứng minh revision hiện tại)
 

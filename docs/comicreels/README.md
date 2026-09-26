@@ -12,6 +12,7 @@
 - [CHECKPOINTS: trạng thái thực, PR và kiểm thử còn thiếu](CHECKPOINTS.md)
 - [IMPLEMENTATION-03-16: ma trận code các đoạn 3–16](IMPLEMENTATION-03-16.md)
 - [LOCAL-TEST-PLAN: kịch bản test local](LOCAL-TEST-PLAN.md)
+- [LOCAL-TEST-RESULTS-2026-09-26-WINDOWS: kết quả gate offline trên VULE-PC](LOCAL-TEST-RESULTS-2026-09-26-WINDOWS.md)
 - [LOCAL-TEST-RESULTS-2026-09-25: kết quả test offline thực tế trên Mac](LOCAL-TEST-RESULTS-2026-09-25.md)
 - [CHECKPOINT-TEMPLATE: mẫu báo cáo mỗi đoạn](CHECKPOINT-TEMPLATE.md)
 
