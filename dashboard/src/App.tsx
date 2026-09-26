@@ -19,8 +19,6 @@ import SettingsPage from './pages/SettingsPage'
 import ComicStudioPage from './pages/ComicStudioPage'
 
 const NAV: { to: string; icon: typeof LayoutDashboard; labelKey: TranslationKey; exact: boolean }[] = [
-  { to: '/flowkit', icon: LayoutDashboard, labelKey: 'nav.dashboard', exact: true },
-  { to: '/projects', icon: FolderOpen, labelKey: 'nav.projects', exact: false },
   { to: '/gallery', icon: Film, labelKey: 'nav.gallery', exact: false },
   { to: '/logs', icon: ScrollText, labelKey: 'nav.logs', exact: false },
   { to: '/guide', icon: BookOpen, labelKey: 'nav.guide', exact: false },
@@ -110,7 +108,14 @@ function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-0.5 px-2.5 py-3">
+        <div className="px-2.5 pb-1 pt-1 text-[9px] font-semibold tracking-[0.18em]" style={{ color: 'var(--muted)' }}>COMICREELS</div>
         <NavLink to="/" end className="flex items-center gap-2.5 px-2.5 py-2 rounded text-xs" style={({ isActive }) => ({ background: isActive ? 'var(--card)' : 'transparent', color: isActive ? 'var(--text)' : 'var(--muted)', borderLeft: `2px solid ${isActive ? 'var(--accent)' : 'transparent'}` })}><Film size={13} />ComicReels Studio</NavLink>
+
+        <div className="mt-3 px-2.5 pb-1 pt-1 text-[9px] font-semibold tracking-[0.18em]" style={{ color: 'var(--muted)' }}>FLOWKIT GỐC</div>
+        <NavLink to="/flowkit" end className="flex items-center gap-2.5 px-2.5 py-2 rounded text-xs" style={({ isActive }) => ({ background: isActive ? 'var(--card)' : 'transparent', color: isActive ? 'var(--text)' : 'var(--muted)', borderLeft: `2px solid ${isActive ? 'var(--accent)' : 'transparent'}` })}><LayoutDashboard size={13} />Dashboard FlowKit</NavLink>
+        <NavLink to="/projects" className="flex items-center gap-2.5 px-2.5 py-2 rounded text-xs" style={({ isActive }) => ({ background: isActive ? 'var(--card)' : 'transparent', color: isActive ? 'var(--text)' : 'var(--muted)', borderLeft: `2px solid ${isActive ? 'var(--accent)' : 'transparent'}` })}><FolderOpen size={13} />Projects & công cụ video</NavLink>
+
+        <div className="mt-2 px-2.5 pb-1 pt-1 text-[9px] font-semibold tracking-[0.18em]" style={{ color: 'var(--muted)' }}>KHÁC</div>
         {NAV.map(({ to, icon: Icon, labelKey, exact }) => (
           <NavLink
             key={to}
