@@ -92,7 +92,9 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
         idempotency_key="refs-test-123",
         panel_ids=["panel-0", "panel-1", "panel-2"],
         project_id="flow-project",
-        resolution="720p",
+        resolution="360p",
+        duration_s=10,
+        variant_count=1,
     )
     result = await comic_api._generate_shot_from_references("shot-1", body)
 
@@ -104,12 +106,21 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
         "shot-1-ref-3.png",
     ]
     assert submitted["reference_media_ids"] == ["media-1", "media-2", "media-3"]
-    assert submitted["duration_s"] == 8
-    assert submitted["resolution"] == "720p"
+    assert submitted["duration_s"] == 10
+    assert submitted["resolution"] == "360p"
     assert "REFERENCE IMAGES: 3 ảnh" in submitted["prompt"]
     assert 'Xin chào.' in submitted["prompt"]
     assert "không dùng bước TTS/lồng tiếng riêng" in submitted["prompt"]
     assert updates[-1]["status"] == "PROCESSING"
+    stored = __import__("json").loads(updates[-1]["flow_payload_json"])
+    assert stored["generation_preset"] == {
+        "model_family": "omni_flash",
+        "duration_s": 10,
+        "resolution": "360p",
+        "variant_count": 1,
+        "credit_cost": None,
+        "credit_note": "Flow quyết định credit thực tế tại thời điểm gửi.",
+    }
 
 
 @pytest.mark.asyncio
@@ -158,3 +169,28 @@ async def test_generate_shot_from_references_rejects_unapproved_panel(tmp_path, 
 
     assert exc.value.status_code == 409
     assert "chưa được duyệt đúng phiên bản" in str(exc.value.detail)
+
+
+
+def test_reference_flow_contract_is_fixed_to_omni_10s_360p_single_variant():
+    body = comic_api.ReferenceFlowGenerateBody(
+        idempotency_key="preset-123",
+        panel_ids=["panel-0"],
+    )
+    assert body.resolution == "360p"
+    assert body.duration_s == 10
+    assert body.variant_count == 1
+
+    with pytest.raises(Exception):
+        comic_api.ReferenceFlowGenerateBody(
+            idempotency_key="preset-720p",
+            panel_ids=["panel-0"],
+            resolution="720p",
+        )
+
+    with pytest.raises(Exception):
+        comic_api.ReferenceFlowGenerateBody(
+            idempotency_key="preset-multi",
+            panel_ids=["panel-0"],
+            variant_count=2,
+        )
