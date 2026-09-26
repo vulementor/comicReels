@@ -69,9 +69,23 @@ SOURCE LOCK: Giữ nguyên tuyệt đối thiết kế nhân vật, trang phục
 DIALOGUE LOCK: {dialogue}
 ACTION: Chuyển động nhỏ, tự nhiên và đúng cảm xúc của khung; ưu tiên nhịp hài gốc. Nếu thoại kết thúc sớm, phần còn lại chỉ là phản ứng im lặng.
 LIP SYNC: Chỉ người đang nói cử động miệng trong thời gian câu thoại; người không nói không chép miệng.
+AUDIO: Tạo luôn lời thoại nói trong chính video theo DIALOGUE LOCK. Không chờ, không yêu cầu và không giả định có file TTS/lồng tiếng tách riêng.
 CAMERA: Giữ bố cục nguồn; chuyển động máy rất nhẹ, không che hoặc cắt nhân vật quan trọng.
 NO TEXT: Không tạo chữ, subtitle, speech bubble, watermark hoặc caption trong video."""
     
+
+
+def reference_video_prompt(base_prompt: str, reference_count: int) -> str:
+    if reference_count < 1 or reference_count > 3:
+        raise ValueError("ComicReels reference video requires 1 to 3 images")
+    return f"""COMICREELS · FLOW REFERENCE VIDEO
+REFERENCE IMAGES: {reference_count} ảnh đính kèm là nguồn hình ảnh bắt buộc.
+CHARACTER LOCK: Bám sát tuyệt đối thiết kế nhân vật, khuôn mặt, hình dáng, tỷ lệ cơ thể, trang phục, màu sắc, đạo cụ và nét vẽ trong các ảnh reference. Không redesign, không đổi loài, không đổi màu, không thêm nhân vật không có trong reference.
+REFERENCE CONSISTENCY: Nếu cùng nhân vật xuất hiện ở nhiều ảnh, phải giữ một thiết kế thống nhất xuyên suốt video. Ưu tiên nhận dạng nhân vật và bố cục từ ảnh hơn mọi suy diễn từ văn bản.
+SCRIPT: Thực hiện đúng kịch bản thành phần bên dưới, bao gồm lời thoại. Lời thoại phải được tạo trực tiếp trong video, không dùng bước TTS/lồng tiếng riêng.
+---
+{base_prompt.strip()}
+"""
 
 def build_shots(project_id: str, panels: list[dict], model_family: str = "omni_flash") -> list[dict]:
     shots: list[dict] = []
