@@ -55,26 +55,24 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
     async def fake_details(_project_id):
         return {"project": {"id": "project-1"}, "panels": panels, "shots": [shot]}
 
-    class FakeFlowClient:
-        connected = True
+    async def fake_flowkit_upload(body):
+        uploads.append({
+            "file_path": body.file_path,
+            "project_id": body.project_id,
+            "file_name": body.file_name,
+        })
+        return {"media_id": f"media-{len(uploads)}"}
 
-        async def upload_image(self, encoded, *, mime_type, project_id, file_name):
-            uploads.append({
-                "encoded": encoded,
-                "mime_type": mime_type,
-                "project_id": project_id,
-                "file_name": file_name,
-            })
-            return {"media_id": f"media-{len(uploads)}"}
-
-    async def fake_generate_omni_flash_video(**kwargs):
-        submitted.update(kwargs)
+    async def fake_flowkit_status():
         return {
-            "status": 200,
-            "data": {
-                "operations": [{"operation": {"name": "op-1"}}],
-            },
+            "connected": True,
+            "flow_project_id": None,
+            "session_project": {"project_id": "flow-project"},
         }
+
+    async def fake_flowkit_generate(body):
+        submitted.update(body.model_dump())
+        return {"operations": [{"operation": {"name": "op-1"}}]}
 
     async def fake_update_shot(_shot_id, **changes):
         updates.append(changes)
@@ -82,9 +80,9 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
     monkeypatch.setattr(comic_api.store, "shot", fake_shot)
     monkeypatch.setattr(comic_api, "_details", fake_details)
     monkeypatch.setattr(comic_api, "_safe_file", lambda value: __import__("pathlib").Path(value))
-    monkeypatch.setattr(comic_api, "get_flow_client", lambda: FakeFlowClient())
-    monkeypatch.setattr(comic_api, "_flow_project_id", lambda explicit="": explicit or "flow-project")
-    monkeypatch.setattr(comic_api, "generate_omni_flash_video", fake_generate_omni_flash_video)
+    monkeypatch.setattr(comic_api, "flowkit_upload_image", fake_flowkit_upload)
+    monkeypatch.setattr(comic_api, "flowkit_extension_status", fake_flowkit_status)
+    monkeypatch.setattr(comic_api, "flowkit_generate_video_refs", fake_flowkit_generate)
     monkeypatch.setattr(comic_api.store, "update_shot", fake_update_shot)
 
     body = comic_api.ReferenceFlowGenerateBody(
@@ -105,6 +103,7 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
         "shot-1-ref-2.png",
         "shot-1-ref-3.png",
     ]
+    assert all(u["project_id"] == "flow-project" for u in uploads)
     assert submitted["reference_media_ids"] == ["media-1", "media-2", "media-3"]
     assert submitted["duration_s"] == 10
     assert submitted["resolution"] == "360p"
@@ -113,6 +112,8 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
     assert "không dùng bước TTS/lồng tiếng riêng" in submitted["prompt"]
     assert updates[-1]["status"] == "PROCESSING"
     stored = __import__("json").loads(updates[-1]["flow_payload_json"])
+    assert stored["flowkit_delegated"] is True
+    assert stored["project_id"] == "flow-project"
     assert stored["generation_preset"] == {
         "model_family": "omni_flash",
         "duration_s": 10,
@@ -194,3 +195,23 @@ def test_reference_flow_contract_is_fixed_to_omni_10s_360p_single_variant():
             panel_ids=["panel-0"],
             variant_count=2,
         )
+
+
+
+@pytest.mark.asyncio
+async def test_comicreels_preflight_delegates_to_flowkit(monkeypatch):
+    async def fake_status():
+        return {
+            "connected": True,
+            "flow_project_id": "flow-project",
+            "session_project": {"project_id": "session-project"},
+            "transport": "batch",
+        }
+
+    monkeypatch.setattr(comic_api, "flowkit_extension_status", fake_status)
+
+    result = await comic_api.flow_preflight()
+
+    assert result["ready"] is True
+    assert result["project_id"] == "flow-project"
+    assert result["flowkit"]["transport"] == "batch"
