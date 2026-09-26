@@ -393,7 +393,8 @@ async def test_ai_generate_reuses_accepted_history_without_provider(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_ai_generate_invalidates_rejected_active_hash_before_provider(tmp_path, monkeypatch):
+@pytest.mark.parametrize("use_local_crop", [False, True])
+async def test_ai_generate_invalidates_rejected_active_hash_before_provider(tmp_path, monkeypatch, use_local_crop):
     crop = tmp_path / "crop.png"
     Image.new("RGB", (800, 500), (100, 110, 120)).save(crop)
     rejected = "b" * 64
@@ -438,6 +439,7 @@ async def test_ai_generate_invalidates_rejected_active_hash_before_provider(tmp_
         }
 
     async def fake_generate(*_args, **_kwargs):
+        assert _kwargs.get("use_local_crop", False) is use_local_crop
         assert panel["status"] == "EXTRACTED"
         assert panel["portrait_path"] is None
         assert panel["portrait_sha256"] is None
@@ -463,13 +465,80 @@ async def test_ai_generate_invalidates_rejected_active_hash_before_provider(tmp_
 
     result = await comic_api.ai_generate_panel(
         "panel-rejected",
-        comic_api.AIImageBody(confirm_paid=True),
+        comic_api.AIImageBody(confirm_paid=True, use_local_crop=use_local_crop),
     )
 
     assert result["portrait_sha256"] == replacement
     assert panel["status"] == "AI_IMAGE_READY"
     assert rejected not in {panel.get("portrait_sha256")}
     assert cleared
+
+
+@pytest.fixture
+def local_crop_generation(tmp_path, monkeypatch):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (80, 50), (12, 34, 56)).save(crop)
+    artifact = tmp_path / "generated.png"
+    calls = []
+
+    class ImageService:
+        def generate(self, prompt, **kwargs):
+            calls.append({"prompt": prompt, **kwargs})
+            with Image.open(crop) as source:
+                Image.new("RGB", (90, 160), source.getpixel((0, 0))).save(artifact)
+            return SimpleNamespace(state="verified", output_path=str(artifact), reason=None,
+                                   conversation_url="https://chatgpt.com/c/new-image-session")
+
+    monkeypatch.setattr(provider, "_client", lambda: SimpleNamespace(image=ImageService()))
+    kwargs = dict(conversation_url="https://chatgpt.com/c/inaccessible-old-session",
+                  panel_index=2, panel_box={"x": 10, "y": 20, "w": 80, "h": 50},
+                  source_width=120, source_height=160,
+                  visual_anchor="Bò quay đầu sang TRÁI, miệng KHÉP; thỏ dựng thân trên.",
+                  use_local_crop=True)
+    return SimpleNamespace(crop=crop, regions=[{"x": 1, "y": 2, "w": 10, "h": 8}],
+                           output=tmp_path / "panel" / "portrait.png", kwargs=kwargs, calls=calls)
+
+
+@pytest.mark.asyncio
+async def test_local_crop_generation_uses_original_bytes_in_new_conversation(local_crop_generation):
+    case = local_crop_generation
+    path, _, digest = await provider.generate_clean_portrait(case.crop, case.regions, case.output, **case.kwargs)
+    call, = case.calls
+    assert call["attachments"] == [case.crop]
+    assert not call.get("conversation") and not call.get("conversation_attachment")
+    assert case.kwargs["visual_anchor"] in call["prompt"]
+    assert "KHUNG 3" in call["prompt"] and "9:16" in call["prompt"]
+    assert "TURN ĐẦU" not in call["prompt"] and "Không upload lại bytes" not in call["prompt"]
+    assert path == case.output and digest == provider.sha256_file(path)
+
+
+@pytest.mark.asyncio
+async def test_local_crop_cache_is_bound_to_exact_source_bytes(local_crop_generation):
+    case = local_crop_generation
+    first = await provider.generate_clean_portrait(case.crop, case.regions, case.output, **case.kwargs)
+    case.output.unlink()
+    repeat = await provider.generate_clean_portrait(case.crop, case.regions, case.output, **case.kwargs)
+    assert repeat[2] == first[2] and len(case.calls) == 1
+    Image.new("RGB", (80, 50), (90, 80, 70)).save(case.crop)
+    changed = await provider.generate_clean_portrait(case.crop, case.regions, case.output, **case.kwargs)
+    assert changed[2] != first[2] and len(case.calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["uncertain", "needs_input"])
+async def test_local_crop_generation_does_not_retry_missing_receipt(local_crop_generation, monkeypatch, state):
+    case = local_crop_generation
+    calls = []
+
+    class UnavailableService:
+        def generate(self, *args, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(state=state, output_path=None, reason="Missing receipt")
+
+    monkeypatch.setattr(provider, "_client", lambda: SimpleNamespace(image=UnavailableService()))
+    with pytest.raises(RuntimeError, match=state):
+        await provider.generate_clean_portrait(case.crop, case.regions, case.output, **case.kwargs)
+    assert len(calls) == 1 and not case.output.exists()
 
 
 @pytest.mark.asyncio
