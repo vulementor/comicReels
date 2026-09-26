@@ -53,7 +53,7 @@ Bằng chứng nằm tại `local-test-data/checks-20260926-1640` trên VULE-PC:
 
 ## Còn chờ nghiệm thu
 
-- Bước 4: tải từng ảnh cũ và đối chiếu khung gốc/ảnh 9:16; bước 5: kiểm tra duyệt và nội dung kịch bản.
+- Bước 4 đã đối chiếu và **FAIL về chất lượng ảnh**: khung 2/3 lặp tư thế hoặc sai hướng so với nguồn, đã thu hồi duyệt. Xem [IMAGE-QA-2026-09-26.md](IMAGE-QA-2026-09-26.md). Bước 5 và video thật phải chờ ảnh thay thế được duyệt.
 - Xác nhận đúng Flow project, ba ảnh reference, kịch bản, preset Omni Flash/10s/360p/1 bản trước một lượt tạo có phí.
 - Video thật, thoại/giọng/lip-sync, tải file, duyệt/tạo lại và ghép.
 

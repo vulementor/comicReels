@@ -64,6 +64,7 @@ async def comic(tmp_path, monkeypatch):
 
     monkeypatch.setattr(api, "flowkit_extension_status", status)
     monkeypatch.setattr(api, "flowkit_upload_image", upload)
+    monkeypatch.setattr(api, "flowkit_generate_video", generate)
     monkeypatch.setattr(api, "flowkit_generate_video_refs", generate)
     return SimpleNamespace(store=store, panels=panels, shot=shots[0], calls=calls, root=tmp_path)
 

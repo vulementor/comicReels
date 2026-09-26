@@ -34,7 +34,7 @@
     },
     {
       "panel_index": 1,
-      "state": "accepted_existing_output",
+      "state": "historical_outputs_rejected",
       "candidates": [
         {
           "output_message_id": "13d89f37-b3f7-4728-aaf3-fdccfbb2f7de",
@@ -42,8 +42,8 @@
           "width": 941,
           "height": 1672,
           "artifact_sha256": "b12733c33c629303589c45e09c38337fd441b60f5a612f75951d5e7916f5c6e2",
-          "verdict": "accepted",
-          "reason": "Matches current P2 panel composition and is already the active local portrait."
+          "verdict": "rejected",
+          "reason": "Acceptance withdrawn after direct source/output review on VULE-PC, 2026-09-26: repeats P1 framing and reclining rabbit with visible ears instead of P2's upright upper-body/arm pose and closer framing. Different bytes and a closed bull mouth do not establish panel fidelity."
         }
       ]
     },
@@ -68,6 +68,13 @@
           "artifact_sha256": "da2d942f07277d94379b58a112abadb48cec8e4c27efc0c91c49223410b06ff8",
           "verdict": "rejected",
           "reason": "Provider-side source-reference attempt still keeps the orange bull facing right; invalid for P3."
+        },
+        {
+          "artifact_sha256": "2260d7fb4a1ca9f17b5c9cc6958c7f705828fb42114f5dd8ef1b2341437ec78a",
+          "width": 941,
+          "height": 1672,
+          "verdict": "rejected",
+          "reason": "Active portrait reviewed on VULE-PC, 2026-09-26: repeats P1's right-facing, open-mouth bull; P3 source requires the head/muzzle facing left with mouth closed. Preserved locally for comparison; must not be restored or approved."
         }
       ]
     }

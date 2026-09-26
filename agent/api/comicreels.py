@@ -761,6 +761,7 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
                 )
             protected = {"x": 0, "y": 0, "w": width, "h": height}
             reconcile_source = "history_local"
+        _assert_portrait_not_rejected(project, raw_panel, digest)
         await store.update_panel(
             panel_id,
             portrait_path=str(out),
@@ -816,6 +817,7 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
         )
     except Exception as exc:
         raise HTTPException(502, f"AI Generate ảnh thất bại: {exc}") from exc
+    _assert_portrait_not_rejected(project, raw_panel, digest)
     await store.update_panel(
         panel_id,
         portrait_path=str(out),
@@ -869,6 +871,26 @@ async def make_portrait(panel_id: str):
     return {"panel_id": panel_id, "portrait_sha256": digest, "protected_region": protected}
 
 
+def _assert_portrait_not_rejected(project: dict[str, Any], panel: dict[str, Any], digest: str) -> None:
+    """A persisted visual rejection overrides hashes and stale approval flags.
+
+    This checks an existing review verdict, not the visual quality of new images.
+    """
+    conversation_url = str(project.get("ai_conversation_url") or "").strip()
+    if not conversation_url:
+        return
+    try:
+        history = image_history_decision(conversation_url, int(panel["display_order"]))
+    except Exception as exc:
+        raise HTTPException(409, "Không đọc được kết quả duyệt ảnh; cần kiểm tra trước khi dùng ảnh.") from exc
+    if digest in history.rejected_sha256:
+        raise HTTPException(
+            409,
+            f"Ảnh khung {int(panel['display_order']) + 1} đã bị loại vì không khớp khung gốc. "
+            "Cần ảnh thay thế trước khi duyệt, tạo kịch bản hoặc gửi video.",
+        )
+
+
 @router.post("/panels/{panel_id}/approve")
 async def approve_panel(panel_id: str):
     panel = await store.panel(panel_id)
@@ -882,6 +904,8 @@ async def approve_panel(panel_id: str):
     digest = sha256_file(_safe_file(panel["portrait_path"]))
     if digest != panel.get("portrait_sha256"):
         raise HTTPException(409, "Ảnh 9:16 đã thay đổi ngoài state; hãy tạo lại trước khi OK.")
+    details = await _details(panel["project_id"])
+    _assert_portrait_not_rejected(details["project"], panel, digest)
     next_status = "AI_IMAGE_APPROVED" if panel.get("status") == "AI_IMAGE_READY" else "IMAGE_APPROVED"
     await store.update_panel(panel_id, approved_sha256=digest, status=next_status)
     return {"panel_id": panel_id, "approved_sha256": digest, "status": next_status}
@@ -903,6 +927,7 @@ async def storyboard(project_id: str, body: StoryboardBody):
             raise HTTPException(409, f"Panel {panel['display_order'] + 1} chưa được duyệt từ ảnh AI Generate.")
         if not panel.get("portrait_sha256") or panel.get("approved_sha256") != panel.get("portrait_sha256"):
             raise HTTPException(409, f"Panel {panel['display_order'] + 1} chưa OK đúng phiên bản ảnh hiện tại.")
+        _assert_portrait_not_rejected(details["project"], panel, panel["portrait_sha256"])
         for dialogue in panel["dialogues"]:
             if not dialogue.get("verified"):
                 raise HTTPException(409, f"Panel {panel['display_order'] + 1} còn thoại chưa xác minh.")
@@ -1015,6 +1040,9 @@ async def _submit_video(shot: dict[str, Any], body: FlowGenerateBody | Reference
                         panels: list[dict[str, Any]], *, references: bool) -> dict[str, Any]:
     if shot["model_family"] != "omni_flash" or int(shot["duration_s"]) != 10:
         raise HTTPException(409, "Hãy tạo lại kịch bản thành phần theo preset Omni Flash 10s.")
+    details = await _details(shot["project_id"])
+    for panel in panels:
+        _assert_portrait_not_rejected(details["project"], panel, str(panel.get("portrait_sha256") or ""))
     portraits = [_approved_portrait(panel, shot) for panel in panels]
     preflight = await flow_preflight(body.project_id)
     if not preflight["ready"]:
