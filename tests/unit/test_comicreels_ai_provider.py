@@ -1108,12 +1108,33 @@ async def test_ai_generate_deduplicates_existing_ready_portrait(tmp_path, monkey
             "visual_anchor": "CHAR_1 đứng bên trái, quay sang phải.",
         }
 
+    async def fake_details(_project_id):
+        return {
+            "project": {
+                "id": "project-1",
+                "ai_conversation_url": "https://chatgpt.com/c/no-history",
+                "source_width": 1200,
+                "source_height": 1600,
+            },
+            "panels": [],
+        }
+
     async def forbidden_generate(*_args, **_kwargs):
         raise AssertionError("provider must not run for an already generated panel")
 
     monkeypatch.setattr(comic_api.store, "panel", fake_panel)
+    monkeypatch.setattr(comic_api, "_details", fake_details)
     monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
     monkeypatch.setattr(comic_api, "_safe_file", lambda value: portrait if value else portrait)
+    monkeypatch.setattr(
+        comic_api,
+        "image_history_decision",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            accepted_sha256=None,
+            accepted_output_message_id=None,
+            rejected_sha256=frozenset(),
+        ),
+    )
     monkeypatch.setattr(comic_api, "generate_clean_portrait", forbidden_generate)
 
     result = await comic_api.ai_generate_panel(
