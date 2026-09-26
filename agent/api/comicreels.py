@@ -165,7 +165,8 @@ class MaskBody(BaseModel):
 
 
 class StoryboardBody(BaseModel):
-    model_family: Literal["omni_flash", "veo"] = "omni_flash"
+    model_family: Literal["omni_flash"] = "omni_flash"
+    duration_s: Literal[10] = 10
 
 
 class FlowGenerateBody(BaseModel):
@@ -189,7 +190,9 @@ class ReferenceFlowGenerateBody(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=200)
     panel_ids: list[str] = Field(min_length=1, max_length=3)
     project_id: str = ""
-    resolution: Literal["360p", "720p"] = "720p"
+    resolution: Literal["360p"] = "360p"
+    duration_s: Literal[10] = 10
+    variant_count: Literal[1] = 1
     force: bool = False
 
 
@@ -886,7 +889,12 @@ async def storyboard(project_id: str, body: StoryboardBody):
             if not dialogue.get("verified"):
                 raise HTTPException(409, f"Panel {panel['display_order'] + 1} còn thoại chưa xác minh.")
     await store.clear_shots(project_id)
-    shots = build_shots(project_id, panels, body.model_family)
+    shots = build_shots(
+        project_id,
+        panels,
+        body.model_family,
+        fixed_duration_s=body.duration_s,
+    )
     for shot in shots:
         await store.insert_shot(shot)
     await store.set_project_status(project_id, "PROMPTS_READY")
@@ -1074,25 +1082,22 @@ async def _generate_shot_from_references(
             raise HTTPException(502, f"Upload Flow reference {index + 1} không trả media ID.")
         media_ids.append(media_id)
 
+    if shot["model_family"] != "omni_flash":
+        raise HTTPException(
+            409,
+            "ComicReels reference-video preset chỉ dùng Omni Flash. Hãy tạo lại kịch bản thành phần.",
+        )
+
     prompt = reference_video_prompt(shot["prompt"], len(media_ids))
-    if shot["model_family"] == "omni_flash":
-        result = await generate_omni_flash_video(
-            reference_media_ids=media_ids,
-            prompt=prompt,
-            project_id=pid,
-            scene_id=shot_id,
-            duration_s=int(shot["duration_s"]),
-            resolution=body.resolution,
-            aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
-        )
-    else:
-        result = await client.generate_video_from_references(
-            reference_media_ids=media_ids,
-            prompt=prompt,
-            project_id=pid,
-            scene_id=shot_id,
-            aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
-        )
+    result = await generate_omni_flash_video(
+        reference_media_ids=media_ids,
+        prompt=prompt,
+        project_id=pid,
+        scene_id=shot_id,
+        duration_s=body.duration_s,
+        resolution=body.resolution,
+        aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
+    )
     if result.get("error") or (
         isinstance(result.get("status"), int) and result["status"] >= 400
     ):
@@ -1101,11 +1106,30 @@ async def _generate_shot_from_references(
             result.get("error", result.get("data")),
         )
 
+    operations = (
+        result.get("data", {}).get("operations", [])
+        if isinstance(result.get("data"), dict)
+        else []
+    )
+    if len(operations) != 1:
+        raise HTTPException(
+            502,
+            "Omni Flash không trả đúng 1 operation; chặn để tránh tạo nhiều phiên bản ngoài ý muốn.",
+        )
+
     payload = {
         "project_id": pid,
         "reference_panel_ids": panel_ids,
         "reference_image_media_ids": media_ids,
         "script_prompt": prompt,
+        "generation_preset": {
+            "model_family": "omni_flash",
+            "duration_s": body.duration_s,
+            "resolution": body.resolution,
+            "variant_count": body.variant_count,
+            "credit_cost": None,
+            "credit_note": "Flow quyết định credit thực tế tại thời điểm gửi.",
+        },
         "result": result,
     }
     await store.update_shot(
