@@ -1102,6 +1102,7 @@ async def test_ai_generate_deduplicates_existing_ready_portrait(tmp_path, monkey
         return {
             "id": "panel-ready",
             "project_id": "project-1",
+            "display_order": 0,
             "status": "AI_IMAGE_READY",
             "portrait_path": str(portrait),
             "portrait_sha256": digest,
