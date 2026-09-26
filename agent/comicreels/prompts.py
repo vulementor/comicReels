@@ -87,13 +87,28 @@ SCRIPT: Thực hiện đúng kịch bản thành phần bên dưới, bao gồm 
 {base_prompt.strip()}
 """
 
-def build_shots(project_id: str, panels: list[dict], model_family: str = "omni_flash") -> list[dict]:
+def build_shots(
+    project_id: str,
+    panels: list[dict],
+    model_family: str = "omni_flash",
+    fixed_duration_s: int | None = None,
+) -> list[dict]:
+    if fixed_duration_s is not None:
+        supported = SUPPORTED_DURATIONS.get(model_family, ())
+        if fixed_duration_s not in supported:
+            raise ValueError(
+                f"Unsupported fixed duration {fixed_duration_s}s for {model_family}"
+            )
     shots: list[dict] = []
     order = 0
     for panel in panels:
         dialogues = sorted(panel.get("dialogues", []), key=lambda d: d.get("display_order", 0))
         if not dialogues:
-            duration = min(SUPPORTED_DURATIONS.get(model_family, (8,)))
+            duration = (
+                fixed_duration_s
+                if fixed_duration_s is not None
+                else min(SUPPORTED_DURATIONS.get(model_family, (8,)))
+            )
             shots.append({
                 "id": uuid.uuid4().hex, "project_id": project_id, "panel_id": panel["id"],
                 "display_order": order, "speaker_id": None, "dialogue_text": "", "duration_s": duration,
@@ -107,6 +122,8 @@ def build_shots(project_id: str, panels: list[dict], model_family: str = "omni_f
             continue
         for dialogue in dialogues:
             for piece, duration in split_for_model(dialogue["text"], model_family):
+                if fixed_duration_s is not None:
+                    duration = fixed_duration_s
                 shots.append({
                     "id": uuid.uuid4().hex, "project_id": project_id, "panel_id": panel["id"],
                     "display_order": order, "speaker_id": dialogue["speaker_id"],
