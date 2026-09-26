@@ -17,6 +17,8 @@ class ImageHistoryDecision:
     state: str | None
     accepted_sha256: str | None
     accepted_output_message_id: str | None
+    accepted_width: int | None
+    accepted_height: int | None
     rejected_sha256: frozenset[str]
     manifest_path: Path | None
 
@@ -52,6 +54,8 @@ def image_history_decision(
             state=None,
             accepted_sha256=None,
             accepted_output_message_id=None,
+            accepted_width=None,
+            accepted_height=None,
             rejected_sha256=frozenset(),
             manifest_path=None,
         )
@@ -84,6 +88,8 @@ def image_history_decision(
             state="panel_not_recorded",
             accepted_sha256=None,
             accepted_output_message_id=None,
+            accepted_width=None,
+            accepted_height=None,
             rejected_sha256=frozenset(),
             manifest_path=path,
         )
@@ -109,11 +115,18 @@ def image_history_decision(
 
     accepted_sha256 = None
     accepted_output_message_id = None
+    accepted_width = None
+    accepted_height = None
     if accepted:
         accepted_sha256 = str(accepted[0].get("artifact_sha256") or "").strip() or None
         accepted_output_message_id = (
             str(accepted[0].get("output_message_id") or "").strip() or None
         )
+        try:
+            accepted_width = int(accepted[0].get("width") or 0) or None
+            accepted_height = int(accepted[0].get("height") or 0) or None
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Accepted historical output dimensions are invalid.") from exc
         if accepted_sha256 is None:
             raise RuntimeError("Accepted historical output is missing artifact sha256.")
 
@@ -122,6 +135,8 @@ def image_history_decision(
         state=str(row.get("state") or "") or None,
         accepted_sha256=accepted_sha256,
         accepted_output_message_id=accepted_output_message_id,
+        accepted_width=accepted_width,
+        accepted_height=accepted_height,
         rejected_sha256=rejected,
         manifest_path=path,
     )
