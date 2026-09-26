@@ -49,3 +49,25 @@ def test_reference_video_prompt_locks_three_images_and_character_design():
 def test_reference_video_prompt_rejects_reference_count_outside_one_to_three(count):
     with pytest.raises(ValueError, match="1 to 3"):
         reference_video_prompt("script", count)
+
+
+
+def test_build_shots_fixed_omni_duration_is_ten_seconds():
+    panels = [{
+        "id": "p1",
+        "display_order": 0,
+        "approved_sha256": "abc",
+        "dialogues": [
+            {"display_order": 0, "speaker_id": "CHAR_A", "text": "Câu ngắn.", "verified": 1},
+            {"display_order": 1, "speaker_id": "CHAR_B", "text": "Câu thứ hai cũng phải giữ nguyên.", "verified": 1},
+        ],
+    }]
+    shots = build_shots(
+        "project",
+        panels,
+        "omni_flash",
+        fixed_duration_s=10,
+    )
+    assert shots
+    assert all(shot["duration_s"] == 10 for shot in shots)
+    assert all("DURATION: 10 seconds maximum." in shot["prompt"] for shot in shots)
