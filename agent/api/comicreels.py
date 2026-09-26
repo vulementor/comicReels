@@ -44,6 +44,7 @@ from agent.comicreels.ai_provider import (
     analyze_comic,
     backfill_visual_anchors_in_conversation,
     generate_clean_portrait,
+    recover_historical_portrait,
     provider_status,
     validate_visual_anchors_in_conversation,
     verify_dialogues_in_conversation,
@@ -687,29 +688,48 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
             history.accepted_sha256,
         )
         if recovered is None:
-            raise HTTPException(
-                409,
-                "Conversation history đã có output được chấp nhận nhưng artifact local đang thiếu. "
-                "Cần recovery output cũ; không được gửi lại Generate.",
-            )
-        out.parent.mkdir(parents=True, exist_ok=True)
-        if recovered.resolve() != out.resolve():
-            shutil.copy2(recovered, out)
-        with Image.open(out) as image:
-            width, height = image.size
-        ratio = width / height if height else 0
-        if width <= 0 or height <= 0 or abs(ratio - (9 / 16)) > 0.08:
-            raise HTTPException(
-                409,
-                "Historical accepted artifact không còn đạt 9:16; chặn restore và không resend.",
-            )
-        digest = sha256_file(out)
-        if digest != history.accepted_sha256:
-            raise HTTPException(
-                409,
-                "Historical accepted artifact hash không khớp manifest; không resend.",
-            )
-        protected = {"x": 0, "y": 0, "w": width, "h": height}
+            if not history.accepted_output_message_id:
+                raise HTTPException(
+                    409,
+                    "Conversation history có accepted output nhưng thiếu output_message_id; "
+                    "không thể recovery và không được gửi lại Generate.",
+                )
+            try:
+                _, protected, digest = await recover_historical_portrait(
+                    out,
+                    conversation_url=conversation_url,
+                    output_message_id=history.accepted_output_message_id,
+                    expected_sha256=history.accepted_sha256,
+                    expected_width=history.accepted_width,
+                    expected_height=history.accepted_height,
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    409,
+                    "Historical accepted output chưa recovery được; "
+                    f"chặn resend ({type(exc).__name__}).",
+                ) from exc
+            reconcile_source = "history_remote"
+        else:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if recovered.resolve() != out.resolve():
+                shutil.copy2(recovered, out)
+            with Image.open(out) as image:
+                width, height = image.size
+            ratio = width / height if height else 0
+            if width <= 0 or height <= 0 or abs(ratio - (9 / 16)) > 0.08:
+                raise HTTPException(
+                    409,
+                    "Historical accepted artifact không còn đạt 9:16; chặn restore và không resend.",
+                )
+            digest = sha256_file(out)
+            if digest != history.accepted_sha256:
+                raise HTTPException(
+                    409,
+                    "Historical accepted artifact hash không khớp manifest; không resend.",
+                )
+            protected = {"x": 0, "y": 0, "w": width, "h": height}
+            reconcile_source = "history_local"
         await store.update_panel(
             panel_id,
             portrait_path=str(out),
@@ -725,7 +745,7 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
             "protected_region": protected,
             "status": "AI_IMAGE_READY",
             "deduplicated": True,
-            "reconcile_source": "history",
+            "reconcile_source": reconcile_source,
         }
 
     crop = _safe_file(raw_panel.get("crop_path"))
