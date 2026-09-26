@@ -473,7 +473,105 @@ async def test_ai_generate_invalidates_rejected_active_hash_before_provider(tmp_
 
 
 @pytest.mark.asyncio
-async def test_ai_generate_blocks_resend_when_accepted_history_artifact_is_missing(
+async def test_ai_generate_recovers_missing_accepted_history_without_generate(
+    tmp_path, monkeypatch
+):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (800, 500), (100, 110, 120)).save(crop)
+    recovered = tmp_path / "recovered.png"
+    Image.new("RGB", (576, 1024), (4, 5, 6)).save(recovered)
+    digest = comic_api.sha256_file(recovered)
+    panel = {
+        "id": "panel-missing-history",
+        "project_id": "project-history",
+        "display_order": 1,
+        "visual_anchor": "anchor đủ chi tiết cho panel hai",
+        "status": "EXTRACTED",
+        "portrait_path": None,
+        "portrait_sha256": None,
+        "crop_path": str(crop),
+        "mask_json": "[]",
+        "x": 10,
+        "y": 20,
+        "w": 800,
+        "h": 500,
+    }
+    updates = []
+
+    async def fake_panel(_panel_id):
+        return dict(panel)
+
+    async def fake_details(_project_id):
+        return {
+            "project": {
+                "id": "project-history",
+                "ai_conversation_url": "https://chatgpt.com/c/history-chat",
+                "source_width": 1200,
+                "source_height": 1600,
+            },
+            "panels": [{"id": "panel-missing-history", "dialogues": []}],
+        }
+
+    async def fake_recover(output_path, **kwargs):
+        assert kwargs["conversation_url"] == "https://chatgpt.com/c/history-chat"
+        assert kwargs["output_message_id"] == "msg-history"
+        assert kwargs["expected_sha256"] == digest
+        assert kwargs["expected_width"] == 576
+        assert kwargs["expected_height"] == 1024
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(recovered.read_bytes())
+        return output_path, {"x": 0, "y": 0, "w": 576, "h": 1024}, digest
+
+    async def fake_update(_panel_id, **changes):
+        updates.append(changes)
+
+    async def fake_clear(_project_id):
+        return None
+
+    monkeypatch.setattr(comic_api.store, "panel", fake_panel)
+    monkeypatch.setattr(comic_api.store, "update_panel", fake_update)
+    monkeypatch.setattr(comic_api.store, "clear_shots", fake_clear)
+    monkeypatch.setattr(comic_api, "_details", fake_details)
+    monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
+    monkeypatch.setattr(comic_api, "project_dir", lambda _project_id: tmp_path)
+    monkeypatch.setattr(
+        comic_api,
+        "image_history_decision",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            accepted_sha256=digest,
+            accepted_output_message_id="msg-history",
+            accepted_width=576,
+            accepted_height=1024,
+            rejected_sha256=frozenset(),
+        ),
+    )
+    monkeypatch.setattr(
+        comic_api,
+        "find_project_artifact_by_sha256",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(comic_api, "recover_historical_portrait", fake_recover)
+    monkeypatch.setattr(
+        comic_api,
+        "generate_clean_portrait",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("historical recovery must not Generate")
+        ),
+    )
+
+    result = await comic_api.ai_generate_panel(
+        "panel-missing-history",
+        comic_api.AIImageBody(confirm_paid=True),
+    )
+
+    assert result["deduplicated"] is True
+    assert result["reconcile_source"] == "history_remote"
+    assert result["portrait_sha256"] == digest
+    assert updates[-1]["status"] == "AI_IMAGE_READY"
+
+
+@pytest.mark.asyncio
+async def test_ai_generate_blocks_when_accepted_history_recovery_fails(
     tmp_path, monkeypatch
 ):
     crop = tmp_path / "crop.png"
@@ -508,6 +606,9 @@ async def test_ai_generate_blocks_resend_when_accepted_history_artifact_is_missi
             "panels": [{"id": "panel-missing-history", "dialogues": []}],
         }
 
+    async def failed_recovery(*_args, **_kwargs):
+        raise RuntimeError("not provable")
+
     monkeypatch.setattr(comic_api.store, "panel", fake_panel)
     monkeypatch.setattr(comic_api, "_details", fake_details)
     monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
@@ -518,6 +619,8 @@ async def test_ai_generate_blocks_resend_when_accepted_history_artifact_is_missi
         lambda *_args, **_kwargs: SimpleNamespace(
             accepted_sha256="a" * 64,
             accepted_output_message_id="msg-history",
+            accepted_width=576,
+            accepted_height=1024,
             rejected_sha256=frozenset(),
         ),
     )
@@ -526,11 +629,12 @@ async def test_ai_generate_blocks_resend_when_accepted_history_artifact_is_missi
         "find_project_artifact_by_sha256",
         lambda *_args, **_kwargs: None,
     )
+    monkeypatch.setattr(comic_api, "recover_historical_portrait", failed_recovery)
     monkeypatch.setattr(
         comic_api,
         "generate_clean_portrait",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("missing accepted history must not resend")
+            AssertionError("failed historical recovery must not Generate")
         ),
     )
 
@@ -541,7 +645,7 @@ async def test_ai_generate_blocks_resend_when_accepted_history_artifact_is_missi
         )
 
     assert exc_info.value.status_code == 409
-    assert "không được gửi lại Generate" in str(exc_info.value.detail)
+    assert "chặn resend" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio
