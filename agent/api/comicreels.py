@@ -50,13 +50,14 @@ from agent.comicreels.ai_provider import (
     verify_dialogues_in_conversation,
 )
 from agent.comicreels.vision import analyze as vision_analyze
-from agent.config import FLOW_PROJECT_ID
-from agent.services.flow_client import get_flow_client
-from agent.services.flow_project_session import current_session_project
-from agent.services.omni_flash import (
-    check_omni_flash_status,
-    generate_omni_flash_first_frame_video,
-    generate_omni_flash_video,
+from agent.api.flow import (
+    CheckStatusRequest as FlowKitCheckStatusRequest,
+    GenerateVideoRefsRequest as FlowKitGenerateVideoRefsRequest,
+    UploadImageRequest as FlowKitUploadImageRequest,
+    check_status as flowkit_check_status,
+    extension_status as flowkit_extension_status,
+    generate_video_refs as flowkit_generate_video_refs,
+    upload_image as flowkit_upload_image,
 )
 
 
@@ -96,11 +97,6 @@ def _first(obj: Any, keys: set[str]) -> Any | None:
             if found is not None:
                 return found
     return None
-
-
-def _flow_project_id(explicit: str = "") -> str:
-    session = current_session_project() or {}
-    return str(explicit or FLOW_PROJECT_ID or session.get("project_id") or "").strip()
 
 
 async def _details(project_id: str) -> dict[str, Any]:
@@ -962,14 +958,17 @@ async def restore_project(file: UploadFile = File(...)):
 
 @router.get("/flow/preflight")
 async def flow_preflight(project_id: str = ""):
-    client = get_flow_client()
-    pid = _flow_project_id(project_id)
+    status = await flowkit_extension_status()
+    session = status.get("session_project") or {}
+    pid = str(project_id or status.get("flow_project_id") or session.get("project_id") or "").strip()
+    connected = bool(status.get("connected"))
     return {
-        "extension_connected": client.connected,
+        "extension_connected": connected,
         "project_id": pid or None,
-        "ready": bool(client.connected and pid),
-        "message": "Sẵn sàng gửi job có phí." if client.connected and pid
-                   else "Cần Extension kết nối và FLOW_PROJECT_ID/session project.",
+        "ready": bool(connected),
+        "message": "FlowKit sẵn sàng nhận job." if connected
+                   else "FlowKit chưa kết nối Extension.",
+        "flowkit": status,
     }
 
 
@@ -1064,53 +1063,41 @@ async def _generate_shot_from_references(
             )
         portraits.append(portrait)
 
-    client = get_flow_client()
-    pid = _flow_project_id(body.project_id)
-    if not client.connected or not pid:
-        raise HTTPException(503, "Google Flow chưa sẵn sàng (Extension/project).")
-
-    media_ids: list[str] = []
-    for index, (panel, portrait) in enumerate(zip(selected_panels, portraits)):
-        upload = await client.upload_image(
-            base64.b64encode(portrait.read_bytes()).decode("ascii"),
-            mime_type="image/png",
-            project_id=pid,
-            file_name=f"{shot_id}-ref-{index + 1}.png",
-        )
-        media_id = _first(upload, {"media_id", "mediaId", "id"})
-        if not isinstance(media_id, str) or not media_id:
-            raise HTTPException(502, f"Upload Flow reference {index + 1} không trả media ID.")
-        media_ids.append(media_id)
-
     if shot["model_family"] != "omni_flash":
         raise HTTPException(
             409,
             "ComicReels reference-video preset chỉ dùng Omni Flash. Hãy tạo lại kịch bản thành phần.",
         )
 
-    prompt = reference_video_prompt(shot["prompt"], len(media_ids))
-    result = await generate_omni_flash_video(
-        reference_media_ids=media_ids,
-        prompt=prompt,
-        project_id=pid,
-        scene_id=shot_id,
-        duration_s=body.duration_s,
-        resolution=body.resolution,
-        aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
-    )
-    if result.get("error") or (
-        isinstance(result.get("status"), int) and result["status"] >= 400
-    ):
-        raise HTTPException(
-            result.get("status", 502),
-            result.get("error", result.get("data")),
+    media_ids: list[str] = []
+    for index, portrait in enumerate(portraits):
+        upload = await flowkit_upload_image(
+            FlowKitUploadImageRequest(
+                file_path=str(portrait),
+                project_id=body.project_id,
+                file_name=f"{shot_id}-ref-{index + 1}.png",
+            )
         )
+        media_id = str(upload.get("media_id") or "").strip()
+        if not media_id:
+            raise HTTPException(502, f"FlowKit upload reference {index + 1} không trả media ID.")
+        media_ids.append(media_id)
 
-    operations = (
-        result.get("data", {}).get("operations", [])
-        if isinstance(result.get("data"), dict)
-        else []
+    prompt = reference_video_prompt(shot["prompt"], len(media_ids))
+    result = await flowkit_generate_video_refs(
+        FlowKitGenerateVideoRefsRequest(
+            reference_media_ids=media_ids,
+            prompt=prompt,
+            project_id=body.project_id,
+            scene_id=shot_id,
+            aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
+            model_family="omni_flash",
+            duration_s=body.duration_s,
+            resolution=body.resolution,
+        )
     )
+
+    operations = result.get("operations", []) if isinstance(result, dict) else []
     if len(operations) != 1:
         raise HTTPException(
             502,
@@ -1118,7 +1105,7 @@ async def _generate_shot_from_references(
         )
 
     payload = {
-        "project_id": pid,
+        "project_id": body.project_id,
         "reference_panel_ids": panel_ids,
         "reference_image_media_ids": media_ids,
         "script_prompt": prompt,
@@ -1180,13 +1167,25 @@ async def poll_shot(shot_id: str):
         raise HTTPException(404, "Không tìm thấy shot.")
     payload = shot.get("flow_payload") or {}
     result = payload.get("result") or {}
-    pid = payload.get("project_id") or _flow_project_id()
+    pid = str(payload.get("project_id") or "")
     workflows = _first(result, {"workflows"})
     operations = _first(result, {"operations"})
     if isinstance(workflows, list) and workflows:
-        status = await check_omni_flash_status(workflows, include_encoded_video=False, project_id=pid)
+        status = await flowkit_check_status(
+            FlowKitCheckStatusRequest(
+                workflows=workflows,
+                project_id=pid,
+                include_encoded_video=False,
+            )
+        )
     elif isinstance(operations, list) and operations:
-        status = await get_flow_client().check_video_status(operations)
+        status = await flowkit_check_status(
+            FlowKitCheckStatusRequest(
+                operations=operations,
+                project_id=pid,
+                include_encoded_video=False,
+            )
+        )
     else:
         status = result
     url = _first(status, {"video_url", "videoUrl", "download_url", "downloadUrl", "signed_url"})
