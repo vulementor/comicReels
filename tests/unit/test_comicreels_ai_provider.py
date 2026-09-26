@@ -237,6 +237,52 @@ async def test_generate_clean_portrait_reuses_exact_intent_cache_without_provide
 
 
 @pytest.mark.asyncio
+async def test_force_regenerate_is_the_only_cache_bypass(tmp_path, monkeypatch):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (800, 500), (120, 130, 140)).save(crop)
+    artifact = tmp_path / "generated.png"
+    Image.new("RGB", (576, 1024), (10, 20, 30)).save(artifact)
+    output = tmp_path / "panel" / "portrait.png"
+    calls = []
+
+    class FakeImage:
+        def generate(self, prompt, **kwargs):
+            calls.append((prompt, kwargs))
+            return SimpleNamespace(
+                state="verified",
+                output_path=str(artifact),
+                reason=None,
+            )
+
+    monkeypatch.setattr(provider, "_client", lambda: SimpleNamespace(image=FakeImage()))
+    kwargs = dict(
+        conversation_url="https://chatgpt.com/c/existing-comic",
+        panel_index=2,
+        panel_context="",
+        panel_box={"x": 10, "y": 20, "w": 800, "h": 500},
+        source_width=1200,
+        source_height=1600,
+        visual_anchor="Bò quay sang trái; thỏ ngồi bên phải.",
+    )
+
+    await provider.generate_clean_portrait(
+        crop,
+        [{"x": 20, "y": 30, "w": 100, "h": 60}],
+        output,
+        **kwargs,
+    )
+    await provider.generate_clean_portrait(
+        crop,
+        [{"x": 20, "y": 30, "w": 100, "h": 60}],
+        output,
+        force_regenerate=True,
+        **kwargs,
+    )
+
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_generation_cache_corruption_fails_closed_without_resend(tmp_path, monkeypatch):
     crop = tmp_path / "crop.png"
     Image.new("RGB", (800, 500), (120, 130, 140)).save(crop)
