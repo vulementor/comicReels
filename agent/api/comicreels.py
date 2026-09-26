@@ -134,6 +134,7 @@ class AnalyzeBody(BaseModel):
 class AIImageBody(BaseModel):
     confirm_paid: bool = False
     force: bool = False
+    use_local_crop: bool = False
 
 
 class Box(BaseModel):
@@ -814,6 +815,7 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
             source_height=int(project["source_height"]),
             visual_anchor=visual_anchor,
             force_regenerate=bool(body.force),
+            use_local_crop=body.use_local_crop,
         )
     except Exception as exc:
         raise HTTPException(502, f"AI Generate ảnh thất bại: {exc}") from exc

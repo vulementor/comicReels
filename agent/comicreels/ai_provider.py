@@ -858,16 +858,27 @@ def _image_prompt(
     source_height: int,
     visual_anchor: str,
     reference_asset_name: str,
+    use_local_crop: bool = False,
 ) -> str:
     region_text = ", ".join(
         f"(x={r['x']},y={r['y']},w={r['w']},h={r['h']})" for r in regions
     ) or "các speech bubble/text nhìn thấy trong ảnh"
-    return f"""
+    reference_policy = f"""
 Reference bắt buộc của request này là attachment provider-side "{reference_asset_name}" đã tồn tại
 trong CHÍNH conversation này. Đây là crop của KHUNG {panel_index + 1} từ ảnh nguồn, không phải ảnh
 AI generate. Không upload lại bytes và không dùng ảnh từ conversation khác.
 Dùng crop đang được đính kèm trong user turn hiện tại làm reference hình học/pose/framing trực tiếp.
 Ảnh nguồn ở TURN ĐẦU và bbox bên dưới chỉ dùng để xác nhận provenance của crop.
+""".strip()
+    if use_local_crop:
+        reference_policy = f"""
+Ảnh đính kèm "{reference_asset_name}" là crop GỐC chính xác của KHUNG {panel_index + 1}.
+Đây là cuộc trò chuyện mới; không có ảnh nguồn hoặc ảnh đã tạo nào ở turn trước để tham chiếu.
+Dùng duy nhất ảnh đính kèm này để giữ hình học, tư thế và bố cục nhân vật.
+Bbox bên dưới chỉ ghi vị trí crop trên trang truyện gốc; KHÔNG cắt lại bbox đó trên ảnh đính kèm.
+""".strip()
+    return f"""
+{reference_policy}
 MỌI ảnh AI đã generate ở các TURN SAU chỉ là OUTPUT CŨ: tuyệt đối không dùng chúng làm
 reference hình học, pose, framing hoặc bố cục cho yêu cầu hiện tại.
 
@@ -967,6 +978,7 @@ async def generate_clean_portrait(
     source_height: int | None = None,
     visual_anchor: str = "",
     force_regenerate: bool = False,
+    use_local_crop: bool = False,
 ) -> tuple[Path, dict[str, int], str]:
     if not crop_path.is_file():
         raise RuntimeError("Không tìm thấy crop panel local để đối chiếu kết quả.")
@@ -995,10 +1007,11 @@ async def generate_clean_portrait(
         source_width=source_width,
         source_height=source_height,
         visual_anchor=visual_anchor,
-        reference_asset_name=f"p{panel_index}.png",
+        reference_asset_name=crop_path.name if use_local_crop else f"p{panel_index}.png",
+        use_local_crop=use_local_crop,
     )
 
-    selector = f"name:p{panel_index}.png"
+    selector = f"local-crop:{sha256_file(crop_path)}" if use_local_crop else f"name:p{panel_index}.png"
     reference_width = int(panel_box["w"])
     reference_height = int(panel_box["h"])
     intent_sha256 = _image_generation_intent(
@@ -1021,14 +1034,20 @@ async def generate_clean_portrait(
             return cached
 
     client = _client()
+    # Account/device migration can make the old conversation inaccessible. Only
+    # an explicit local-crop request uploads original bytes into a fresh chat;
+    # provider errors or uncertain outcomes never trigger an automatic retry.
+    reference_args = {"attachments": [crop_path]} if use_local_crop else {
+        "conversation": conversation_url,
+        "attachments": [],
+        "conversation_attachment": selector,
+        "reference_width": reference_width,
+        "reference_height": reference_height,
+    }
     result = await asyncio.to_thread(
         client.image.generate,
         prompt,
-        conversation=conversation_url,
-        attachments=[],
-        conversation_attachment=selector,
-        reference_width=reference_width,
-        reference_height=reference_height,
+        **reference_args,
         output_dir=artifact_dir,
         visible=_VISIBLE,
     )
