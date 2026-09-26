@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+from PIL import Image
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
