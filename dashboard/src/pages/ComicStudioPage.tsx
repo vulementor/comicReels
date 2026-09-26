@@ -475,7 +475,7 @@ export default function ComicStudioPage() {
     setWorking(true)
     try {
       const next = await apiJson<Details>(`/api/comicreels/projects/${details.project.id}/storyboard`, {
-        method: 'POST', body: JSON.stringify({ model_family: 'omni_flash' }),
+        method: 'POST', body: JSON.stringify({ model_family: 'omni_flash', duration_s: 10 }),
       })
       setDetails(next); setStep('storyboard'); setNotice('Storyboard đã khóa ảnh hash + transcript/speaker được duyệt.')
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)) }
@@ -499,14 +499,16 @@ export default function ComicStudioPage() {
         method: 'POST',
         body: JSON.stringify({
           confirm_paid: true,
-          idempotency_key: `ui:refs:${details.project.id}:${shot.id}:${referencePanelIds.join('-')}`,
+          idempotency_key: `ui:refs:omni10s360p:v1:${details.project.id}:${shot.id}:${referencePanelIds.join('-')}`,
           panel_ids: referencePanelIds,
           project_id: flowProjectId,
-          resolution: '720p',
+          resolution: '360p',
+          duration_s: 10,
+          variant_count: 1,
           force: false,
         }),
       })
-      setNotice('Đã gửi 3 ảnh reference + kịch bản thành phần + lời thoại trực tiếp sang Google Flow. Không dùng TTS riêng và không tự retry.')
+      setNotice('Đã gửi đúng 1 phiên bản Omni Flash · 10s · 360p với ảnh reference + kịch bản + lời thoại. Không TTS riêng, không tự retry.')
       await reload()
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)) }
     finally { setWorking(false) }
@@ -753,6 +755,10 @@ export default function ComicStudioPage() {
             <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>
               Chọn 3 ảnh đã duyệt để khóa nhân vật/hình dáng/trang phục. Sau đó chọn một kịch bản thành phần bên dưới; ComicReels upload các ảnh reference và gửi nguyên kịch bản kèm lời thoại cho Flow. Không có bước TTS riêng.
             </p>
+            <div className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold" style={{borderColor:'var(--accent)',color:'var(--text)'}}>
+              <span>Omni Flash</span><span>·</span><span>10s</span><span>·</span><span>360p</span><span>·</span><span>1 phiên bản</span>
+            </div>
+            <div className="mt-1 text-[10px]" style={{color:'var(--muted)'}}>Credit do Google Flow quyết định tại thời điểm gửi; ComicReels không hardcode mức 7 credit.</div>
             <div className="mt-4">
               <div className="mb-2 flex items-center justify-between gap-2 text-xs">
                 <strong>Ảnh reference đã chọn: {referencePanelIds.length}/{requiredReferenceCount}</strong>
@@ -794,10 +800,10 @@ export default function ComicStudioPage() {
           {details.shots.map(s=>(
             <article key={s.id} className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
               <div className="flex flex-wrap items-center gap-3">
-                <div className="min-w-0 flex-1"><strong className="text-sm">Kịch bản {s.display_order+1}</strong><div className="truncate text-xs" style={{color:'var(--muted)'}}>{s.dialogue_text||'Cảnh phản ứng im lặng'} · {s.duration_s}s · {s.status}</div></div>
+                <div className="min-w-0 flex-1"><strong className="text-sm">Kịch bản {s.display_order+1}</strong><div className="truncate text-xs" style={{color:'var(--muted)'}}>{s.dialogue_text||'Cảnh phản ứng im lặng'} · Omni Flash · {s.duration_s}s · 360p · 1 bản · {s.status}</div></div>
                 <button disabled={working||!paidConsent||referencePanelIds.length!==requiredReferenceCount||requiredReferenceCount===0}
                   onClick={()=>void generateShot(s)} className="rounded border px-3 py-2 text-xs disabled:opacity-40" style={{borderColor:'var(--border)'}}>
-                  <Play size={14} className="mr-1 inline"/>Tạo video bằng {requiredReferenceCount} ảnh này
+                  <Play size={14} className="mr-1 inline"/>Tạo 1 bản Omni Flash 10s · 360p
                 </button>
                 <button disabled={working||s.status!=='PROCESSING'} onClick={async()=>{
                 try{await apiJson(`/api/comicreels/shots/${s.id}/poll`,{method:'POST'});setNotice('Đã kiểm tra trạng thái, nếu có signed URL video đã được lưu local.');await reload()}catch(e){setNotice(e instanceof Error?e.message:String(e))}
