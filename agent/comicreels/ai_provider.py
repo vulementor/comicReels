@@ -24,6 +24,7 @@ _PROVIDER = "gpt_fullproxy"
 _DIALOGUE_VERIFY_REVISION = "v3"
 _VISUAL_ANCHOR_REVISION = "v1"
 _VISUAL_ANCHOR_VALIDATE_REVISION = "v1"
+_IMAGE_GENERATION_REVISION = "v3-panel-crop-reconcile"
 _PROFILE_NAME = os.environ.get("COMICREELS_GPTFP_PROFILE", "zaloconnect-chatgpt")
 _VISIBLE = os.environ.get("COMICREELS_GPTFP_VISIBLE", "1").strip().lower() not in {
     "0", "false", "no", "off",
@@ -736,6 +737,117 @@ async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[
     return parsed
 
 
+def _image_generation_intent(
+    *,
+    conversation_url: str,
+    selector: str,
+    prompt: str,
+    reference_width: int,
+    reference_height: int,
+) -> str:
+    payload = {
+        "revision": _IMAGE_GENERATION_REVISION,
+        "conversation_url": conversation_url,
+        "selector": selector,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "reference_width": int(reference_width),
+        "reference_height": int(reference_height),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _generation_cache_paths(output_path: Path, intent_sha256: str) -> tuple[Path, Path]:
+    root = output_path.parent / "generation-cache"
+    return root / f"{intent_sha256}.json", root / f"{intent_sha256}.png"
+
+
+def _validate_generated_portrait(path: Path) -> dict[str, int]:
+    with Image.open(path) as image:
+        width, height = image.size
+        if width <= 0 or height <= 0:
+            raise RuntimeError("Ảnh ChatGPT trả về có kích thước không hợp lệ.")
+        ratio = width / height
+        target = 9 / 16
+        if abs(ratio - target) > 0.08:
+            raise RuntimeError(
+                f"ChatGPT trả ảnh {width}x{height}, chưa đạt tỷ lệ 9:16; "
+                "không tự kéo/đệm ảnh để che lỗi."
+            )
+        return {"x": 0, "y": 0, "w": width, "h": height}
+
+
+def _reuse_generation_cache(
+    *,
+    receipt_path: Path,
+    cache_path: Path,
+    output_path: Path,
+    intent_sha256: str,
+    selector: str,
+) -> tuple[Path, dict[str, int], str] | None:
+    receipt_exists = receipt_path.is_file()
+    cache_exists = cache_path.is_file()
+    if not receipt_exists and not cache_exists:
+        return None
+    if receipt_exists != cache_exists:
+        raise RuntimeError(
+            "Generation cache không đầy đủ; chặn gửi lại để tránh lặp một intent đã từng chạy."
+        )
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError("Generation receipt bị lỗi; không được gửi lại intent này.") from exc
+    if (
+        str(receipt.get("intent_sha256") or "") != intent_sha256
+        or str(receipt.get("selector") or "") != selector
+    ):
+        raise RuntimeError("Generation receipt không khớp intent; không được gửi lại.")
+    expected_sha = str(receipt.get("sha256") or "")
+    if not expected_sha or sha256_file(cache_path) != expected_sha:
+        raise RuntimeError("Generation cache đã thay đổi; không được gửi lại intent này.")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(cache_path, output_path)
+    protected = _validate_generated_portrait(output_path)
+    return output_path, protected, expected_sha
+
+
+def _write_generation_cache(
+    *,
+    generated_path: Path,
+    receipt_path: Path,
+    cache_path: Path,
+    intent_sha256: str,
+    selector: str,
+    result: Any,
+) -> str:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_tmp = cache_path.with_suffix(".tmp.png")
+    shutil.copy2(generated_path, cache_tmp)
+    digest = sha256_file(cache_tmp)
+    os.replace(cache_tmp, cache_path)
+
+    receipt = {
+        "schema": "comicreels.image-generation-receipt.v1",
+        "intent_sha256": intent_sha256,
+        "selector": selector,
+        "sha256": digest,
+        "cache_path": str(cache_path),
+        "conversation_url": str(getattr(result, "conversation_url", "") or ""),
+        "assistant_message_id": str(getattr(result, "assistant_message_id", "") or ""),
+        "observation_id": str(getattr(result, "observation_id", "") or ""),
+        "turn_testid": str(getattr(result, "turn_testid", "") or ""),
+    }
+    receipt_tmp = receipt_path.with_suffix(".tmp.json")
+    receipt_tmp.write_text(
+        json.dumps(receipt, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(receipt_tmp, receipt_path)
+    return digest
+
+
 def _image_prompt(
     regions: list[dict[str, int]],
     panel_context: str,
@@ -745,17 +857,21 @@ def _image_prompt(
     source_width: int,
     source_height: int,
     visual_anchor: str,
+    reference_asset_name: str,
 ) -> str:
     region_text = ", ".join(
         f"(x={r['x']},y={r['y']},w={r['w']},h={r['h']})" for r in regions
     ) or "các speech bubble/text nhìn thấy trong ảnh"
     return f"""
-Dùng CHÍNH ảnh nguồn đã được upload ở TURN ĐẦU của conversation này làm reference bắt buộc.
-Không yêu cầu upload lại ảnh và không dùng ảnh từ conversation khác.
+Reference bắt buộc của request này là attachment provider-side "{reference_asset_name}" đã tồn tại
+trong CHÍNH conversation này. Đây là crop của KHUNG {panel_index + 1} từ ảnh nguồn, không phải ảnh
+AI generate. Không upload lại bytes và không dùng ảnh từ conversation khác.
+Dùng crop đang được đính kèm trong user turn hiện tại làm reference hình học/pose/framing trực tiếp.
+Ảnh nguồn ở TURN ĐẦU và bbox bên dưới chỉ dùng để xác nhận provenance của crop.
 MỌI ảnh AI đã generate ở các TURN SAU chỉ là OUTPUT CŨ: tuyệt đối không dùng chúng làm
 reference hình học, pose, framing hoặc bố cục cho yêu cầu hiện tại.
 
-Chỉ xử lý KHUNG {panel_index + 1} của ảnh nguồn.
+Chỉ xử lý KHUNG {panel_index + 1}.
 Vùng panel mục tiêu trong ẢNH NGUỒN {source_width}x{source_height}px là:
 x={panel_box['x']}, y={panel_box['y']}, w={panel_box['w']}, h={panel_box['h']}.
 
@@ -814,7 +930,6 @@ async def generate_clean_portrait(
             "Panel chưa có visual anchor từ ảnh nguồn; chặn Generate để tránh mượn pose từ ảnh AI cũ."
         )
 
-    client = _client()
     artifact_dir = output_path.parent / "gptfp-artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     if not panel_box or not source_width or not source_height:
@@ -827,16 +942,39 @@ async def generate_clean_portrait(
         source_width=source_width,
         source_height=source_height,
         visual_anchor=visual_anchor,
+        reference_asset_name=f"p{panel_index}.png",
     )
 
+    selector = f"name:p{panel_index}.png"
+    reference_width = int(panel_box["w"])
+    reference_height = int(panel_box["h"])
+    intent_sha256 = _image_generation_intent(
+        conversation_url=conversation_url,
+        selector=selector,
+        prompt=prompt,
+        reference_width=reference_width,
+        reference_height=reference_height,
+    )
+    receipt_path, cache_path = _generation_cache_paths(output_path, intent_sha256)
+    cached = _reuse_generation_cache(
+        receipt_path=receipt_path,
+        cache_path=cache_path,
+        output_path=output_path,
+        intent_sha256=intent_sha256,
+        selector=selector,
+    )
+    if cached is not None:
+        return cached
+
+    client = _client()
     result = await asyncio.to_thread(
         client.image.generate,
         prompt,
         conversation=conversation_url,
         attachments=[],
-        conversation_attachment="first_image",
-        reference_width=source_width,
-        reference_height=source_height,
+        conversation_attachment=selector,
+        reference_width=reference_width,
+        reference_height=reference_height,
         output_dir=artifact_dir,
         visible=_VISIBLE,
     )
@@ -849,20 +987,16 @@ async def generate_clean_portrait(
     if not generated_path.is_file():
         raise RuntimeError("GPT FullProxy trả artifact path nhưng file không tồn tại.")
 
+    _validate_generated_portrait(generated_path)
+    digest = _write_generation_cache(
+        generated_path=generated_path,
+        receipt_path=receipt_path,
+        cache_path=cache_path,
+        intent_sha256=intent_sha256,
+        selector=selector,
+        result=result,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(generated_path, output_path)
-
-    with Image.open(output_path) as image:
-        width, height = image.size
-        if width <= 0 or height <= 0:
-            raise RuntimeError("Ảnh ChatGPT trả về có kích thước không hợp lệ.")
-        ratio = width / height
-        target = 9 / 16
-        if abs(ratio - target) > 0.08:
-            raise RuntimeError(
-                f"ChatGPT trả ảnh {width}x{height}, chưa đạt tỷ lệ 9:16; "
-                "không tự kéo/đệm ảnh để che lỗi."
-            )
-        protected = {"x": 0, "y": 0, "w": width, "h": height}
-
-    return output_path, protected, sha256_file(output_path)
+    shutil.copy2(cache_path, output_path)
+    protected = _validate_generated_portrait(output_path)
+    return output_path, protected, digest
