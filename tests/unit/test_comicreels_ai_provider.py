@@ -333,6 +333,288 @@ async def test_generation_cache_corruption_fails_closed_without_resend(tmp_path,
 
 
 @pytest.mark.asyncio
+async def test_ai_generate_reuses_accepted_history_without_provider(tmp_path, monkeypatch):
+    portrait = tmp_path / "portrait.png"
+    Image.new("RGB", (576, 1024), (1, 2, 3)).save(portrait)
+    digest = comic_api.sha256_file(portrait)
+    panel = {
+        "id": "panel-history",
+        "project_id": "project-history",
+        "display_order": 1,
+        "visual_anchor": "anchor đủ chi tiết cho panel hai",
+        "status": "AI_IMAGE_READY",
+        "portrait_path": str(portrait),
+        "portrait_sha256": digest,
+    }
+
+    async def fake_panel(_panel_id):
+        return dict(panel)
+
+    async def fake_details(_project_id):
+        return {
+            "project": {
+                "id": "project-history",
+                "ai_conversation_url": "https://chatgpt.com/c/history-chat",
+                "source_width": 1200,
+                "source_height": 1600,
+            },
+            "panels": [],
+        }
+
+    monkeypatch.setattr(comic_api.store, "panel", fake_panel)
+    monkeypatch.setattr(comic_api, "_details", fake_details)
+    monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
+    monkeypatch.setattr(comic_api, "_safe_file", lambda _value: portrait)
+    monkeypatch.setattr(
+        comic_api,
+        "image_history_decision",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            accepted_sha256=digest,
+            accepted_output_message_id="msg-history",
+            rejected_sha256=frozenset(),
+        ),
+    )
+    monkeypatch.setattr(
+        comic_api,
+        "generate_clean_portrait",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("accepted historical output must not call provider")
+        ),
+    )
+
+    result = await comic_api.ai_generate_panel(
+        "panel-history",
+        comic_api.AIImageBody(confirm_paid=True),
+    )
+
+    assert result["deduplicated"] is True
+    assert result["reconcile_source"] == "history"
+    assert result["portrait_sha256"] == digest
+
+
+@pytest.mark.asyncio
+async def test_ai_generate_invalidates_rejected_active_hash_before_provider(tmp_path, monkeypatch):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (800, 500), (100, 110, 120)).save(crop)
+    rejected = "b" * 64
+    replacement = "c" * 64
+    panel = {
+        "id": "panel-rejected",
+        "project_id": "project-rejected",
+        "display_order": 2,
+        "visual_anchor": "bò quay đầu rõ sang trái, thỏ nằm bên phải",
+        "status": "AI_IMAGE_READY",
+        "portrait_path": str(tmp_path / "wrong.png"),
+        "portrait_sha256": rejected,
+        "approved_sha256": None,
+        "protected_json": "{}",
+        "crop_path": str(crop),
+        "mask_json": "[]",
+        "x": 10,
+        "y": 20,
+        "w": 800,
+        "h": 500,
+    }
+    cleared = []
+
+    async def fake_panel(_panel_id):
+        return dict(panel)
+
+    async def fake_update(_panel_id, **changes):
+        panel.update(changes)
+
+    async def fake_clear(project_id):
+        cleared.append(project_id)
+
+    async def fake_details(_project_id):
+        return {
+            "project": {
+                "id": "project-rejected",
+                "ai_conversation_url": "https://chatgpt.com/c/history-chat",
+                "source_width": 1200,
+                "source_height": 1600,
+            },
+            "panels": [{"id": "panel-rejected", "dialogues": []}],
+        }
+
+    async def fake_generate(*_args, **_kwargs):
+        assert panel["status"] == "EXTRACTED"
+        assert panel["portrait_path"] is None
+        assert panel["portrait_sha256"] is None
+        return tmp_path / "new.png", {"x": 0, "y": 0, "w": 576, "h": 1024}, replacement
+
+    monkeypatch.setattr(comic_api.store, "panel", fake_panel)
+    monkeypatch.setattr(comic_api.store, "update_panel", fake_update)
+    monkeypatch.setattr(comic_api.store, "clear_shots", fake_clear)
+    monkeypatch.setattr(comic_api, "_details", fake_details)
+    monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
+    monkeypatch.setattr(comic_api, "_safe_file", lambda _value: crop)
+    monkeypatch.setattr(comic_api, "project_dir", lambda _project_id: tmp_path)
+    monkeypatch.setattr(
+        comic_api,
+        "image_history_decision",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            accepted_sha256=None,
+            accepted_output_message_id=None,
+            rejected_sha256=frozenset({rejected}),
+        ),
+    )
+    monkeypatch.setattr(comic_api, "generate_clean_portrait", fake_generate)
+
+    result = await comic_api.ai_generate_panel(
+        "panel-rejected",
+        comic_api.AIImageBody(confirm_paid=True),
+    )
+
+    assert result["portrait_sha256"] == replacement
+    assert panel["status"] == "AI_IMAGE_READY"
+    assert rejected not in {panel.get("portrait_sha256")}
+    assert cleared
+
+
+@pytest.mark.asyncio
+async def test_ai_generate_blocks_resend_when_accepted_history_artifact_is_missing(
+    tmp_path, monkeypatch
+):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (800, 500), (100, 110, 120)).save(crop)
+    panel = {
+        "id": "panel-missing-history",
+        "project_id": "project-history",
+        "display_order": 1,
+        "visual_anchor": "anchor đủ chi tiết cho panel hai",
+        "status": "EXTRACTED",
+        "portrait_path": None,
+        "portrait_sha256": None,
+        "crop_path": str(crop),
+        "mask_json": "[]",
+        "x": 10,
+        "y": 20,
+        "w": 800,
+        "h": 500,
+    }
+
+    async def fake_panel(_panel_id):
+        return dict(panel)
+
+    async def fake_details(_project_id):
+        return {
+            "project": {
+                "id": "project-history",
+                "ai_conversation_url": "https://chatgpt.com/c/history-chat",
+                "source_width": 1200,
+                "source_height": 1600,
+            },
+            "panels": [{"id": "panel-missing-history", "dialogues": []}],
+        }
+
+    monkeypatch.setattr(comic_api.store, "panel", fake_panel)
+    monkeypatch.setattr(comic_api, "_details", fake_details)
+    monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
+    monkeypatch.setattr(comic_api, "project_dir", lambda _project_id: tmp_path)
+    monkeypatch.setattr(
+        comic_api,
+        "image_history_decision",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            accepted_sha256="a" * 64,
+            accepted_output_message_id="msg-history",
+            rejected_sha256=frozenset(),
+        ),
+    )
+    monkeypatch.setattr(
+        comic_api,
+        "find_project_artifact_by_sha256",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        comic_api,
+        "generate_clean_portrait",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("missing accepted history must not resend")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await comic_api.ai_generate_panel(
+            "panel-missing-history",
+            comic_api.AIImageBody(confirm_paid=True),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "không được gửi lại Generate" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_ai_generate_force_bypasses_missing_accepted_history(tmp_path, monkeypatch):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (800, 500), (100, 110, 120)).save(crop)
+    panel = {
+        "id": "panel-force-history",
+        "project_id": "project-history",
+        "display_order": 1,
+        "visual_anchor": "anchor đủ chi tiết cho panel hai",
+        "status": "EXTRACTED",
+        "portrait_path": None,
+        "portrait_sha256": None,
+        "crop_path": str(crop),
+        "mask_json": "[]",
+        "x": 10,
+        "y": 20,
+        "w": 800,
+        "h": 500,
+    }
+
+    async def fake_panel(_panel_id):
+        return dict(panel)
+
+    async def fake_update(_panel_id, **changes):
+        panel.update(changes)
+
+    async def fake_clear(_project_id):
+        return None
+
+    async def fake_details(_project_id):
+        return {
+            "project": {
+                "id": "project-history",
+                "ai_conversation_url": "https://chatgpt.com/c/history-chat",
+                "source_width": 1200,
+                "source_height": 1600,
+            },
+            "panels": [{"id": "panel-force-history", "dialogues": []}],
+        }
+
+    async def fake_generate(*_args, **kwargs):
+        assert kwargs["force_regenerate"] is True
+        return tmp_path / "new.png", {"x": 0, "y": 0, "w": 576, "h": 1024}, "d" * 64
+
+    monkeypatch.setattr(comic_api.store, "panel", fake_panel)
+    monkeypatch.setattr(comic_api.store, "update_panel", fake_update)
+    monkeypatch.setattr(comic_api.store, "clear_shots", fake_clear)
+    monkeypatch.setattr(comic_api, "_details", fake_details)
+    monkeypatch.setattr(comic_api, "provider_status", lambda: {"configured": True})
+    monkeypatch.setattr(comic_api, "_safe_file", lambda _value: crop)
+    monkeypatch.setattr(comic_api, "project_dir", lambda _project_id: tmp_path)
+    monkeypatch.setattr(
+        comic_api,
+        "image_history_decision",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            accepted_sha256="a" * 64,
+            accepted_output_message_id="msg-history",
+            rejected_sha256=frozenset(),
+        ),
+    )
+    monkeypatch.setattr(comic_api, "generate_clean_portrait", fake_generate)
+
+    result = await comic_api.ai_generate_panel(
+        "panel-force-history",
+        comic_api.AIImageBody(confirm_paid=True, force=True),
+    )
+
+    assert result["portrait_sha256"] == "d" * 64
+
+
+@pytest.mark.asyncio
 async def test_ai_generate_blocks_missing_visual_anchor_before_provider(tmp_path, monkeypatch):
     crop = tmp_path / "crop.png"
     Image.new("RGB", (100, 100), (255, 255, 255)).save(crop)
