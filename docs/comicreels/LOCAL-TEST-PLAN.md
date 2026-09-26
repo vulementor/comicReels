@@ -1,6 +1,6 @@
 # Kế hoạch test local sau khi anh xác nhận code
 
-**Cập nhật 26/09/2026:** anh đã xác nhận và yêu cầu chuyển từ Mac sang VULE-PC. Bước 1 đã chuyển dữ liệu, bước 2 đã đạt unit/build/lint, bước 3 đã đạt UI smoke trực tiếp trên Chrome VULE-PC qua RDC; xem [kết quả Windows](LOCAL-TEST-RESULTS-2026-09-26-WINDOWS.md). Tiếp tục từ bước 4 bằng Remote Desktop Commander, làm từng bước nhỏ, báo kết quả và đợi anh OK trước bước tiếp theo.
+**Cập nhật 26/09/2026:** anh đã xác nhận và yêu cầu chuyển từ Mac sang VULE-PC. Bước 1 đã chuyển dữ liệu, bước 2 đã đạt unit/build/lint, bước 3 đã đạt UI smoke trực tiếp trên Chrome VULE-PC qua RDC; xem [kết quả Windows](LOCAL-TEST-RESULTS-2026-09-26-WINDOWS.md). Bước 4 đã đối chiếu và FAIL: ảnh khung 2/3 không giữ đúng tư thế/bố cục nguồn, đã thu hồi duyệt. Guard sửa tại `c76f7a9` đạt 467 unit tests trên PC và chặn duyệt lại qua API thật. Xem [kết quả QA ảnh](IMAGE-QA-2026-09-26.md); cần ảnh thay thế được duyệt trước khi chuyển bước. Tiếp tục bằng Remote Desktop Commander, làm từng bước nhỏ, báo kết quả và đợi anh OK trước bước tiếp theo.
 
 1. **Đối chiếu revision và dữ liệu.** Kiểm tra commit nhánh PR #3, giữ lại DB/ảnh/video hiện tại; dùng runtime cache đã có, không xóa dữ liệu. Không tạo Chrome/profile mới. Giữ extension và Chrome đang đăng nhập.
 2. **Gate code offline.** Chạy `python -m pytest tests/unit -q`; `npm ci`, `npm run build`, `npm run lint` trong dashboard. Báo kết quả riêng với revision; chưa gửi job ngoài.
