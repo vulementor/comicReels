@@ -3,6 +3,8 @@
 ## 1. Kết quả anh cần
 Giao diện tiếng Việt đơn giản: dán/Ctrl+V/kéo thả một ảnh có 2/3/4/nhiều khung truyện, tự tách thành số ảnh 9:16 tương ứng không có text và bong bóng thoại. Hiểu mạch truyện, trật tự đọc và cú chốt gây cười; giữ nguyên nhân vật, biểu cảm, bối cảnh, phục trang, đạo cụ, bố cục và nét vẽ trong phần ảnh gốc. Đây là truyện do anh nhập, **không phải** một câu chuyện mới do hệ thống sáng tác.
 
+Chỉ đạo 26/09/2026: gửi nguyên ảnh gốc và một prompt ngắn qua gpt_fullproxy, để ChatGPT tự đếm khung và tạo từng ảnh riêng trong cùng lượt. Không cắt ảnh làm đầu vào tạo từng khung; bbox/mask/mô tả dài không phải điều kiện để tạo hay duyệt ảnh. Đối chiếu trực quan với nguồn vẫn là bước nghiệm thu.
+
 ## 2. Cửa duyệt bắt buộc
 Ảnh gốc, lời thoại gốc, tọa độ khung và ảnh sau chỉnh sửa lưu riêng. Trước khi xóa chữ, ghi lại nguyên văn từng câu cùng `panel_id`, `speaker_id` ổn định, thứ tự; trường hợp nhận diện mơ hồ phải để anh sửa. Anh duyệt gallery ảnh qua `OK` **trước khi sinh prompt video**. Duyệt gắn với hash/phiên bản ảnh cụ thể; sửa ảnh thì hủy duyệt và vô hiệu hóa prompt/video phụ thuộc.
 

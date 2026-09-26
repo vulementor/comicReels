@@ -1,6 +1,6 @@
 # ComicReels | Hồ sơ phát triển chính
 
-**25/09/2026:** Fork công khai của [FlowKit](https://github.com/crisng95/flowkit). Mọi chức năng chưa được nghiệm thu đều được ghi là kế hoạch. Xem [CHECKPOINTS.md](CHECKPOINTS.md) trước khi báo cáo hoàn thành.
+**26/09/2026:** Fork công khai của [FlowKit](https://github.com/crisng95/flowkit). Mọi chức năng chưa được nghiệm thu đều được ghi là kế hoạch. Xem [CHECKPOINTS.md](CHECKPOINTS.md) trước khi báo cáo hoàn thành.
 
 ## Ý tưởng, PRD và kỹ thuật
 - [VISION: trải nghiệm, ranh giới và quy tắc bất biến](VISION.md)
@@ -10,6 +10,10 @@
 - [RISKS: rủi ro và các quyết định](RISKS.md)
 - [ROADMAP: 17 phân đoạn và nghiệm thu](ROADMAP.md)
 - [CHECKPOINTS: trạng thái thực, PR và kiểm thử còn thiếu](CHECKPOINTS.md)
+- [IMPLEMENTATION-03-16: ma trận code các đoạn 3–16](IMPLEMENTATION-03-16.md)
+- [LOCAL-TEST-PLAN: kịch bản test local](LOCAL-TEST-PLAN.md)
+- [LOCAL-TEST-RESULTS-2026-09-26-WINDOWS: gate offline và UI smoke trên VULE-PC](LOCAL-TEST-RESULTS-2026-09-26-WINDOWS.md)
+- [LOCAL-TEST-RESULTS-2026-09-25: kết quả test offline thực tế trên Mac](LOCAL-TEST-RESULTS-2026-09-25.md)
 - [CHECKPOINT-TEMPLATE: mẫu báo cáo mỗi đoạn](CHECKPOINT-TEMPLATE.md)
 
 ## Checklist và rủi ro từng phân đoạn
@@ -35,4 +39,4 @@
 - [PR #1](https://github.com/vulementor/comicReels/pull/1): fork/tài liệu, nhánh `segment/01-foundation`.
 - [PR #2](https://github.com/vulementor/comicReels/pull/2): UI tiếng Việt và [báo cáo Đoạn 2](SEGMENT-02.md), nhánh `segment/02-studio-shell`.
 
-PR #1 và #2 còn Draft/chưa merge vào `main`; không tự merge, không tự khởi động Đoạn 3 khi chưa có OK nghiệm thu Đoạn 2. Không commit nguồn truyện/cookie/token/ảnh/video riêng lên repo public.
+PR #1 và #2 còn Draft/chưa merge vào `main`. Theo chỉ đạo mới của anh, Đoạn 3–16 đã được triển khai trên nhánh tổng/PR #3, chưa merge. Anh đã xác nhận code và cho test local trên VULE-PC qua Remote Desktop Commander: chuyển dữ liệu, unit/build/lint và UI smoke bước 3 đã đạt. Tiếp theo là bước 4 kiểm tra ảnh cũ; các gate AI image/vision và Google Flow thật được thực hiện từng bước khi được duyệt. Không commit nguồn truyện/cookie/token/ảnh/video riêng lên repo public.

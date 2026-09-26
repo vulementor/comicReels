@@ -503,4 +503,4 @@ async def upload_image(body: UploadImageRequest):
     if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
     media_id = result.get("_mediaId")
-    return {"media_id": media_id, "raw": result.get("data", result)}
+    return {"media_id": media_id, "project_id": project_id, "raw": result.get("data", result)}
