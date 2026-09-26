@@ -564,9 +564,9 @@ export default function ComicStudioPage() {
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <a href="/projects" className="rounded border px-3 py-2 text-xs font-semibold" style={{borderColor:'var(--border)'}}>
-                Mở FlowKit gốc · Projects & công cụ video
+                Mở Projects & công cụ video
               </a>
-              <a href="/flowkit" className="rounded border px-3 py-2 text-xs" style={{borderColor:'var(--border)'}}>
+              <a href="/" className="rounded border px-3 py-2 text-xs" style={{borderColor:'var(--border)'}}>
                 Dashboard FlowKit
               </a>
             </div>
