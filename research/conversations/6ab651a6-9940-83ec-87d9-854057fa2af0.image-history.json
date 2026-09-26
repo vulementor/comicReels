@@ -1,0 +1,81 @@
+{
+  "schema": "comicreels.conversation-image-history.v1",
+  "conversation_id": "6ab651a6-9940-83ec-87d9-854057fa2af0",
+  "project_id": "1d2463a90e624eb59cc05979c38d31db",
+  "captured_from_snapshot": "research/conversations/6ab651a6-9940-83ec-87d9-854057fa2af0.sanitized.json",
+  "source_asset": {
+    "name": "source(4).jpg",
+    "mime_type": "image/jpeg",
+    "size_bytes": 225807,
+    "provider_identity_sha16": "55a44bc3d2147747"
+  },
+  "panel_crops": [
+    {
+      "panel_index": 0,
+      "name": "p0.png",
+      "provider_identity_sha16": "e7ff1446de8bdc3e"
+    },
+    {
+      "panel_index": 1,
+      "name": "p1.png",
+      "provider_identity_sha16": "2a3e3c5e55ede8bf"
+    },
+    {
+      "panel_index": 2,
+      "name": "p2.png",
+      "provider_identity_sha16": "3f730241d866232d"
+    }
+  ],
+  "panels": [
+    {
+      "panel_index": 0,
+      "state": "no_historical_generated_output_in_current_branch",
+      "candidates": []
+    },
+    {
+      "panel_index": 1,
+      "state": "accepted_existing_output",
+      "candidates": [
+        {
+          "output_message_id": "13d89f37-b3f7-4728-aaf3-fdccfbb2f7de",
+          "provider_pointer_sha16": "926925cf5d886c76",
+          "width": 941,
+          "height": 1672,
+          "artifact_sha256": "b12733c33c629303589c45e09c38337fd441b60f5a612f75951d5e7916f5c6e2",
+          "verdict": "accepted",
+          "reason": "Matches current P2 panel composition and is already the active local portrait."
+        }
+      ]
+    },
+    {
+      "panel_index": 2,
+      "state": "historical_outputs_rejected",
+      "candidates": [
+        {
+          "output_message_id": "2d8f5d4b-c1f9-40f3-bad2-74d1072b6a07",
+          "provider_pointer_sha16": "aed03ad3777b40d9",
+          "width": 940,
+          "height": 1672,
+          "artifact_sha256": "ad237316a91ec89b2bfdbdca3531bd405da5839a1779fae459d2932115dad435",
+          "verdict": "rejected",
+          "reason": "Orange bull still faces right; P3 source/validated anchor requires head and muzzle turned clearly left."
+        },
+        {
+          "output_message_id": "73c76f0a-e3e7-4cfd-9fb6-ac8e15ebb38e",
+          "provider_pointer_sha16": "8c17b58a42205092",
+          "width": 940,
+          "height": 1672,
+          "artifact_sha256": "da2d942f07277d94379b58a112abadb48cec8e4c27efc0c91c49223410b06ff8",
+          "verdict": "rejected",
+          "reason": "Provider-side source-reference attempt still keeps the orange bull facing right; invalid for P3."
+        }
+      ]
+    }
+  ],
+  "policy": {
+    "reconcile_first": true,
+    "reuse_only_accepted_outputs": true,
+    "rejected_outputs_must_not_be_restored": true,
+    "generate_only_when_no_accepted_matching_output_exists": true
+  }
+}
