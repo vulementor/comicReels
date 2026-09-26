@@ -25,9 +25,18 @@ try {
   & $Python -m pytest tests/unit -q --junitxml="$Evidence\unit.xml" *> "$Evidence\unit.log"
   if ($LASTEXITCODE -ne 0) { throw 'ComicReels regression failed; see unit.log' }
 } finally { Pop-Location }
-# Build the committed frontend using installed dependencies; no browser interaction.
-Push-Location (Join-Path $Source 'dashboard')
+# Build the isolated committed frontend; the source checkout may have no npm install.
+$Modules = Join-Path $Isolated 'dashboard\node_modules'
+$CachedModules = Join-Path $env:LOCALAPPDATA 'ComicReels\runtime\dashboard\node_modules'
+if (-not (Test-Path $Modules) -and (Test-Path $CachedModules)) {
+  New-Item -ItemType Junction -Path $Modules -Target $CachedModules | Out-Null
+}
+Push-Location (Join-Path $Isolated 'dashboard')
 try {
+  if (-not (Test-Path 'node_modules\.bin\tsc.cmd')) {
+    & npm.cmd ci --no-audit --no-fund *> "$Evidence\npm-ci.log"
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency install failed' }
+  }
   & npm.cmd run build *> "$Evidence\build.log"
   if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed; see build.log' }
   & npm.cmd run lint *> "$Evidence\lint.log"
