@@ -56,6 +56,7 @@ from agent.services.flow_project_session import current_session_project
 from agent.services.omni_flash import (
     check_omni_flash_status,
     generate_omni_flash_first_frame_video,
+    generate_omni_flash_video,
 )
 
 
