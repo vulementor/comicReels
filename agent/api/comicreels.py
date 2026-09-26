@@ -7,7 +7,6 @@ selected, in which case the source is sent to the configured vision provider.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import os
 import shutil
@@ -52,10 +51,12 @@ from agent.comicreels.ai_provider import (
 from agent.comicreels.vision import analyze as vision_analyze
 from agent.api.flow import (
     CheckStatusRequest as FlowKitCheckStatusRequest,
+    GenerateVideoRequest as FlowKitGenerateVideoRequest,
     GenerateVideoRefsRequest as FlowKitGenerateVideoRefsRequest,
     UploadImageRequest as FlowKitUploadImageRequest,
     check_status as flowkit_check_status,
     extension_status as flowkit_extension_status,
+    generate_video as flowkit_generate_video,
     generate_video_refs as flowkit_generate_video_refs,
     upload_image as flowkit_upload_image,
 )
@@ -988,29 +989,43 @@ async def _generate_shot(shot_id: str, body: FlowGenerateBody) -> dict[str, Any]
     portrait = _safe_file(panel["portrait_path"])
     if sha256_file(portrait) != shot["image_sha256"]:
         raise HTTPException(409, "File ảnh đã thay đổi sau khi lập storyboard.")
-    client = get_flow_client()
-    pid = _flow_project_id(body.project_id)
-    if not client.connected or not pid:
-        raise HTTPException(503, "Google Flow chưa sẵn sàng (Extension/project).")
-    upload = await client.upload_image(
-        base64.b64encode(portrait.read_bytes()).decode("ascii"),
-        mime_type="image/png", project_id=pid, file_name=f"{shot_id}.png",
+    upload = await flowkit_upload_image(
+        FlowKitUploadImageRequest(
+            file_path=str(portrait),
+            project_id=body.project_id,
+            file_name=f"{shot_id}.png",
+        )
     )
-    media_id = _first(upload, {"media_id", "mediaId", "id"})
-    if not isinstance(media_id, str) or not media_id:
-        raise HTTPException(502, f"Upload Flow không trả media ID: {upload}")
-    if shot["model_family"] == "omni_flash":
-        result = await generate_omni_flash_first_frame_video(
-            start_image_media_id=media_id, prompt=shot["prompt"], project_id=pid,
-            scene_id=shot_id, duration_s=int(shot["duration_s"]), resolution=body.resolution,
+    media_id = str(upload.get("media_id") or "").strip()
+    if not media_id:
+        raise HTTPException(502, "FlowKit upload không trả media ID.")
+
+    result = await flowkit_generate_video(
+        FlowKitGenerateVideoRequest(
+            start_image_media_id=media_id,
+            prompt=shot["prompt"],
+            project_id=body.project_id,
+            scene_id=shot_id,
             aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
+            model_family=shot["model_family"],
+            duration_s=int(shot["duration_s"]),
+            resolution=body.resolution,
         )
-    else:
-        result = await client.generate_video(
-            start_image_media_id=media_id, prompt=shot["prompt"], project_id=pid,
-            scene_id=shot_id, aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
-        )
-    payload = {"project_id": pid, "start_image_media_id": media_id, "result": result}
+    )
+    flow_status = await flowkit_extension_status()
+    session = flow_status.get("session_project") or {}
+    resolved_project_id = str(
+        body.project_id
+        or flow_status.get("flow_project_id")
+        or session.get("project_id")
+        or ""
+    )
+    payload = {
+        "project_id": resolved_project_id,
+        "start_image_media_id": media_id,
+        "result": result,
+        "flowkit_delegated": True,
+    }
     await store.update_shot(
         shot_id, status="PROCESSING", idempotency_key=body.idempotency_key,
         flow_payload_json=json.dumps(payload, ensure_ascii=False),
@@ -1083,12 +1098,21 @@ async def _generate_shot_from_references(
             raise HTTPException(502, f"FlowKit upload reference {index + 1} không trả media ID.")
         media_ids.append(media_id)
 
+    flow_status = await flowkit_extension_status()
+    session = flow_status.get("session_project") or {}
+    resolved_project_id = str(
+        body.project_id
+        or flow_status.get("flow_project_id")
+        or session.get("project_id")
+        or ""
+    )
+
     prompt = reference_video_prompt(shot["prompt"], len(media_ids))
     result = await flowkit_generate_video_refs(
         FlowKitGenerateVideoRefsRequest(
             reference_media_ids=media_ids,
             prompt=prompt,
-            project_id=body.project_id,
+            project_id=resolved_project_id,
             scene_id=shot_id,
             aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
             model_family="omni_flash",
@@ -1105,7 +1129,8 @@ async def _generate_shot_from_references(
         )
 
     payload = {
-        "project_id": body.project_id,
+        "project_id": resolved_project_id,
+        "flowkit_delegated": True,
         "reference_panel_ids": panel_ids,
         "reference_image_media_ids": media_ids,
         "script_prompt": prompt,
