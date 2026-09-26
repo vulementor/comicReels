@@ -21,6 +21,7 @@ type Shot = {
   id: string; display_order: number; panel_id: string; speaker_id: string | null
   dialogue_text: string; duration_s: number; model_family: string; prompt: string
   status: string; video_path: string | null; review_status: string; review_notes: string | null
+  updated_at?: string; idempotency_key?: string | null; flow_payload?: { error?: string } | null
 }
 type Project = {
   id: string; name: string; status: string; source_width: number; source_height: number
@@ -28,6 +29,9 @@ type Project = {
 }
 type Details = { project: Project; panels: Panel[]; shots: Shot[]; analysis_warnings?: string[] }
 type Step = 'import' | 'analyze' | 'images' | 'approve' | 'storyboard' | 'video'
+
+const LAST_PROJECT_KEY = 'comicreels:last-project'
+const REQUIRED_REFERENCES = 3
 
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024
 const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp'])
@@ -174,6 +178,17 @@ function PanelEditor({
       <div className="rounded-lg border p-2" style={{ borderColor: 'var(--border)', background: 'var(--card)' }}>
         <img src={imageUrl} alt={`Khung ${panel.display_order + 1}`} className="mx-auto max-h-96 max-w-full rounded object-contain" />
       </div>
+
+      {hasAIPortrait && (
+        <div className="mt-3 flex flex-wrap items-start gap-3 text-xs">
+          <a href={`${base}/portrait?v=${version}`} download={`khung-${panel.display_order + 1}-9x16.png`}
+            className="rounded border px-3 py-2" style={{borderColor:'var(--border)'}}><Download size={13} className="mr-1 inline"/>Tải ảnh 9:16</a>
+          <details className="flex-1 rounded border p-2" style={{borderColor:'var(--border)'}}>
+            <summary className="cursor-pointer">Đối chiếu khung gốc</summary>
+            <img src={`${base}/crop?v=${version}`} alt={`Khung gốc ${panel.display_order + 1}`} className="mt-2 max-h-64 w-full object-contain"/>
+          </details>
+        </div>
+      )}
 
       <div className="mt-3 rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'var(--card)' }}>
         <div className="flex items-center justify-between gap-2">
@@ -343,6 +358,25 @@ export default function ComicStudioPage() {
 
   useEffect(() => { void refreshStatus(); void refreshProjects() }, [refreshStatus, refreshProjects])
   useEffect(() => {
+    let cancelled = false
+    let saved: string | null = null
+    try { saved = localStorage.getItem(LAST_PROJECT_KEY) } catch { /* storage may be disabled */ }
+    if (saved) {
+      void apiJson<Details>(`/api/comicreels/projects/${encodeURIComponent(saved)}`).then(project => {
+        if (cancelled) return
+        setDetails(project)
+        setStep(project.shots.length ? 'video' : project.panels.length ? 'images' : 'analyze')
+      }).catch(() => { if (!cancelled) setNotice('Chưa mở lại được dự án gần nhất. Chọn dự án đã lưu để thử lại.') })
+    }
+    return () => { cancelled = true }
+  }, [])
+  useEffect(() => {
+    if (!details?.project.id) return
+    try { localStorage.setItem(LAST_PROJECT_KEY, details.project.id) } catch { /* optional convenience */ }
+    setPaidConsent(false)
+    setFlowProjectId('')
+  }, [details?.project.id])
+  useEffect(() => {
     const id = window.setInterval(() => { void refreshStatus() }, 15000)
     return () => window.clearInterval(id)
   }, [refreshStatus])
@@ -384,6 +418,8 @@ export default function ComicStudioPage() {
       const imported = await apiJson<{project: Project}>('/api/comicreels/projects/import', { method: 'POST', body: form })
       const loaded = await apiJson<Details>(`/api/comicreels/projects/${imported.project.id}`)
       setPendingFile(null)
+      setDetails(loaded)
+      await refreshProjects()
       if (status?.ai.configured) {
         const analyzed = await apiJson<Details>(`/api/comicreels/projects/${imported.project.id}/analyze`, {
           method: 'POST',
@@ -466,6 +502,7 @@ export default function ComicStudioPage() {
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
+      await reload().catch(() => undefined)
       setWorking(false)
     }
   }
@@ -482,36 +519,37 @@ export default function ComicStudioPage() {
     finally { setWorking(false) }
   }
 
-  const generateShot = async (shot: Shot) => {
+  const generateShot = async (shot: Shot, retry = false) => {
     if (!details) return
     if (!paidConsent) { setNotice('Tạo video có thể tốn tín dụng. Tick xác nhận chi phí trước.'); return }
-    const approved = details.panels.filter(
-      p => p.status === 'AI_IMAGE_APPROVED' && p.approved_sha256 && p.approved_sha256 === p.portrait_sha256
-    )
-    const required = Math.min(3, approved.length)
-    if (required === 0 || referencePanelIds.length !== required) {
-      setNotice(required >= 3 ? 'Hãy chọn đúng 3 ảnh đã duyệt làm reference.' : `Hãy chọn đủ ${required} ảnh đã duyệt hiện có.`)
+    if (referencePanelIds.length !== REQUIRED_REFERENCES) {
+      setNotice('Hãy chọn đúng 3 ảnh đã duyệt làm reference.')
       return
     }
+    if (!referencePanelIds.includes(shot.panel_id)) {
+      setNotice('Ba ảnh reference phải có ảnh của kịch bản đang chọn.')
+      return
+    }
+    if (retry && !window.confirm('Tạo lại riêng kịch bản này bằng Omni Flash 10s, 360p, 1 phiên bản? Lượt mới có thể tốn tín dụng.')) return
     setWorking(true)
     try {
       await apiJson(`/api/comicreels/shots/${shot.id}/generate-references`, {
         method: 'POST',
         body: JSON.stringify({
           confirm_paid: true,
-          idempotency_key: `ui:refs:omni10s360p:v1:${details.project.id}:${shot.id}:${referencePanelIds.join('-')}`,
+          idempotency_key: retry ? `retry:${shot.id}:${crypto.randomUUID()}` : `ui:refs:v2:${shot.id}`,
           panel_ids: referencePanelIds,
           project_id: flowProjectId,
           resolution: '360p',
           duration_s: 10,
           variant_count: 1,
-          force: false,
+          force: retry,
         }),
       })
       setNotice('Đã gửi đúng 1 phiên bản Omni Flash · 10s · 360p với ảnh reference + kịch bản + lời thoại. Không TTS riêng, không tự retry.')
       await reload()
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)) }
-    finally { setWorking(false) }
+    finally { await reload().catch(() => undefined); setWorking(false) }
   }
 
   const pendingImageCount = useMemo(
@@ -533,7 +571,7 @@ export default function ComicStudioPage() {
     ) ?? [],
     [details],
   )
-  const requiredReferenceCount = Math.min(3, approvedReferencePanels.length)
+  const requiredReferenceCount = REQUIRED_REFERENCES
 
   useEffect(() => {
     if (!details?.project.id) {
@@ -762,7 +800,7 @@ export default function ComicStudioPage() {
             <div className="mt-4">
               <div className="mb-2 flex items-center justify-between gap-2 text-xs">
                 <strong>Ảnh reference đã chọn: {referencePanelIds.length}/{requiredReferenceCount}</strong>
-                <span style={{color:'var(--muted)'}}>{requiredReferenceCount < 3 ? 'Dự án hiện có ít hơn 3 ảnh đã duyệt.' : 'Chọn đúng 3 ảnh.'}</span>
+                <span style={{color:'var(--muted)'}}>{approvedReferencePanels.length < 3 ? 'Cần đủ 3 ảnh đã duyệt để tạo video theo quy trình này.' : 'Chọn đúng 3 ảnh, gồm ảnh của kịch bản cần tạo.'}</span>
               </div>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {approvedReferencePanels.map(panel => {
@@ -801,14 +839,26 @@ export default function ComicStudioPage() {
             <article key={s.id} className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="min-w-0 flex-1"><strong className="text-sm">Kịch bản {s.display_order+1}</strong><div className="truncate text-xs" style={{color:'var(--muted)'}}>{s.dialogue_text||'Cảnh phản ứng im lặng'} · Omni Flash · {s.duration_s}s · 360p · 1 bản · {s.status}</div></div>
-                <button disabled={working||!paidConsent||referencePanelIds.length!==requiredReferenceCount||requiredReferenceCount===0}
-                  onClick={()=>void generateShot(s)} className="rounded border px-3 py-2 text-xs disabled:opacity-40" style={{borderColor:'var(--border)'}}>
-                  <Play size={14} className="mr-1 inline"/>Tạo 1 bản Omni Flash 10s · 360p
+                <button disabled={working || !paidConsent || !status?.flow.ready || referencePanelIds.length !== REQUIRED_REFERENCES || !referencePanelIds.includes(s.panel_id) || !(['READY', 'PENDING', 'FAILED'].includes(s.status) || (s.status === 'COMPLETED' && s.review_status === 'REJECTED'))}
+                  onClick={()=>void generateShot(s, s.status === 'FAILED' || s.review_status === 'REJECTED')} className="rounded border px-3 py-2 text-xs disabled:opacity-40" style={{borderColor:'var(--border)'}}>
+                  <Play size={14} className="mr-1 inline"/>{s.status === 'FAILED' || s.review_status === 'REJECTED' ? 'Tạo lại riêng kịch bản này' : 'Tạo 1 bản Omni Flash 10s · 360p'}
                 </button>
-                <button disabled={working||s.status!=='PROCESSING'} onClick={async()=>{
-                try{await apiJson(`/api/comicreels/shots/${s.id}/poll`,{method:'POST'});setNotice('Đã kiểm tra trạng thái, nếu có signed URL video đã được lưu local.');await reload()}catch(e){setNotice(e instanceof Error?e.message:String(e))}
+                <button disabled={working || !['PROCESSING', 'SUBMISSION_UNKNOWN'].includes(s.status)} onClick={async()=>{
+                setWorking(true)
+                try{await apiJson(`/api/comicreels/shots/${s.id}/poll`,{method:'POST'});setNotice('Đã cập nhật trạng thái video.');await reload()}catch(e){setNotice(e instanceof Error?e.message:String(e))}finally{setWorking(false)}
               }} className="rounded border px-3 py-2 text-xs disabled:opacity-40" style={{borderColor:'var(--border)'}}>Kiểm tra trạng thái</button>
               </div>
+              {!referencePanelIds.includes(s.panel_id) && <p className="mt-2 text-xs text-amber-400">Chọn ảnh của khung này trong bộ 3 reference trước khi tạo.</p>}
+              {['SUBMITTING', 'SUBMISSION_UNKNOWN'].includes(s.status) && <p className="mt-2 text-xs text-amber-400">Đang gửi hoặc chưa nhận đủ phản hồi từ Flow. Kiểm tra trạng thái trên Flow trước; ComicReels giữ khóa để tránh tạo trùng.</p>}
+              {s.flow_payload?.error && <p className="mt-2 text-xs text-amber-400">{s.flow_payload.error}</p>}
+              {s.video_path && s.status === 'COMPLETED' && (
+                <div className="mt-3 space-y-2">
+                  <video controls preload="metadata" className="mx-auto max-h-[32rem] w-full rounded bg-black"
+                    src={`/api/comicreels/shots/${s.id}/video?v=${encodeURIComponent(s.updated_at ?? '')}`}/>
+                  <a className="inline-block rounded border px-3 py-2 text-xs" style={{borderColor:'var(--border)'}}
+                    href={`/api/comicreels/shots/${s.id}/video`} download={`comicreels-shot-${s.display_order + 1}.mp4`}>Tải video này</a>
+                </div>
+              )}
               <details className="mt-3 rounded border p-3" style={{borderColor:'var(--border)'}}>
                 <summary className="cursor-pointer text-xs font-semibold">Xem kịch bản + lời thoại sẽ gửi sang Flow</summary>
                 <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-[11px]" style={{color:'var(--muted)'}}>{s.prompt}</pre>
@@ -830,16 +880,20 @@ export default function ComicStudioPage() {
                 }}>Ghép Reel đã duyệt</a>
             </div>
             <div className="mt-3 space-y-2">
-              {details.shots.filter(s=>s.video_path).map(s=>(
+              {details.shots.filter(s=>s.video_path && s.status === 'COMPLETED').map(s=>(
                 <div key={s.id} className="flex flex-wrap items-center gap-2 rounded border p-2 text-xs" style={{borderColor:'var(--border)'}}>
                   <span className="font-semibold">Shot {s.display_order+1}</span>
-                  <span style={{color:'var(--muted)'}}>{s.video_path}</span>
+                  <span style={{color:'var(--muted)'}}>Xem và nghe video ở phía trên trước khi duyệt.</span>
                   <span className="ml-auto">{s.review_status}</span>
-                  <button className="rounded border px-2 py-1" style={{borderColor:'var(--border)'}} onClick={async()=>{
-                    await apiJson(`/api/comicreels/shots/${s.id}/review`,{method:'PUT',body:JSON.stringify({status:'APPROVED',notes:'Đã duyệt từ ComicReels Studio.'})}); await reload()
+                  <button className="rounded border px-2 py-1" style={{borderColor:'var(--border)'}} disabled={working} onClick={async()=>{
+                    setWorking(true)
+                    try { await apiJson(`/api/comicreels/shots/${s.id}/review`,{method:'PUT',body:JSON.stringify({status:'APPROVED',video_path:s.video_path,notes:'Đã duyệt từ ComicReels Studio.'})}); await reload() }
+                    catch(e) { setNotice(e instanceof Error ? e.message : String(e)) } finally { setWorking(false) }
                   }}>Duyệt</button>
-                  <button className="rounded border px-2 py-1" style={{borderColor:'var(--border)'}} onClick={async()=>{
-                    await apiJson(`/api/comicreels/shots/${s.id}/review`,{method:'PUT',body:JSON.stringify({status:'REJECTED',notes:'Cần tạo lại shot.'})}); await reload()
+                  <button className="rounded border px-2 py-1" style={{borderColor:'var(--border)'}} disabled={working} onClick={async()=>{
+                    setWorking(true)
+                    try { await apiJson(`/api/comicreels/shots/${s.id}/review`,{method:'PUT',body:JSON.stringify({status:'REJECTED',video_path:s.video_path,notes:'Cần tạo lại shot.'})}); await reload(); setNotice('Đã đánh dấu lỗi. Dùng nút Tạo lại riêng kịch bản này ở phía trên.') }
+                    catch(e) { setNotice(e instanceof Error ? e.message : String(e)) } finally { setWorking(false) }
                   }}>Lỗi / tạo lại</button>
                 </div>
               ))}
@@ -847,7 +901,7 @@ export default function ComicStudioPage() {
           </div>
 
           <div className="rounded-xl border p-4 text-xs" style={{background:'var(--surface)',borderColor:'var(--border)',color:'var(--muted)'}}>
-            ComicReels chỉ gửi từng kịch bản thành phần sau khi anh chọn ảnh reference và xác nhận chi phí. Lời thoại nằm ngay trong prompt video; tuyến này không tạo hoặc ghép file TTS riêng. Batch API vẫn bị khóa để tránh một cú click tiêu nhiều tín dụng.
+            ComicReels chỉ gửi từng kịch bản thành phần sau khi anh chọn ảnh reference và xác nhận chi phí. Lời thoại nằm ngay trong prompt video; tuyến này không tạo hoặc ghép file TTS riêng. Giao diện gửi từng video; các công cụ hàng loạt của FlowKit vẫn nằm trong Projects.
           </div>
         </section>
       )}

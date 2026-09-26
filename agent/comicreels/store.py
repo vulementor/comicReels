@@ -20,6 +20,13 @@ from agent.config import OUTPUT_DIR
 ROOT = OUTPUT_DIR / "comicreels"
 DB_PATH = ROOT / "comicreels.db"
 
+ACTIVE_SHOT_STATES = ("SUBMITTING", "PROCESSING", "SUBMISSION_UNKNOWN")
+BUSY_MESSAGE = "ComicReels đang có video chưa kết thúc; không thể sửa hoặc xóa kịch bản/ảnh."
+
+
+class ComicConflictError(ValueError):
+    pass
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS comic_project (
@@ -127,6 +134,36 @@ class ComicStore:
                 }
                 if "visual_anchor" not in panel_columns:
                     await db.execute("ALTER TABLE comic_panel ADD COLUMN visual_anchor TEXT")
+                # Enforce the paid-job boundary for every writer, including
+                # bulk analysis, legacy endpoints and concurrent processes.
+                for table, project_expr in (
+                    ("comic_shot", "OLD.project_id"),
+                    ("comic_panel", "OLD.project_id"),
+                    ("comic_dialogue", "(SELECT project_id FROM comic_panel WHERE id=OLD.panel_id)"),
+                ):
+                    events = ["DELETE"]
+                    if table == "comic_panel":
+                        events += ["UPDATE"]
+                    elif table == "comic_dialogue":
+                        events += ["UPDATE"]
+                    for event in events:
+                        await db.execute(f"""CREATE TRIGGER IF NOT EXISTS guard_{table}_{event.lower()}
+                            BEFORE {event} ON {table}
+                            WHEN EXISTS(SELECT 1 FROM comic_shot WHERE project_id={project_expr}
+                              AND status IN ('SUBMITTING','PROCESSING','SUBMISSION_UNKNOWN'))
+                            BEGIN SELECT RAISE(ABORT, '{BUSY_MESSAGE}'); END""")
+                await db.execute(f"""CREATE TRIGGER IF NOT EXISTS guard_dialogue_insert
+                    BEFORE INSERT ON comic_dialogue
+                    WHEN EXISTS(SELECT 1 FROM comic_shot
+                      WHERE project_id=(SELECT project_id FROM comic_panel WHERE id=NEW.panel_id)
+                      AND status IN ('SUBMITTING','PROCESSING','SUBMISSION_UNKNOWN'))
+                    BEGIN SELECT RAISE(ABORT, '{BUSY_MESSAGE}'); END""")
+                for event, row in (("INSERT", "NEW"), ("UPDATE", "NEW"), ("DELETE", "OLD")):
+                    await db.execute(f"""CREATE TRIGGER IF NOT EXISTS invalidate_dialogue_{event.lower()}
+                        AFTER {event} ON comic_dialogue BEGIN
+                        DELETE FROM comic_shot WHERE project_id=(
+                          SELECT project_id FROM comic_panel WHERE id={row}.panel_id);
+                        END""")
                 await db.commit()
             self._ready = True
 
@@ -426,6 +463,103 @@ class ComicStore:
         values["updated_at"] = now()
         sets = ",".join(f"{k}=?" for k in values)
         await self.execute(f"UPDATE comic_shot SET {sets} WHERE id=?", tuple(values.values()) + (shot_id,))
+
+    async def claim_shot(self, shot: dict[str, Any], idempotency_key: str,
+                         *, force: bool, payload: dict[str, Any]) -> bool:
+        """Reserve a paid attempt atomically across concurrent requests/processes.
+
+        Return False for a replay of a known attempt. Never resubmit an uncertain
+        attempt, even with force: the provider may already have charged for it.
+        """
+        db = await self._connect()
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await (await db.execute("SELECT * FROM comic_shot WHERE id=?", (shot["id"],))).fetchone()
+            if not row:
+                raise ValueError("Kịch bản đã thay đổi; hãy mở lại dự án.")
+            current = dict(row)
+            if current["status"] == "SUBMISSION_UNKNOWN":
+                raise ValueError("Chưa rõ Flow đã nhận job hay chưa. Kiểm tra job trên Flow trước khi gửi lại.")
+            if current.get("idempotency_key") == idempotency_key:
+                if current["status"] in {"SUBMITTING", "PROCESSING", "COMPLETED"}:
+                    await db.rollback()
+                    return False
+                raise ValueError("Lượt gửi này đã kết thúc. Dùng Tạo lại với mã lượt mới.")
+            if current["status"] in {"SUBMITTING", "PROCESSING"}:
+                raise ValueError("Shot đang được gửi hoặc đang xử lý; không thể gửi trùng.")
+            if current["status"] == "COMPLETED" and not (force and current["review_status"] == "REJECTED"):
+                raise ValueError("Hãy đánh dấu video lỗi trước khi tạo lại shot này.")
+            if current["status"] == "FAILED" and not force:
+                raise ValueError("Shot đã thất bại. Bấm Tạo lại để xác nhận một lượt mới.")
+            if current["image_sha256"] != shot["image_sha256"] or current["prompt"] != shot["prompt"]:
+                raise ValueError("Ảnh hoặc kịch bản đã thay đổi; hãy mở lại dự án.")
+            for panel_id, digest in zip(payload["reference_panel_ids"], payload["reference_image_sha256"]):
+                panel = await (await db.execute(
+                    "SELECT approved_sha256,portrait_sha256,status FROM comic_panel WHERE id=? AND project_id=?",
+                    (panel_id, shot["project_id"]),
+                )).fetchone()
+                if not panel or panel[0] != digest or panel[1] != digest or panel[2] != "AI_IMAGE_APPROVED":
+                    raise ValueError("Ảnh reference đã thay đổi; hãy mở lại dự án.")
+            await db.execute(
+                """UPDATE comic_shot SET status='SUBMITTING', idempotency_key=?,
+                   flow_payload_json=?,video_path=NULL,review_status='PENDING',review_notes=NULL,
+                   updated_at=? WHERE id=?""",
+                (idempotency_key, json.dumps(payload, ensure_ascii=False), now(), shot["id"]),
+            )
+            await db.commit()
+            return True
+        except Exception:
+            await db.rollback()
+            raise
+        finally:
+            await db.close()
+
+    async def update_attempt(self, shot_id: str, attempt_key: str | None, **fields: Any) -> bool:
+        """Late polls may update only the unfinished attempt they observed."""
+        allowed = {"status", "flow_payload_json", "video_path", "review_status", "review_notes"}
+        values = {key: value for key, value in fields.items() if key in allowed}
+        values["updated_at"] = now()
+        db = await self._connect()
+        try:
+            sets = ",".join(f"{key}=?" for key in values)
+            cursor = await db.execute(
+                f"UPDATE comic_shot SET {sets} WHERE id=? AND idempotency_key IS ? "
+                "AND status IN ('PROCESSING','SUBMISSION_UNKNOWN')",
+                tuple(values.values()) + (shot_id, attempt_key),
+            )
+            await db.commit()
+            return cursor.rowcount == 1
+        finally:
+            await db.close()
+
+    async def review_video(self, shot_id: str, *, video_path: str, status: str, notes: str) -> None:
+        db = await self._connect()
+        try:
+            cursor = await db.execute(
+                """UPDATE comic_shot SET review_status=?,review_notes=?,updated_at=?
+                WHERE id=? AND status='COMPLETED' AND video_path=?""",
+                (status, notes, now(), shot_id, video_path),
+            )
+            if cursor.rowcount != 1:
+                raise ComicConflictError("Video đã đổi hoặc chưa hoàn thành. Hãy mở lại và xem video hiện tại.")
+            await db.commit()
+        finally:
+            await db.close()
+
+    async def register_video_file(self, shot_id: str, path: str) -> None:
+        db = await self._connect()
+        try:
+            cursor = await db.execute(
+                """UPDATE comic_shot SET status='COMPLETED',video_path=?,review_status='PENDING',
+                review_notes=NULL,updated_at=? WHERE id=?
+                AND status NOT IN ('SUBMITTING','PROCESSING','SUBMISSION_UNKNOWN')""",
+                (path, now(), shot_id),
+            )
+            if cursor.rowcount != 1:
+                raise ComicConflictError("Không thể thay file khi job Flow chưa kết thúc.")
+            await db.commit()
+        finally:
+            await db.close()
 
     async def set_project_status(self, project_id: str, status: str) -> None:
         await self.execute(

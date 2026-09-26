@@ -1,7 +1,7 @@
 """Shot planning and prompt generation with verbatim dialogue locks."""
 from __future__ import annotations
 
-import math
+import re
 import uuid
 from typing import Iterable
 
@@ -49,8 +49,11 @@ def split_for_model(text: str, model_family: str = "omni_flash") -> list[tuple[s
     words = text.strip().split()
     if len(words) <= max_words:
         return [(text, choose_duration(text, model_family))]
-    avg = max(1, len(text) // max(1, math.ceil(len(words) / max_words)))
-    pieces = split_exact(text, avg)
+    # Split by the spoken-word budget, not average character length. Preserve
+    # the original whitespace so concatenating pieces reproduces the transcript.
+    starts = [match.start() for match in re.finditer(r"\S+", text)]
+    boundaries = [0] + [starts[i] for i in range(max_words, len(starts), max_words)] + [len(text)]
+    pieces = [text[start:end] for start, end in zip(boundaries, boundaries[1:])]
     return [(piece, choose_duration(piece, model_family)) for piece in pieces if piece]
 
 
@@ -75,12 +78,20 @@ NO TEXT: Không tạo chữ, subtitle, speech bubble, watermark hoặc caption t
     
 
 
-def reference_video_prompt(base_prompt: str, reference_count: int) -> str:
+def reference_video_prompt(base_prompt: str, reference_count: int, *, source_reference: int | None = None) -> str:
     if reference_count < 1 or reference_count > 3:
         raise ValueError("ComicReels reference video requires 1 to 3 images")
+    scene_lock = ""
+    if source_reference is not None:
+        if not 1 <= source_reference <= reference_count:
+            raise ValueError("Source reference must identify an attached image")
+        scene_lock = (
+            f"SCENE REFERENCE: {source_reference}. Chỉ diễn hoạt cảnh trong ảnh này. "
+            "Các ảnh còn lại chỉ giữ nhất quán nhân vật; không ghép cảnh, không diễn lại toàn bộ truyện.\n"
+        )
     return f"""COMICREELS · FLOW REFERENCE VIDEO
 REFERENCE IMAGES: {reference_count} ảnh đính kèm là nguồn hình ảnh bắt buộc.
-CHARACTER LOCK: Bám sát tuyệt đối thiết kế nhân vật, khuôn mặt, hình dáng, tỷ lệ cơ thể, trang phục, màu sắc, đạo cụ và nét vẽ trong các ảnh reference. Không redesign, không đổi loài, không đổi màu, không thêm nhân vật không có trong reference.
+{scene_lock}CHARACTER LOCK: Bám sát tuyệt đối thiết kế nhân vật, khuôn mặt, hình dáng, tỷ lệ cơ thể, trang phục, màu sắc, đạo cụ và nét vẽ trong các ảnh reference. Không redesign, không đổi loài, không đổi màu, không thêm nhân vật không có trong reference.
 REFERENCE CONSISTENCY: Nếu cùng nhân vật xuất hiện ở nhiều ảnh, phải giữ một thiết kế thống nhất xuyên suốt video. Ưu tiên nhận dạng nhân vật và bố cục từ ảnh hơn mọi suy diễn từ văn bản.
 SCRIPT: Thực hiện đúng kịch bản thành phần bên dưới, bao gồm lời thoại. Lời thoại phải được tạo trực tiếp trong video, không dùng bước TTS/lồng tiếng riêng.
 ---

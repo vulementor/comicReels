@@ -1,6 +1,6 @@
 # ComicReels | Hồ sơ phát triển chính
 
-**25/09/2026:** Fork công khai của [FlowKit](https://github.com/crisng95/flowkit). Mọi chức năng chưa được nghiệm thu đều được ghi là kế hoạch. Xem [CHECKPOINTS.md](CHECKPOINTS.md) trước khi báo cáo hoàn thành.
+**26/09/2026:** Fork công khai của [FlowKit](https://github.com/crisng95/flowkit). Mọi chức năng chưa được nghiệm thu đều được ghi là kế hoạch. Xem [CHECKPOINTS.md](CHECKPOINTS.md) trước khi báo cáo hoàn thành.
 
 ## Ý tưởng, PRD và kỹ thuật
 - [VISION: trải nghiệm, ranh giới và quy tắc bất biến](VISION.md)
@@ -38,4 +38,4 @@
 - [PR #1](https://github.com/vulementor/comicReels/pull/1): fork/tài liệu, nhánh `segment/01-foundation`.
 - [PR #2](https://github.com/vulementor/comicReels/pull/2): UI tiếng Việt và [báo cáo Đoạn 2](SEGMENT-02.md), nhánh `segment/02-studio-shell`.
 
-PR #1 và #2 còn Draft/chưa merge vào `main`. Theo chỉ đạo mới của anh, Đoạn 3–16 đã được triển khai và test offline trên nhánh tổng/PR #3. Các gate còn lại cần AI image/vision thật hoặc Google Flow thật và phải báo anh trước khi sử dụng. Không commit nguồn truyện/cookie/token/ảnh/video riêng lên repo public.
+PR #1 và #2 còn Draft/chưa merge vào `main`. Theo chỉ đạo mới của anh, Đoạn 3–16 đã được triển khai và test offline trên nhánh tổng/PR #3. Revision mới nhất đang chờ anh duyệt code; chỉ sau xác nhận mới test local trên Remote Desktop Commander. Các gate AI image/vision và Google Flow thật được thực hiện từng bước khi được duyệt. Không commit nguồn truyện/cookie/token/ảnh/video riêng lên repo public.

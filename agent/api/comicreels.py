@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import shutil
+import sqlite3
 import uuid
 import zipfile
 from pathlib import Path
@@ -19,7 +20,8 @@ import httpx
 from PIL import Image
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, Field, field_validator
 
 from agent.comicreels.image_history import (
     find_project_artifact_by_sha256,
@@ -38,7 +40,7 @@ from agent.comicreels.images import (
     sha256_file,
 )
 from agent.comicreels.prompts import SUPPORTED_DURATIONS, build_shots, reference_video_prompt
-from agent.comicreels.store import ROOT, store
+from agent.comicreels.store import BUSY_MESSAGE, ComicConflictError, ROOT, store
 from agent.comicreels.ai_provider import (
     analyze_comic,
     backfill_visual_anchors_in_conversation,
@@ -49,6 +51,7 @@ from agent.comicreels.ai_provider import (
     verify_dialogues_in_conversation,
 )
 from agent.comicreels.vision import analyze as vision_analyze
+from agent.worker._parsing import _extract_output_url
 from agent.api.flow import (
     CheckStatusRequest as FlowKitCheckStatusRequest,
     GenerateVideoRequest as FlowKitGenerateVideoRequest,
@@ -62,7 +65,23 @@ from agent.api.flow import (
 )
 
 
-router = APIRouter(prefix="/comicreels", tags=["comicreels"])
+class ComicRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def handle(request):
+            try:
+                return await handler(request)
+            except ComicConflictError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            except sqlite3.IntegrityError as exc:
+                if BUSY_MESSAGE in str(exc):
+                    raise HTTPException(409, BUSY_MESSAGE) from exc
+                raise
+        return handle
+
+
+router = APIRouter(prefix="/comicreels", tags=["comicreels"], route_class=ComicRoute)
 
 
 def project_dir(project_id: str) -> Path:
@@ -170,7 +189,7 @@ class FlowGenerateBody(BaseModel):
     confirm_paid: bool = False
     idempotency_key: str = Field(min_length=8, max_length=200)
     project_id: str = ""
-    resolution: Literal["360p", "720p"] = "720p"
+    resolution: Literal["360p"] = "360p"
     force: bool = False
 
 
@@ -179,21 +198,30 @@ class BatchGenerateBody(BaseModel):
     confirm_paid: bool = False
     batch_key: str = Field(min_length=8, max_length=160)
     project_id: str = ""
-    resolution: Literal["360p", "720p"] = "720p"
+    resolution: Literal["360p"] = "360p"
 
 
 class ReferenceFlowGenerateBody(BaseModel):
     confirm_paid: bool = False
     idempotency_key: str = Field(min_length=8, max_length=200)
-    panel_ids: list[str] = Field(min_length=1, max_length=3)
+    panel_ids: list[str] = Field(min_length=3, max_length=3)
     project_id: str = ""
     resolution: Literal["360p"] = "360p"
     duration_s: Literal[10] = 10
     variant_count: Literal[1] = 1
     force: bool = False
 
+    @field_validator("panel_ids")
+    @classmethod
+    def three_distinct_panels(cls, values: list[str]) -> list[str]:
+        values = [value.strip() for value in values]
+        if any(not value for value in values) or len(set(values)) != 3:
+            raise ValueError("Cần đúng 3 ảnh reference khác nhau.")
+        return values
+
 
 class ReviewBody(BaseModel):
+    video_path: str = Field(min_length=1)
     status: Literal["PENDING", "APPROVED", "REJECTED"]
     notes: str = ""
 
@@ -204,21 +232,14 @@ class RegisterVideoBody(BaseModel):
 
 @router.get("/status")
 async def comicreels_status():
-    client = get_flow_client()
-    session = current_session_project() or {}
-    pid = _flow_project_id()
+    flow = await flow_preflight()
     return {
         "status": "ok",
         "storage_root": str(ROOT),
-        "flow": {
-            "extension_connected": client.connected,
-            "project_id": pid or None,
-            "session_project": session or None,
-            "ready": bool(client.connected and pid),
-        },
+        "flow": flow,
         "ai": provider_status(),
         "supported_video_durations": SUPPORTED_DURATIONS,
-        "local_test_state": "OFFLINE_PASS_EXTERNAL_GATES_PENDING",
+        "local_test_state": "AWAITING_USER_CONFIRMATION",
     }
 
 
@@ -559,7 +580,7 @@ async def update_panel_box(panel_id: str, body: PanelUpdate):
     details = await _details(panel["project_id"])
     project = details["project"]
     safe = clamp_box(body.box.model_dump(), project["source_width"], project["source_height"])
-    out = project_dir(panel["project_id"]) / "panels" / panel_id / "crop.png"
+    out = project_dir(panel["project_id"]) / "panels" / panel_id / f"crop-{uuid.uuid4().hex}.png"
     crop_panel(Path(project["source_path"]), safe, out)
     await store.update_panel(
         panel_id, **safe, display_order=body.display_order if body.display_order is not None else panel["display_order"],
@@ -690,7 +711,7 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
                 ),
             }
 
-    out = project_dir(raw_panel["project_id"]) / "panels" / panel_id / "portrait.png"
+    out = project_dir(raw_panel["project_id"]) / "panels" / panel_id / f"portrait-{uuid.uuid4().hex}.png"
 
     if not body.force and history.accepted_sha256:
         recovered = find_project_artifact_by_sha256(
@@ -821,7 +842,7 @@ async def clean_panel(panel_id: str, body: MaskBody):
     rects = [r.model_dump() for r in body.rects]
     if not rects:
         raise HTTPException(400, "Cần ít nhất một vùng mask trước khi xóa chữ / bong bóng.")
-    out = project_dir(panel["project_id"]) / "panels" / panel_id / "clean.png"
+    out = project_dir(panel["project_id"]) / "panels" / panel_id / f"clean-{uuid.uuid4().hex}.png"
     _, applied = clean_with_rect_masks(crop, rects, out)
     await store.update_panel(
         panel_id, clean_path=str(out), mask_json=json.dumps(applied),
@@ -838,7 +859,7 @@ async def make_portrait(panel_id: str):
     if not panel:
         raise HTTPException(404, "Không tìm thấy panel.")
     source = _safe_file(panel.get("clean_path") or panel.get("crop_path"))
-    out = project_dir(panel["project_id"]) / "panels" / panel_id / "portrait.png"
+    out = project_dir(panel["project_id"]) / "panels" / panel_id / f"portrait-{uuid.uuid4().hex}.png"
     _, protected, digest = portrait_9_16(source, out)
     await store.update_panel(
         panel_id, portrait_path=str(out), portrait_sha256=digest,
@@ -885,6 +906,11 @@ async def storyboard(project_id: str, body: StoryboardBody):
         for dialogue in panel["dialogues"]:
             if not dialogue.get("verified"):
                 raise HTTPException(409, f"Panel {panel['display_order'] + 1} còn thoại chưa xác minh.")
+    if details["shots"] and all(
+        shot["model_family"] == body.model_family and shot["duration_s"] == body.duration_s
+        for shot in details["shots"]
+    ):
+        return details
     await store.clear_shots(project_id)
     shots = build_shots(
         project_id,
@@ -961,7 +987,7 @@ async def restore_project(file: UploadFile = File(...)):
 async def flow_preflight(project_id: str = ""):
     status = await flowkit_extension_status()
     session = status.get("session_project") or {}
-    pid = str(project_id or status.get("flow_project_id") or session.get("project_id") or "").strip()
+    pid = str(project_id.strip() or status.get("flow_project_id") or (session.get("project_id") if session.get("active", True) else "") or "").strip()
     connected = bool(status.get("connected"))
     return {
         "extension_connected": connected,
@@ -973,64 +999,121 @@ async def flow_preflight(project_id: str = ""):
     }
 
 
+def _approved_portrait(panel: dict[str, Any], shot: dict[str, Any]) -> Path:
+    approved = str(panel.get("approved_sha256") or "")
+    if panel.get("status") != "AI_IMAGE_APPROVED" or not approved or approved != panel.get("portrait_sha256"):
+        raise HTTPException(409, f"Khung {int(panel['display_order']) + 1} chưa được duyệt đúng phiên bản.")
+    if panel["id"] == shot["panel_id"] and approved != shot.get("image_sha256"):
+        raise HTTPException(409, "Ảnh của kịch bản đã thay đổi. Hãy tạo lại kịch bản thành phần.")
+    portrait = _safe_file(panel.get("portrait_path"))
+    if sha256_file(portrait) != approved:
+        raise HTTPException(409, f"File ảnh khung {int(panel['display_order']) + 1} đã đổi sau khi duyệt.")
+    return portrait
+
+
+async def _submit_video(shot: dict[str, Any], body: FlowGenerateBody | ReferenceFlowGenerateBody,
+                        panels: list[dict[str, Any]], *, references: bool) -> dict[str, Any]:
+    if shot["model_family"] != "omni_flash" or int(shot["duration_s"]) != 10:
+        raise HTTPException(409, "Hãy tạo lại kịch bản thành phần theo preset Omni Flash 10s.")
+    portraits = [_approved_portrait(panel, shot) for panel in panels]
+    preflight = await flow_preflight(body.project_id)
+    if not preflight["ready"]:
+        raise HTTPException(503, preflight["message"])
+    pid = str(preflight["project_id"] or "")
+    panel_ids = [panel["id"] for panel in panels]
+    prompt = reference_video_prompt(
+        shot["prompt"], len(panels), source_reference=panel_ids.index(shot["panel_id"]) + 1,
+    ) if references else shot["prompt"]
+    payload: dict[str, Any] = {
+        "project_id": pid,
+        "flowkit_delegated": True,
+        "reference_panel_ids": panel_ids,
+        "reference_image_sha256": [panel["approved_sha256"] for panel in panels],
+        "script_prompt": prompt,
+        "generation_preset": {
+            "model_family": "omni_flash", "duration_s": 10, "resolution": "360p",
+            "variant_count": 1, "credit_cost": None,
+            "credit_note": "Flow quyết định credit thực tế tại thời điểm gửi.",
+        },
+        "phase": "uploading",
+    }
+    try:
+        claimed = await store.claim_shot(shot, body.idempotency_key, force=body.force, payload=payload)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not claimed:
+        return {"deduplicated": True, "shot": await store.shot(shot["id"])}
+
+    paid_submit_started = False
+    try:
+        media_ids: list[str] = []
+        for index, portrait in enumerate(portraits):
+            upload = await flowkit_upload_image(FlowKitUploadImageRequest(
+                file_path=str(portrait), project_id=pid,
+                file_name=f"{shot['id']}-ref-{index + 1}.png" if references else f"{shot['id']}.png",
+            ))
+            # FlowKit may resolve/create its existing session project on the first
+            # upload. Pin that returned project for all subsequent operations.
+            if not pid:
+                pid = str(upload.get("project_id") or "")
+                if not pid:
+                    pid = str((await flow_preflight())["project_id"] or "")
+                if not pid:
+                    raise HTTPException(502, "FlowKit upload chưa trả project; chưa gửi video.")
+            media_id = str(upload.get("media_id") or "").strip()
+            if not media_id:
+                raise HTTPException(502, f"FlowKit upload reference {index + 1} không trả media ID.")
+            media_ids.append(media_id)
+        payload.update(project_id=pid, reference_image_media_ids=media_ids, phase="submitting")
+        await store.update_shot(shot["id"], flow_payload_json=json.dumps(payload, ensure_ascii=False))
+        common = dict(prompt=prompt, project_id=pid, scene_id=shot["id"],
+                      aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT", model_family="omni_flash",
+                      duration_s=10, resolution="360p")
+        paid_submit_started = True
+        if references:
+            result = await flowkit_generate_video_refs(FlowKitGenerateVideoRefsRequest(
+                reference_media_ids=media_ids, **common,
+            ))
+        else:
+            result = await flowkit_generate_video(FlowKitGenerateVideoRequest(
+                start_image_media_id=media_ids[0], **common,
+            ))
+        payload.update(result=result, phase="submitted")
+        # Persist the raw receipt even when its shape is unexpected. Raising first
+        # would lose paid jobs and allow another click to charge again.
+        await store.update_shot(shot["id"], status="SUBMISSION_UNKNOWN",
+                                flow_payload_json=json.dumps(payload, ensure_ascii=False))
+        operations = result.get("operations", []) if isinstance(result, dict) else []
+        workflows = _first(result, {"workflows"}) or []
+        valid_operation = len(operations) == 1 and bool(operations[0].get("operation", {}).get("name"))
+        valid_workflow = len(workflows) == 1 and bool(workflows[0].get("name")) and bool(
+            workflows[0].get("primary_media_id") or workflows[0].get("primaryMediaId")
+        )
+        if not (valid_operation or valid_workflow):
+            raise HTTPException(502, "Flow chưa trả đúng một mã job hợp lệ. Đã lưu phản hồi; không tự gửi lại.")
+        await store.update_shot(shot["id"], status="PROCESSING")
+    except Exception as exc:
+        payload["error"] = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+        await store.update_shot(
+            shot["id"], status="SUBMISSION_UNKNOWN" if paid_submit_started else "FAILED",
+            flow_payload_json=json.dumps(payload, ensure_ascii=False),
+        )
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(502, "Không nhận được kết quả từ FlowKit. Kiểm tra trạng thái trước khi tạo lại.") from exc
+    return {"deduplicated": False, "shot_id": shot["id"], "reference_panel_ids": panel_ids, "payload": payload}
+
+
 async def _generate_shot(shot_id: str, body: FlowGenerateBody) -> dict[str, Any]:
     if not body.confirm_paid:
         raise HTTPException(409, "Cần confirm_paid=true sau khi anh duyệt tác vụ có phí.")
     shot = await store.shot(shot_id)
     if not shot:
         raise HTTPException(404, "Không tìm thấy shot.")
-    if shot.get("idempotency_key") == body.idempotency_key and shot.get("flow_payload"):
-        return {"deduplicated": True, "shot": shot}
-    if shot.get("status") in {"PROCESSING", "COMPLETED"} and not body.force:
-        raise HTTPException(409, "Shot đã được gửi. Dùng cùng idempotency_key hoặc force sau khi kiểm tra.")
     panel = await store.panel(shot["panel_id"])
-    if not panel or panel.get("approved_sha256") != shot.get("image_sha256"):
-        raise HTTPException(409, "Ảnh của shot không còn trùng phiên bản đã OK.")
-    portrait = _safe_file(panel["portrait_path"])
-    if sha256_file(portrait) != shot["image_sha256"]:
-        raise HTTPException(409, "File ảnh đã thay đổi sau khi lập storyboard.")
-    upload = await flowkit_upload_image(
-        FlowKitUploadImageRequest(
-            file_path=str(portrait),
-            project_id=body.project_id,
-            file_name=f"{shot_id}.png",
-        )
-    )
-    media_id = str(upload.get("media_id") or "").strip()
-    if not media_id:
-        raise HTTPException(502, "FlowKit upload không trả media ID.")
-
-    result = await flowkit_generate_video(
-        FlowKitGenerateVideoRequest(
-            start_image_media_id=media_id,
-            prompt=shot["prompt"],
-            project_id=body.project_id,
-            scene_id=shot_id,
-            aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
-            model_family=shot["model_family"],
-            duration_s=int(shot["duration_s"]),
-            resolution=body.resolution,
-        )
-    )
-    flow_status = await flowkit_extension_status()
-    session = flow_status.get("session_project") or {}
-    resolved_project_id = str(
-        body.project_id
-        or flow_status.get("flow_project_id")
-        or session.get("project_id")
-        or ""
-    )
-    payload = {
-        "project_id": resolved_project_id,
-        "start_image_media_id": media_id,
-        "result": result,
-        "flowkit_delegated": True,
-    }
-    await store.update_shot(
-        shot_id, status="PROCESSING", idempotency_key=body.idempotency_key,
-        flow_payload_json=json.dumps(payload, ensure_ascii=False),
-    )
-    return {"deduplicated": False, "shot_id": shot_id, "payload": payload}
+    if not panel:
+        raise HTTPException(409, "Không tìm thấy ảnh của shot.")
+    return await _submit_video(shot, body, [panel], references=False)
 
 
 @router.post("/shots/{shot_id}/generate")
@@ -1038,124 +1121,19 @@ async def generate_shot(shot_id: str, body: FlowGenerateBody):
     return await _generate_shot(shot_id, body)
 
 
-async def _generate_shot_from_references(
-    shot_id: str,
-    body: ReferenceFlowGenerateBody,
-) -> dict[str, Any]:
+async def _generate_shot_from_references(shot_id: str, body: ReferenceFlowGenerateBody) -> dict[str, Any]:
     if not body.confirm_paid:
         raise HTTPException(409, "Cần confirm_paid=true sau khi anh duyệt tác vụ có phí.")
     shot = await store.shot(shot_id)
     if not shot:
         raise HTTPException(404, "Không tìm thấy shot.")
-    if shot.get("idempotency_key") == body.idempotency_key and shot.get("flow_payload"):
-        return {"deduplicated": True, "shot": shot}
-    if shot.get("status") in {"PROCESSING", "COMPLETED"} and not body.force:
-        raise HTTPException(409, "Shot đã được gửi. Dùng cùng idempotency_key hoặc force sau khi kiểm tra.")
-
-    panel_ids = list(dict.fromkeys(str(panel_id).strip() for panel_id in body.panel_ids if str(panel_id).strip()))
-    if not panel_ids or len(panel_ids) > 3:
-        raise HTTPException(400, "Cần chọn từ 1 đến 3 ảnh reference.")
     details = await _details(shot["project_id"])
-    panel_index = {panel["id"]: panel for panel in details["panels"]}
-    if any(panel_id not in panel_index for panel_id in panel_ids):
+    panels = {panel["id"]: panel for panel in details["panels"]}
+    if any(panel_id not in panels for panel_id in body.panel_ids):
         raise HTTPException(400, "Có ảnh reference không thuộc cùng dự án ComicReels.")
-
-    selected_panels = [panel_index[panel_id] for panel_id in panel_ids]
-    portraits: list[Path] = []
-    for panel in selected_panels:
-        approved = str(panel.get("approved_sha256") or "")
-        portrait_sha = str(panel.get("portrait_sha256") or "")
-        if panel.get("status") != "AI_IMAGE_APPROVED" or not approved or approved != portrait_sha:
-            raise HTTPException(
-                409,
-                f"Khung {int(panel['display_order']) + 1} chưa được duyệt đúng phiên bản.",
-            )
-        portrait = _safe_file(panel.get("portrait_path"))
-        if sha256_file(portrait) != approved:
-            raise HTTPException(
-                409,
-                f"File ảnh khung {int(panel['display_order']) + 1} đã đổi sau khi duyệt.",
-            )
-        portraits.append(portrait)
-
-    if shot["model_family"] != "omni_flash":
-        raise HTTPException(
-            409,
-            "ComicReels reference-video preset chỉ dùng Omni Flash. Hãy tạo lại kịch bản thành phần.",
-        )
-
-    media_ids: list[str] = []
-    for index, portrait in enumerate(portraits):
-        upload = await flowkit_upload_image(
-            FlowKitUploadImageRequest(
-                file_path=str(portrait),
-                project_id=body.project_id,
-                file_name=f"{shot_id}-ref-{index + 1}.png",
-            )
-        )
-        media_id = str(upload.get("media_id") or "").strip()
-        if not media_id:
-            raise HTTPException(502, f"FlowKit upload reference {index + 1} không trả media ID.")
-        media_ids.append(media_id)
-
-    flow_status = await flowkit_extension_status()
-    session = flow_status.get("session_project") or {}
-    resolved_project_id = str(
-        body.project_id
-        or flow_status.get("flow_project_id")
-        or session.get("project_id")
-        or ""
-    )
-
-    prompt = reference_video_prompt(shot["prompt"], len(media_ids))
-    result = await flowkit_generate_video_refs(
-        FlowKitGenerateVideoRefsRequest(
-            reference_media_ids=media_ids,
-            prompt=prompt,
-            project_id=resolved_project_id,
-            scene_id=shot_id,
-            aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
-            model_family="omni_flash",
-            duration_s=body.duration_s,
-            resolution=body.resolution,
-        )
-    )
-
-    operations = result.get("operations", []) if isinstance(result, dict) else []
-    if len(operations) != 1:
-        raise HTTPException(
-            502,
-            "Omni Flash không trả đúng 1 operation; chặn để tránh tạo nhiều phiên bản ngoài ý muốn.",
-        )
-
-    payload = {
-        "project_id": resolved_project_id,
-        "flowkit_delegated": True,
-        "reference_panel_ids": panel_ids,
-        "reference_image_media_ids": media_ids,
-        "script_prompt": prompt,
-        "generation_preset": {
-            "model_family": "omni_flash",
-            "duration_s": body.duration_s,
-            "resolution": body.resolution,
-            "variant_count": body.variant_count,
-            "credit_cost": None,
-            "credit_note": "Flow quyết định credit thực tế tại thời điểm gửi.",
-        },
-        "result": result,
-    }
-    await store.update_shot(
-        shot_id,
-        status="PROCESSING",
-        idempotency_key=body.idempotency_key,
-        flow_payload_json=json.dumps(payload, ensure_ascii=False),
-    )
-    return {
-        "deduplicated": False,
-        "shot_id": shot_id,
-        "reference_panel_ids": panel_ids,
-        "payload": payload,
-    }
+    if shot["panel_id"] not in body.panel_ids:
+        raise HTTPException(409, "Ba ảnh reference phải có ảnh của kịch bản đang chọn.")
+    return await _submit_video(shot, body, [panels[pid] for pid in body.panel_ids], references=True)
 
 
 @router.post("/shots/{shot_id}/generate-references")
@@ -1185,50 +1163,81 @@ async def generate_batch(project_id: str, body: BatchGenerateBody):
     return {"project_id": project_id, "results": results}
 
 
+def _video_result(status: dict[str, Any]) -> tuple[str | None, bool]:
+    """Read FlowKit's operation/workflow video contracts, never a poster URL."""
+    url = _extract_output_url(status, "GENERATE_VIDEO") or None
+    workflows = status.get("workflows") or []
+    for workflow in workflows:
+        if workflow.get("done") and workflow.get("status") in {"COMPLETED", "MEDIA_GENERATION_STATUS_SUCCESSFUL"}:
+            url = url or (workflow.get("media") or {}).get("url")
+    operations = status.get("operations") or []
+    failed = status.get("status") in {"FAILED", "MEDIA_GENERATION_STATUS_FAILED"} or any(
+        item.get("status") in {"FAILED", "MEDIA_GENERATION_STATUS_FAILED", "CANCELLED"}
+        for item in operations + workflows
+    )
+    return url, failed
+
+
 @router.post("/shots/{shot_id}/poll")
 async def poll_shot(shot_id: str):
     shot = await store.shot(shot_id)
     if not shot:
         raise HTTPException(404, "Không tìm thấy shot.")
+    if shot["status"] == "COMPLETED" and shot.get("video_path") and Path(shot["video_path"]).is_file():
+        return {"shot_id": shot_id, "status": "COMPLETED", "saved_video": shot["video_path"]}
     payload = shot.get("flow_payload") or {}
     result = payload.get("result") or {}
     pid = str(payload.get("project_id") or "")
     workflows = _first(result, {"workflows"})
     operations = _first(result, {"operations"})
-    if isinstance(workflows, list) and workflows:
-        status = await flowkit_check_status(
-            FlowKitCheckStatusRequest(
-                workflows=workflows,
-                project_id=pid,
-                include_encoded_video=False,
-            )
-        )
-    elif isinstance(operations, list) and operations:
-        status = await flowkit_check_status(
-            FlowKitCheckStatusRequest(
-                operations=operations,
-                project_id=pid,
-                include_encoded_video=False,
-            )
-        )
+    if isinstance(workflows, list) and len(workflows) == 1:
+        status = await flowkit_check_status(FlowKitCheckStatusRequest(
+            workflows=workflows, project_id=pid, include_encoded_video=False,
+        ))
+    elif isinstance(operations, list) and len(operations) == 1:
+        status = await flowkit_check_status(FlowKitCheckStatusRequest(
+            operations=operations, project_id=pid, include_encoded_video=False,
+        ))
     else:
-        status = result
-    url = _first(status, {"video_url", "videoUrl", "download_url", "downloadUrl", "signed_url"})
+        raise HTTPException(409, "Chưa có mã job duy nhất để kiểm tra. Xem phản hồi trên Flow; không gửi lại tự động.")
+    payload["last_status"] = status
+    current = await store.update_attempt(shot_id, shot.get("idempotency_key"),
+                                         flow_payload_json=json.dumps(payload, ensure_ascii=False))
+    if not current:
+        return {"shot_id": shot_id, "status": "STALE_POLL", "saved_video": None}
+    url, failed = _video_result(status)
+    if failed:
+        await store.update_attempt(shot_id, shot.get("idempotency_key"), status="FAILED", review_status="PENDING")
+        return {"shot_id": shot_id, "status": status, "saved_video": None}
     saved = None
-    if isinstance(url, str) and url.startswith(("https://", "http://")):
-        target = project_dir(shot["project_id"]) / "videos" / f"{shot_id}.mp4"
+    if isinstance(url, str) and url.startswith("https://"):
+        target = project_dir(shot["project_id"]) / "videos" / f"{shot_id}-{uuid.uuid4().hex}.mp4"
         target.parent.mkdir(parents=True, exist_ok=True)
         async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
             response = await client.get(url)
             response.raise_for_status()
+            media_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+            if not response.content or not (media_type.startswith("video/") or b"ftyp" in response.content[:32]):
+                raise HTTPException(502, "Flow chưa trả file video hợp lệ; chưa lưu hoặc duyệt kết quả.")
             target.write_bytes(response.content)
         saved = str(target)
-        await store.update_shot(shot_id, status="COMPLETED", video_path=saved)
-    else:
-        await store.update_shot(
-            shot_id, flow_payload_json=json.dumps({**payload, "last_status": status}, ensure_ascii=False)
-        )
+        accepted = await store.update_attempt(shot_id, shot.get("idempotency_key"),
+                                              status="COMPLETED", video_path=saved,
+                                              review_status="PENDING", review_notes=None)
+        if not accepted:
+            target.unlink(missing_ok=True)
+            saved = None
     return {"shot_id": shot_id, "status": status, "saved_video": saved}
+
+
+@router.get("/shots/{shot_id}/video")
+async def get_shot_video(shot_id: str):
+    shot = await store.shot(shot_id)
+    if not shot:
+        raise HTTPException(404, "Không tìm thấy shot.")
+    if shot["status"] != "COMPLETED":
+        raise HTTPException(409, "Video chưa hoàn thành.")
+    return FileResponse(_safe_file(shot.get("video_path")), media_type="video/mp4")
 
 
 @router.put("/shots/{shot_id}/video")
@@ -1239,7 +1248,14 @@ async def register_video(shot_id: str, body: RegisterVideoBody):
     path = Path(body.video_path).expanduser().resolve()
     if not path.is_file():
         raise HTTPException(400, "File video không tồn tại trên máy backend.")
-    await store.update_shot(shot_id, status="COMPLETED", video_path=str(path))
+    target = project_dir(shot["project_id"]) / "videos" / f"{shot_id}-{uuid.uuid4().hex}.mp4"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, target)
+    try:
+        await store.register_video_file(shot_id, str(target))
+    except ComicConflictError:
+        target.unlink(missing_ok=True)
+        raise
     return await store.shot(shot_id)
 
 
@@ -1248,9 +1264,9 @@ async def review_shot(shot_id: str, body: ReviewBody):
     shot = await store.shot(shot_id)
     if not shot:
         raise HTTPException(404, "Không tìm thấy shot.")
-    if body.status == "APPROVED" and not shot.get("video_path"):
+    if body.status == "APPROVED" and (shot["status"] != "COMPLETED" or not shot.get("video_path")):
         raise HTTPException(409, "Cần file video trước khi duyệt shot.")
-    await store.update_shot(shot_id, review_status=body.status, review_notes=body.notes)
+    await store.review_video(shot_id, video_path=body.video_path, status=body.status, notes=body.notes)
     return await store.shot(shot_id)
 
 

@@ -3,6 +3,13 @@ import pytest
 from agent.comicreels.prompts import build_shots, reference_video_prompt, split_for_model
 
 
+def test_uneven_word_lengths_never_exceed_the_ten_second_dialogue_budget():
+    text = " ".join(["ừ"] * 48 + ["nghiêngngả" * 20]) + "  "
+    pieces = split_for_model(text)
+    assert "".join(piece for piece, _ in pieces) == text
+    assert all(len(piece.split()) <= 22 for piece, _ in pieces)
+
+
 def test_split_preserves_verbatim():
     text = "Câu một có dấu. Câu hai vẫn giữ nguyên từng ký tự và khoảng trắng."
     pieces = split_for_model(text, "omni_flash")

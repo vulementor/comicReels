@@ -1,4 +1,6 @@
-# IMPLEMENTATION 03–16 | Ma trận code đã hoàn thành, test local đang chờ
+# IMPLEMENTATION 03–16 | Ma trận lịch sử
+
+> Ma trận bên dưới phản ánh thiết kế ban đầu. Provider/image pipeline và Flow reference-video đã thay đổi; xem CHECKPOINTS.md mục 26/09/2026 và LOCAL-TEST-PLAN.md cho trạng thái hiện tại.
 
 Đây là bản bàn giao code trước vòng kiểm thử local. Mục tiêu là giúp anh nhìn nhanh mỗi phân đoạn nằm ở đâu.
 

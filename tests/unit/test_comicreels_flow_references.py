@@ -33,11 +33,12 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
         "id": "shot-1",
         "project_id": "project-1",
         "panel_id": "panel-1",
+        "image_sha256": panels[1]["approved_sha256"],
         "status": "PENDING",
         "idempotency_key": None,
         "flow_payload": None,
         "model_family": "omni_flash",
-        "duration_s": 8,
+        "duration_s": 10,
         "prompt": (
             'COMICREELS SHOT\n'
             'DIALOGUE LOCK: CHỈ CHAR_A nói đúng nguyên văn: "Xin chào."\n'
@@ -77,6 +78,9 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
     async def fake_update_shot(_shot_id, **changes):
         updates.append(changes)
 
+    async def fake_claim(*args, **kwargs):
+        return True
+
     monkeypatch.setattr(comic_api.store, "shot", fake_shot)
     monkeypatch.setattr(comic_api, "_details", fake_details)
     monkeypatch.setattr(comic_api, "_safe_file", lambda value: __import__("pathlib").Path(value))
@@ -84,6 +88,7 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
     monkeypatch.setattr(comic_api, "flowkit_extension_status", fake_flowkit_status)
     monkeypatch.setattr(comic_api, "flowkit_generate_video_refs", fake_flowkit_generate)
     monkeypatch.setattr(comic_api.store, "update_shot", fake_update_shot)
+    monkeypatch.setattr(comic_api.store, "claim_shot", fake_claim)
 
     body = comic_api.ReferenceFlowGenerateBody(
         confirm_paid=True,
@@ -111,7 +116,7 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
     assert 'Xin chào.' in submitted["prompt"]
     assert "không dùng bước TTS/lồng tiếng riêng" in submitted["prompt"]
     assert updates[-1]["status"] == "PROCESSING"
-    stored = __import__("json").loads(updates[-1]["flow_payload_json"])
+    stored = __import__("json").loads(updates[-2]["flow_payload_json"])
     assert stored["flowkit_delegated"] is True
     assert stored["project_id"] == "flow-project"
     assert stored["generation_preset"] == {
@@ -134,11 +139,13 @@ async def test_generate_shot_from_references_rejects_unapproved_panel(tmp_path, 
         return {
             "id": "shot-1",
             "project_id": "project-1",
+            "panel_id": "panel-0",
+            "image_sha256": digest,
             "status": "PENDING",
             "idempotency_key": None,
             "flow_payload": None,
             "model_family": "omni_flash",
-            "duration_s": 8,
+            "duration_s": 10,
             "prompt": "script",
         }
 
@@ -146,13 +153,13 @@ async def test_generate_shot_from_references_rejects_unapproved_panel(tmp_path, 
         return {
             "project": {"id": "project-1"},
             "panels": [{
-                "id": "panel-0",
+                "id": f"panel-{i}",
                 "display_order": 0,
                 "status": "AI_IMAGE_READY",
                 "portrait_path": str(path),
                 "portrait_sha256": digest,
                 "approved_sha256": None,
-            }],
+            } for i in range(3)],
             "shots": [],
         }
 
@@ -162,7 +169,7 @@ async def test_generate_shot_from_references_rejects_unapproved_panel(tmp_path, 
     body = comic_api.ReferenceFlowGenerateBody(
         confirm_paid=True,
         idempotency_key="refs-test-456",
-        panel_ids=["panel-0"],
+        panel_ids=["panel-0", "panel-1", "panel-2"],
     )
 
     with pytest.raises(comic_api.HTTPException) as exc:
@@ -176,7 +183,7 @@ async def test_generate_shot_from_references_rejects_unapproved_panel(tmp_path, 
 def test_reference_flow_contract_is_fixed_to_omni_10s_360p_single_variant():
     body = comic_api.ReferenceFlowGenerateBody(
         idempotency_key="preset-123",
-        panel_ids=["panel-0"],
+        panel_ids=["panel-0", "panel-1", "panel-2"],
     )
     assert body.resolution == "360p"
     assert body.duration_s == 10
@@ -185,14 +192,14 @@ def test_reference_flow_contract_is_fixed_to_omni_10s_360p_single_variant():
     with pytest.raises(Exception):
         comic_api.ReferenceFlowGenerateBody(
             idempotency_key="preset-720p",
-            panel_ids=["panel-0"],
+            panel_ids=["panel-0", "panel-1", "panel-2"],
             resolution="720p",
         )
 
     with pytest.raises(Exception):
         comic_api.ReferenceFlowGenerateBody(
             idempotency_key="preset-multi",
-            panel_ids=["panel-0"],
+            panel_ids=["panel-0", "panel-1", "panel-2"],
             variant_count=2,
         )
 

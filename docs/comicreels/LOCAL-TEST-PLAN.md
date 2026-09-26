@@ -1,42 +1,16 @@
-# Kế hoạch test local sau khi code hoàn thành
+# Kế hoạch test local sau khi anh xác nhận code
 
-**Trạng thái:** CHƯA CHẠY theo yêu cầu của anh. Tài liệu này là kịch bản kiểm thử cho lần anh yêu cầu test local.
+**Chưa chạy trong vòng code 26/09/2026.** Chỉ bắt đầu bằng Remote Desktop Commander sau khi anh xác nhận xong. Làm từng bước nhỏ, báo kết quả và đợi anh OK trước bước tiếp theo.
 
-## Chuẩn bị
-- Windows PowerShell: `./scripts/run_comicreels.ps1`; WSL/Linux: `./scripts/run_comicreels.sh`.
-- Không cấu hình Google Flow ở vòng 1. Test local data/image/state trước.
-- Dùng fixture tự tạo hoặc ảnh anh có quyền sử dụng; không commit ảnh riêng.
-- Sau khi test offline pass mới cấu hình Extension + `FLOW_PROJECT_ID`; tác vụ video có phí chỉ chạy đúng một shot sau khi anh xác nhận.
+1. **Đối chiếu revision và dữ liệu.** Kiểm tra commit nhánh PR #3, giữ lại DB/ảnh/video hiện tại; dùng runtime cache đã có, không xóa dữ liệu. Không tạo Chrome/profile mới. Giữ extension và Chrome đang đăng nhập.
+2. **Gate code offline.** Chạy `python -m pytest tests/unit -q`; `npm ci`, `npm run build`, `npm run lint` trong dashboard. Báo kết quả riêng với revision; chưa gửi job ngoài.
+3. **FlowKit core.** Mở `/`, Projects/detail/pipeline, Gallery, Logs, Guide, Settings; xác minh các công cụ gốc còn hoạt động. Mở ComicReels qua sidebar, quay lại core và mở lại ComicReels.
+4. **Ảnh cũ và trạng thái.** `/api/comicreels/status` trả 200 cả khi extension chưa kết nối; dự án gần nhất và các ảnh đã Generate vẫn hiện. Tải từng ảnh, so với khung gốc; không Generate lại ảnh sẵn có.
+5. **Cửa duyệt/kịch bản.** Chưa OK phải chặn; ảnh đã đổi hash phải chặn gửi. Kịch bản dùng lời thoại nguyên văn, đúng người nói; câu dài chia các shot 10s, không cắt bớt. Bấm tạo kịch bản lần nữa không xóa các shot hiện có.
+6. **Chuẩn bị một video.** Dùng project/extension có sẵn. Chọn đúng ba ảnh đã duyệt, có ảnh của cảnh đang chọn; xem một kịch bản. Kiểm tra preset Omni Flash/10s/360p/1 bản. Không có bước TTS riêng. Chưa bấm tạo ở bước này.
+7. **Một video thật sau khi được duyệt chi phí.** Gửi đúng một lượt. Cùng key/click lặp không phát sinh job thứ hai; các request upload/video chung Flow project. Nếu timeout, chỉ kiểm tra receipt/Flow, không bấm tạo lại tùy tiện.
+8. **Poll và review.** Poll tới khi tải MP4; xem/nghe trong UI, tải file, kiểm thoại/giọng/người nói/lip-sync/nét vẽ. Phân biệt FAILED và trạng thái chưa rõ. Mọi thao tác sửa nguồn phải bị chặn khi còn job chưa kết thúc.
+9. **Tạo lại shot lỗi nếu anh yêu cầu.** Đánh dấu lỗi; tạo lại riêng shot đó, vẫn 10s/360p/1 bản. Bản cũ không còn được coi là đã duyệt; tab cũ không thể duyệt nhầm bản mới. Không tự chạy batch.
+10. **Ghép và khởi động lại.** Chỉ ghép khi mọi video đã xem/nghe và được duyệt. Kiểm tra thứ tự, âm thanh, 9:16; khởi động lại vẫn giữ ảnh/job/video.
 
-## Gate A — cài đặt/build
-1. `python -m pip install -r requirements.txt -r requirements-dev.txt`.
-2. `python -m pytest tests/unit -q`.
-3. `cd dashboard && npm install && npm run build && npm run lint`.
-4. Khởi động backend, GET `/health` và `/api/comicreels/status`; mở `http://localhost:5173/`.
-
-## Gate B — Đoạn 2–5
-- Paste/drag/select PNG, JPEG, WebP; file fake MIME/0 byte/>30MB phải bị chặn.
-- Import -> restart backend -> mở lại project, source SHA không đổi.
-- Tách 2/3/4/5+ panel. Với layout khó thử Vision sau khi đồng ý gửi ảnh provider.
-- So panel bbox/reading order; nhập/đổi speaker và thoại, xác minh Unicode/dấu.
-
-## Gate C — Đoạn 6–11
-- Khai báo mask speech bubble; lưu clean. So pixel-diff ngoài mask = 0.
-- Tạo portrait, kiểm tra width*16 == height*9 và crop protected region pixel-identical.
-- Thử gọi storyboard trước OK phải 409; OK hết rồi mới tạo shot.
-- Sửa ảnh sau OK phải hủy approval/shot.
-- Nối `dialogue_text` shot phải bằng transcript gốc, duration thuộc 4/6/8/10 và <=10.
-- Backup ZIP có manifest/source/panel assets; restore tạo project mới.
-
-## Gate D — Đoạn 12–15 (Flow, có thể tốn phí)
-- Extension off/on, project thiếu/đúng: preflight phản ánh chính xác.
-- Chưa tick `confirm_paid` phải bị 409.
-- Sau anh duyệt, tạo đúng một shot và kiểm tra idempotency cùng key không submit lần hai.
-- Poll tới lúc lưu MP4 local hoặc log chính xác lỗi Flow. Kiểm tra lời thoại, đúng người nói, lip-sync và nhân vật.
-- Reject/approve shot; register/retry riêng shot lỗi. Chỉ assemble khi toàn bộ shot APPROVED.
-- Mở MP4 ghép, kiểm tra thứ tự, audio và 9:16.
-
-## Gate E — Đoạn 16
-- Tắt/mở lại app, restore backup, fresh install trên máy khác.
-- Kiểm tra dữ liệu/source không nằm trong git status.
-- Fetch upstream FlowKit, xem diff trước merge và chạy lại Gate A–D tương ứng.
+Các kiểm tra concurrency/receipt lỗi dùng regression tests offline, không cố tạo job thật chỉ để kiểm lỗi. Không suy ra PASS của bước này từ kết quả lịch sử hoặc từ static review.
