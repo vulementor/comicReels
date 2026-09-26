@@ -156,15 +156,134 @@ async def test_generate_clean_portrait_reuses_source_conversation_without_reuplo
 
     assert calls["kwargs"]["conversation"] == conversation
     assert calls["kwargs"]["attachments"] == []
-    assert calls["kwargs"]["conversation_attachment"] == "first_image"
-    assert calls["kwargs"]["reference_width"] == 1200
-    assert calls["kwargs"]["reference_height"] == 1600
-    assert "TURN ĐẦU" in calls["prompt"]
+    assert calls["kwargs"]["conversation_attachment"] == "name:p0.png"
+    assert calls["kwargs"]["reference_width"] == 800
+    assert calls["kwargs"]["reference_height"] == 500
+    assert 'p0.png' in calls["prompt"]
     assert "KHUNG 1" in calls["prompt"]
     assert "9:16" in calls["prompt"]
     assert path == output
     assert protected == {"x": 0, "y": 0, "w": 576, "h": 1024}
     assert len(digest) == 64
+
+
+@pytest.mark.asyncio
+async def test_generate_clean_portrait_reuses_exact_intent_cache_without_provider(tmp_path, monkeypatch):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (800, 500), (120, 130, 140)).save(crop)
+    artifact = tmp_path / "generated.png"
+    Image.new("RGB", (576, 1024), (10, 20, 30)).save(artifact)
+    output = tmp_path / "panel" / "portrait.png"
+    calls = []
+
+    class FakeImage:
+        def generate(self, prompt, **kwargs):
+            calls.append((prompt, kwargs))
+            return SimpleNamespace(
+                state="verified",
+                output_path=str(artifact),
+                reason=None,
+                conversation_url="https://chatgpt.com/c/existing-comic",
+                assistant_message_id="image-message",
+                observation_id="image-observation",
+                turn_testid="conversation-turn-10",
+            )
+
+    monkeypatch.setattr(
+        provider,
+        "_client",
+        lambda: SimpleNamespace(image=FakeImage()),
+    )
+
+    kwargs = dict(
+        conversation_url="https://chatgpt.com/c/existing-comic",
+        panel_index=2,
+        panel_context="CHAR_1: dialogue",
+        panel_box={"x": 10, "y": 20, "w": 800, "h": 500},
+        source_width=1200,
+        source_height=1600,
+        visual_anchor="Bò quay sang trái; thỏ ngồi bên phải.",
+    )
+
+    first = await provider.generate_clean_portrait(
+        crop,
+        [{"x": 20, "y": 30, "w": 100, "h": 60}],
+        output,
+        **kwargs,
+    )
+    assert len(calls) == 1
+    first_sha = first[2]
+
+    def forbidden_client():
+        raise AssertionError("cached intent must not open GPT FullProxy")
+
+    monkeypatch.setattr(provider, "_client", forbidden_client)
+    output.unlink()
+
+    second = await provider.generate_clean_portrait(
+        crop,
+        [{"x": 20, "y": 30, "w": 100, "h": 60}],
+        output,
+        **kwargs,
+    )
+
+    assert second[2] == first_sha
+    assert output.is_file()
+    assert len(calls) == 1
+    receipts = list((output.parent / "generation-cache").glob("*.json"))
+    artifacts = list((output.parent / "generation-cache").glob("*.png"))
+    assert len(receipts) == 1
+    assert len(artifacts) == 1
+
+
+@pytest.mark.asyncio
+async def test_generation_cache_corruption_fails_closed_without_resend(tmp_path, monkeypatch):
+    crop = tmp_path / "crop.png"
+    Image.new("RGB", (800, 500), (120, 130, 140)).save(crop)
+    artifact = tmp_path / "generated.png"
+    Image.new("RGB", (576, 1024), (10, 20, 30)).save(artifact)
+    output = tmp_path / "panel" / "portrait.png"
+
+    class FakeImage:
+        def generate(self, prompt, **kwargs):
+            return SimpleNamespace(
+                state="verified",
+                output_path=str(artifact),
+                reason=None,
+            )
+
+    monkeypatch.setattr(provider, "_client", lambda: SimpleNamespace(image=FakeImage()))
+    kwargs = dict(
+        conversation_url="https://chatgpt.com/c/existing-comic",
+        panel_index=1,
+        panel_context="",
+        panel_box={"x": 10, "y": 20, "w": 800, "h": 500},
+        source_width=1200,
+        source_height=1600,
+        visual_anchor="Thỏ ngồi giữa khung và quay sang trái.",
+    )
+    await provider.generate_clean_portrait(
+        crop,
+        [{"x": 20, "y": 30, "w": 100, "h": 60}],
+        output,
+        **kwargs,
+    )
+    cache_file = next((output.parent / "generation-cache").glob("*.png"))
+    cache_file.write_bytes(b"tampered")
+
+    monkeypatch.setattr(
+        provider,
+        "_client",
+        lambda: (_ for _ in ()).throw(AssertionError("must not resend corrupt cached intent")),
+    )
+
+    with pytest.raises(RuntimeError, match="không được gửi lại"):
+        await provider.generate_clean_portrait(
+            crop,
+            [{"x": 20, "y": 30, "w": 100, "h": 60}],
+            output,
+            **kwargs,
+        )
 
 
 @pytest.mark.asyncio
@@ -299,9 +418,13 @@ async def test_three_panels_reuse_one_conversation_without_reupload(tmp_path, mo
     assert len(calls) == 3
     assert all(call["conversation"] == conversation for call in calls)
     assert all(call["attachments"] == [] for call in calls)
-    assert all(call["conversation_attachment"] == "first_image" for call in calls)
-    assert all(call["reference_width"] == 1200 for call in calls)
-    assert all(call["reference_height"] == 1600 for call in calls)
+    assert [call["conversation_attachment"] for call in calls] == [
+        "name:p0.png",
+        "name:p1.png",
+        "name:p2.png",
+    ]
+    assert all(call["reference_width"] == 800 for call in calls)
+    assert all(call["reference_height"] == 500 for call in calls)
     assert ["KHUNG 1" in calls[0]["prompt"], "KHUNG 2" in calls[1]["prompt"], "KHUNG 3" in calls[2]["prompt"]] == [True, True, True]
     for index, call in enumerate(calls, start=1):
         assert f"ANCHOR_PANEL_{index}" in call["prompt"]
@@ -684,11 +807,13 @@ def test_image_prompt_locks_exact_source_panel_geometry():
         source_width=1780,
         source_height=2048,
         visual_anchor="Thỏ ngồi thẳng ở giữa, quay sang trái nhìn bò; bò sữa nằm bên phải.",
+        reference_asset_name="p1.png",
     )
 
     assert "KHUNG 2" in prompt
     assert "x=205, y=741, w=1379, h=563" in prompt
     assert "1780x2048" in prompt
+    assert 'p1.png' in prompt
     assert "KHÔNG mượn pose/composition từ panel khác" in prompt
     assert "Thỏ ngồi thẳng ở giữa, quay sang trái nhìn bò" in prompt
     assert "MỌI ảnh AI đã generate ở các TURN SAU chỉ là OUTPUT CŨ" in prompt
