@@ -75,6 +75,109 @@ def request(comic, **extra):
     })
 
 
+async def reject_image_in_history(comic, monkeypatch, *, panel_index=0, digest=None):
+    """Persist a review verdict independently of the panel's stale approval."""
+    history_module = importlib.import_module("agent.comicreels.image_history")
+    monkeypatch.setattr(history_module, "_HISTORY_DIR", comic.root)
+    await comic.store.set_project_ai_session(
+        "comic", conversation_url="https://chatgpt.com/c/reviewed-comic",
+    )
+    manifest = comic.root / "reviewed-comic.image-history.json"
+    manifest.write_text(json.dumps({
+        "schema": "comicreels.conversation-image-history.v1",
+        "conversation_id": "reviewed-comic",
+        "panels": [{"panel_index": panel_index, "state": "historical_outputs_rejected",
+                    "candidates": [{"verdict": "rejected", "artifact_sha256":
+                                    digest or comic.panels[panel_index]["portrait_sha256"]}]}],
+    }), encoding="utf-8")
+    return manifest
+
+
+async def test_rejected_image_cannot_be_approved_again(comic, monkeypatch):
+    await reject_image_in_history(comic, monkeypatch)
+    panel_id = comic.panels[0]["id"]
+    await comic.store.update_panel(panel_id, status="AI_IMAGE_READY", approved_sha256=None)
+    with pytest.raises(api.HTTPException) as error:
+        await api.approve_panel(panel_id)
+    assert error.value.status_code == 409
+    assert "đã bị loại" in error.value.detail
+    assert (await comic.store.panel(panel_id))["approved_sha256"] is None
+
+
+async def test_rejected_image_blocks_reuse_of_existing_storyboard(comic, monkeypatch):
+    await reject_image_in_history(comic, monkeypatch, panel_index=1)
+    before = (await comic.store.get_project("comic"))["shots"]
+    with pytest.raises(api.HTTPException) as error:
+        await api.storyboard("comic", api.StoryboardBody())
+    assert error.value.status_code == 409
+    assert (await comic.store.get_project("comic"))["shots"] == before
+
+
+@pytest.mark.parametrize("references", [False, True])
+async def test_rejected_image_blocks_video_despite_stale_approval(comic, monkeypatch, references):
+    await reject_image_in_history(comic, monkeypatch, panel_index=1 if references else 0)
+    with pytest.raises(api.HTTPException) as error:
+        if references:
+            await api._generate_shot_from_references(comic.shot["id"], request(comic))
+        else:
+            await api._generate_shot(comic.shot["id"], api.FlowGenerateBody(
+                confirm_paid=True, idempotency_key="reviewed-attempt",
+            ))
+    assert error.value.status_code == 409
+    assert not comic.calls["uploads"] and not comic.calls["submits"]
+    assert (await comic.store.shot(comic.shot["id"]))["status"] == "READY"
+
+
+async def test_rejected_provider_or_cache_result_never_replaces_current_image(comic, monkeypatch):
+    rejected_path = Path(comic.panels[1]["portrait_path"])
+    rejected_digest = sha256_file(rejected_path)
+    await reject_image_in_history(comic, monkeypatch, digest=rejected_digest)
+    panel_id = comic.panels[0]["id"]
+    await comic.store.update_panel(panel_id, crop_path=comic.panels[0]["portrait_path"])
+    before = await comic.store.panel(panel_id)
+    before_shots = (await comic.store.get_project("comic"))["shots"]
+    calls = []
+
+    async def generate(crop, regions, output, **kwargs):
+        calls.append(kwargs)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(rejected_path.read_bytes())
+        return output, {"x": 0, "y": 0, "w": 9, "h": 16}, rejected_digest
+
+    monkeypatch.setattr(api, "provider_status", lambda: {"configured": True})
+    monkeypatch.setattr(api, "generate_clean_portrait", generate)
+    with pytest.raises(api.HTTPException) as error:
+        await api.ai_generate_panel(panel_id, api.AIImageBody(confirm_paid=True, force=True))
+    assert error.value.status_code == 409
+    assert len(calls) == 1
+    assert await comic.store.panel(panel_id) == before
+    assert (await comic.store.get_project("comic"))["shots"] == before_shots
+
+
+async def test_unreadable_history_blocks_approval_without_changing_state(comic, monkeypatch):
+    manifest = await reject_image_in_history(comic, monkeypatch)
+    manifest.write_text("{", encoding="utf-8")
+    panel_id = comic.panels[0]["id"]
+    before = await comic.store.panel(panel_id)
+    with pytest.raises(api.HTTPException) as error:
+        await api.approve_panel(panel_id)
+    assert error.value.status_code == 409
+    assert await comic.store.panel(panel_id) == before
+
+
+async def test_replacement_image_can_be_approved_after_rejected_version(comic, monkeypatch):
+    await reject_image_in_history(comic, monkeypatch)
+    panel_id = comic.panels[0]["id"]
+    replacement = comic.root / "replacement.png"
+    Image.new("RGB", (9, 16), (200, 100, 50)).save(replacement)
+    digest = sha256_file(replacement)
+    await comic.store.update_panel(panel_id, portrait_path=str(replacement), portrait_sha256=digest,
+                                  approved_sha256=None, status="AI_IMAGE_READY")
+    result = await api.approve_panel(panel_id)
+    assert result["approved_sha256"] == digest
+    assert result["status"] == "AI_IMAGE_APPROVED"
+
+
 async def test_status_uses_flowkit_and_retains_ai_availability(comic, monkeypatch):
     monkeypatch.setattr(api, "provider_status", lambda: {"configured": True})
     result = await api.comicreels_status()
