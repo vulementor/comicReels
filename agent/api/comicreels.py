@@ -21,6 +21,10 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from agent.comicreels.image_history import (
+    find_project_artifact_by_sha256,
+    image_history_decision,
+)
 from agent.comicreels.images import (
     ImageValidationError,
     MAX_SOURCE_BYTES,
@@ -617,30 +621,117 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
             "Panel chưa có visual anchor từ ảnh nguồn. Cần AI phân tích/backfill anchor trước khi Generate.",
         )
 
+    details = await _details(raw_panel["project_id"])
+    project = details["project"]
+    conversation_url = str(project.get("ai_conversation_url") or "").strip()
+    if not conversation_url:
+        raise HTTPException(
+            409,
+            "Project chưa có ChatGPT conversation nguồn. Hãy chạy AI phân tích ảnh nguồn trước.",
+        )
+
+    panel_index = int(raw_panel["display_order"])
+    try:
+        history = image_history_decision(conversation_url, panel_index)
+    except Exception as exc:
+        raise HTTPException(
+            409,
+            f"Image history manifest không hợp lệ; chặn Generate để tránh gửi lặp: {type(exc).__name__}",
+        ) from exc
+
+    current_sha = str(raw_panel.get("portrait_sha256") or "").strip()
+    current_path = raw_panel.get("portrait_path")
+    if current_sha and current_sha in history.rejected_sha256:
+        await store.update_panel(
+            panel_id,
+            portrait_path=None,
+            portrait_sha256=None,
+            approved_sha256=None,
+            protected_json=None,
+            status="EXTRACTED",
+        )
+        await store.clear_shots(raw_panel["project_id"])
+        raw_panel = await store.panel(panel_id)
+        current_sha = ""
+        current_path = None
+
     if (
         not body.force
         and raw_panel.get("status") in {"AI_IMAGE_READY", "AI_IMAGE_APPROVED"}
-        and raw_panel.get("portrait_path")
-        and raw_panel.get("portrait_sha256")
+        and current_path
+        and current_sha
     ):
         try:
-            existing = _safe_file(raw_panel.get("portrait_path"))
+            existing = _safe_file(current_path)
         except HTTPException:
             existing = None
-        if existing is not None and sha256_file(existing) == raw_panel.get("portrait_sha256"):
+        if existing is not None and sha256_file(existing) == current_sha:
             return {
                 "panel_id": panel_id,
-                "portrait_sha256": raw_panel["portrait_sha256"],
+                "portrait_sha256": current_sha,
                 "status": raw_panel["status"],
                 "deduplicated": True,
+                "reconcile_source": (
+                    "history"
+                    if history.accepted_sha256 == current_sha
+                    else "active_portrait"
+                ),
             }
+
+    out = project_dir(raw_panel["project_id"]) / "panels" / panel_id / "portrait.png"
+
+    if not body.force and history.accepted_sha256:
+        recovered = find_project_artifact_by_sha256(
+            project_dir(raw_panel["project_id"]),
+            history.accepted_sha256,
+        )
+        if recovered is None:
+            raise HTTPException(
+                409,
+                "Conversation history đã có output được chấp nhận nhưng artifact local đang thiếu. "
+                "Cần recovery output cũ; không được gửi lại Generate.",
+            )
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if recovered.resolve() != out.resolve():
+            shutil.copy2(recovered, out)
+        with Image.open(out) as image:
+            width, height = image.size
+        ratio = width / height if height else 0
+        if width <= 0 or height <= 0 or abs(ratio - (9 / 16)) > 0.08:
+            raise HTTPException(
+                409,
+                "Historical accepted artifact không còn đạt 9:16; chặn restore và không resend.",
+            )
+        digest = sha256_file(out)
+        if digest != history.accepted_sha256:
+            raise HTTPException(
+                409,
+                "Historical accepted artifact hash không khớp manifest; không resend.",
+            )
+        protected = {"x": 0, "y": 0, "w": width, "h": height}
+        await store.update_panel(
+            panel_id,
+            portrait_path=str(out),
+            portrait_sha256=digest,
+            approved_sha256=None,
+            protected_json=json.dumps(protected),
+            status="AI_IMAGE_READY",
+        )
+        await store.clear_shots(raw_panel["project_id"])
+        return {
+            "panel_id": panel_id,
+            "portrait_sha256": digest,
+            "protected_region": protected,
+            "status": "AI_IMAGE_READY",
+            "deduplicated": True,
+            "reconcile_source": "history",
+        }
 
     crop = _safe_file(raw_panel.get("crop_path"))
     try:
         regions = json.loads(raw_panel.get("mask_json") or "[]")
     except json.JSONDecodeError:
         regions = []
-    details = await _details(raw_panel["project_id"])
     parsed = next((p for p in details["panels"] if p["id"] == panel_id), None)
     dialogue_context = ""
     if parsed:
@@ -651,21 +742,14 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
         ]
         if lines:
             dialogue_context = "Detected dialogue context only; do NOT render it as text: " + " | ".join(lines)
-    out = project_dir(raw_panel["project_id"]) / "panels" / panel_id / "portrait.png"
-    project = details["project"]
-    conversation_url = str(project.get("ai_conversation_url") or "").strip()
-    if not conversation_url:
-        raise HTTPException(
-            409,
-            "Project chưa có ChatGPT conversation nguồn. Hãy chạy AI phân tích ảnh nguồn trước.",
-        )
+
     try:
         _, protected, digest = await generate_clean_portrait(
             crop,
             regions,
             out,
             conversation_url=conversation_url,
-            panel_index=int(raw_panel["display_order"]),
+            panel_index=panel_index,
             panel_context=dialogue_context,
             panel_box={
                 "x": int(raw_panel["x"]),
