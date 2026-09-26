@@ -1,12 +1,12 @@
-# ComicReels — gate offline trên VULE-PC, 26/09/2026
+# ComicReels — gate offline và UI smoke trên VULE-PC, 26/09/2026
 
 ## Phạm vi và môi trường
 
-Người dùng đã xác nhận code và yêu cầu chuyển toàn bộ local test từ Mac sang VULE-PC. Các lệnh dưới đây chạy trên Windows qua Remote Desktop Commander, trong bản sao source riêng để không dùng DB/ảnh của ứng dụng đang chạy.
+Người dùng đã xác nhận code và yêu cầu chuyển toàn bộ local test từ Mac sang VULE-PC. Gate offline chạy trên Windows qua Remote Desktop Commander, trong bản sao source riêng để không dùng DB/ảnh của ứng dụng đang chạy. Sau khi người dùng OK bước 3, UI smoke chạy trên app hiện có và cửa sổ Chrome đã đăng nhập trên VULE-PC.
 
 - Nhánh: `feature/comicreels-segments-03-16`, Draft PR #3, chưa merge.
 - Revision ban đầu: `dcb0aa0965ffa7ade43ccbce40557e6fc843d993`.
-- Kết quả unit cuối áp dụng revision đó cộng bản sửa Windows trong cùng commit với báo cáo này.
+- Kết quả unit cuối và UI smoke áp dụng revision `8c3dfcb7e5da04fb9a86e6f60740c16990c1f7a6`, gồm bản sửa Windows.
 - Windows 10, Python 3.12.7, Node 24.13.0, npm 11.6.2; GPT FullProxy pin `3955affe4de62921398599de70edfa8addfefcf4`.
 - Source nằm trong thư mục test do người dùng chọn; runtime, dependencies và bản sao kiểm thử nằm ngoài OneDrive.
 
@@ -34,9 +34,26 @@ Build/lint chạy trên frontend của `dcb0aa0`. Bản sửa Windows chỉ thay
 
 FFmpeg trên máy này không tải được cấu hình font mặc định cho drawtext. Cơ chế fallback hiện có tạo contact sheet không đóng timestamp và truyền trạng thái đó cho prompt review; các kiểm tra fallback đạt. Chưa đánh giá chất lượng review bằng model thật.
 
+## Bước 3 — UI smoke trực tiếp, 17:11–17:22 +07
+
+Điều khiển Chrome hiện có bằng Windows UI Automation và bàn phím/chuột qua Remote Desktop Commander, đọc cây giao diện và xem ảnh chụp thực tế. Không dùng kết quả HTTP 200 để thay cho kiểm tra render/tương tác. Không mở profile Chrome mới hoặc yêu cầu đăng nhập lại.
+
+| Kiểm tra | Kết quả |
+| --- | --- |
+| Sidebar FlowKit | Mở được Dashboard, Projects, Gallery, Logs, Guide, Settings; bố cục và nội dung hiển thị |
+| Kết nối trong UI | `WS LIVE`, extension connected; Guide hiển thị agent 1.3.1 và extension đã nối |
+| Projects/detail/videos/pipeline | Bấm thẻ dự án, mở Overview, Videos và Pipeline; thấy đủ REFS/IMAGES/VIDEOS/UPSCALE; đổi sang VIDEOS và mở bảng chi tiết cảnh |
+| Mẫu kiểm tra core | Một project/video/scene tạm chỉ trong DB local, không tạo Flow project; đã xóa sau kiểm tra, core trở về 0 project, 0 request |
+| ComicReels | Mở qua sidebar; mở dự án đã lưu với 3 khung, gallery có trạng thái duyệt; màn video hiển thị đủ 3 ảnh reference |
+| Chuyển core/ComicReels | Link Dashboard FlowKit và Mở Projects & công cụ video hoạt động; quay lại ComicReels tự mở dự án gần nhất |
+| Reload | Tải lại trang vẫn mở đúng dự án, đủ 3 ảnh; preset hiển thị Omni Flash/10s/360p/1 phiên bản; nút tạo chưa được bật khi chưa xác nhận chi phí |
+| Tác vụ ngoài | 0 yêu cầu tạo ảnh/video mới; không bấm Retry stage hoặc chạy pipeline |
+
+Bằng chứng nằm tại `local-test-data/checks-20260926-1640` trên VULE-PC: ảnh/cây UI `ui-01` đến `ui-20`, manifest mẫu tạm và `STAGE-3-UI-RESULT.json`. Ảnh chụp và dữ liệu dự án không đưa lên repo public. Những trang core không có dữ liệu sản xuất được kiểm tra ở trạng thái rỗng hoặc bằng mẫu tạm; kết quả này không chứng minh một lượt render Flow thành công. Không thay đổi source sản phẩm trong bước 3.
+
 ## Còn chờ nghiệm thu
 
-- Kiểm tra UI FlowKit core và thao tác ComicReels trên browser đã đăng nhập.
+- Bước 4: tải từng ảnh cũ và đối chiếu khung gốc/ảnh 9:16; bước 5: kiểm tra duyệt và nội dung kịch bản.
 - Xác nhận đúng Flow project, ba ảnh reference, kịch bản, preset Omni Flash/10s/360p/1 bản trước một lượt tạo có phí.
 - Video thật, thoại/giọng/lip-sync, tải file, duyệt/tạo lại và ghép.
 
