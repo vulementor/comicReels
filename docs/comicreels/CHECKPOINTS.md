@@ -1,5 +1,15 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## Chỉ đạo mới nhất — 26/09/2026, 20:36 Asia/Saigon
+
+Code/fix phải lên GitHub trước. VULE-PC chỉ để test qua command của Remote Desktop Commander; mọi test ChatGPT chỉ qua `gpt_fullproxy`, không thao tác web trực tiếp.
+
+Luồng tạo ảnh được sửa từ gốc: một ảnh truyện nguyên bản + một prompt ngắn yêu cầu ChatGPT tự đếm khung, tạo mỗi khung một ảnh 9:16 riêng theo thứ tự. Không ấn định hai/ba ảnh, không gửi crop từng khung, không lặp Generate từng panel. SDK mới trả danh sách ảnh; ComicReels chỉ thay bộ ảnh khi nhận đủ, không trùng và đúng định dạng. Thoại giữ nguyên; bộ ảnh mới cần duyệt lại. FlowKit core và cửa duyệt video giữ nguyên.
+
+SDK được pin tại `d580dc7729a6943ef419d1b960519e27e8911875`. Trạng thái ở thời điểm push: **chưa chạy regression/live test cho thay đổi batch**. Báo cáo cũ bên dưới là lịch sử, không chứng minh revision mới. Xem [kế hoạch sửa luồng](../superpowers/plans/2026-09-26-source-image-batch.md).
+
+Việc tạo lại ảnh đã được người dùng cho phép; không yêu cầu xác nhận lại. Dừng các lượt thao tác web thủ công. Bộ ảnh hiện tại vẫn IMAGE_QA_FAILED, chưa có live batch mới được nghiệm thu; chưa merge PR #3, chưa tạo Flow video.
+
 ## Hiện tại — 26/09/2026, sau chỉ đạo “ComicReels Latest”
 
 **Trạng thái: IMAGE_QA_FAILED — KHUNG 2/3 ĐÃ THU HỒI DUYỆT; LIVE_VIDEO_PENDING.**

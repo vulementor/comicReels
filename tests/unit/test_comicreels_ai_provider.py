@@ -821,13 +821,15 @@ async def test_ai_generate_blocks_missing_visual_anchor_before_provider(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_approve_panel_blocks_legacy_portrait_without_visual_anchor(tmp_path, monkeypatch):
+async def test_approve_panel_does_not_require_visual_anchor_prose(tmp_path, monkeypatch):
     portrait = tmp_path / "portrait.png"
     Image.new("RGB", (576, 1024), (1, 2, 3)).save(portrait)
 
     async def fake_panel(_panel_id):
         return {
             "id": "panel-legacy",
+            "project_id": "project",
+            "display_order": 0,
             "portrait_path": str(portrait),
             "portrait_sha256": comic_api.sha256_file(portrait),
             "visual_anchor": None,
@@ -835,12 +837,17 @@ async def test_approve_panel_blocks_legacy_portrait_without_visual_anchor(tmp_pa
         }
 
     monkeypatch.setattr(comic_api.store, "panel", fake_panel)
-
-    with pytest.raises(HTTPException) as exc_info:
-        await comic_api.approve_panel("panel-legacy")
-
-    assert exc_info.value.status_code == 409
-    assert "visual anchor" in str(exc_info.value.detail).lower()
+    monkeypatch.setattr(comic_api, '_safe_file', lambda path: portrait)
+    async def details(_):
+        return {'project': {'id':'project', 'ai_conversation_url':None}}
+    changes = []
+    async def update(*args, **kwargs):
+        changes.append(kwargs)
+    monkeypatch.setattr(comic_api, '_details', details)
+    monkeypatch.setattr(comic_api.store, 'update_panel', update)
+    result = await comic_api.approve_panel('panel-legacy')
+    assert result['status'] == 'AI_IMAGE_APPROVED'
+    assert changes[0]['approved_sha256'] == comic_api.sha256_file(portrait)
 
 
 @pytest.mark.asyncio

@@ -98,6 +98,15 @@ CREATE TABLE IF NOT EXISTS comic_shot (
     FOREIGN KEY(panel_id) REFERENCES comic_panel(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_comic_shot_project ON comic_shot(project_id, display_order);
+CREATE TABLE IF NOT EXISTS comic_image_batch (
+    request_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(project_id) REFERENCES comic_project(id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_comic_image_batch_active
+ON comic_image_batch(project_id) WHERE state IN ('SUBMITTING','UNCERTAIN');
 """
 
 
@@ -334,6 +343,52 @@ class ComicStore:
 
     async def clear_shots(self, project_id: str) -> None:
         await self.execute("DELETE FROM comic_shot WHERE project_id=?", (project_id,))
+
+    async def reserve_image_batch(self, project_id: str, request_id: str) -> bool:
+        db = await self._connect()
+        try:
+            await db.execute('BEGIN IMMEDIATE')
+            row = await (await db.execute('SELECT project_id,state FROM comic_image_batch WHERE request_id=?', (request_id,))).fetchone()
+            if row:
+                if row['project_id'] == project_id and row['state'] == 'COMPLETED':
+                    return False
+                raise ComicConflictError('Lượt tạo ảnh này đã được gửi; không gửi lại.')
+            active = await (await db.execute("SELECT 1 FROM comic_image_batch WHERE project_id=? AND state IN ('SUBMITTING','UNCERTAIN')", (project_id,))).fetchone()
+            if active:
+                raise ComicConflictError('Có lượt tạo ảnh chưa rõ kết quả; cần kiểm tra trước khi tạo tiếp.')
+            videos = await (await db.execute("SELECT 1 FROM comic_shot WHERE project_id=? AND status IN ('SUBMITTING','PROCESSING','SUBMISSION_UNKNOWN')", (project_id,))).fetchone()
+            if videos:
+                raise ComicConflictError(BUSY_MESSAGE)
+            await db.execute('INSERT INTO comic_image_batch VALUES (?,?,?,?)', (request_id, project_id, 'SUBMITTING', now()))
+            await db.commit()
+            return True
+        finally:
+            await db.close()
+
+    async def apply_image_batch(self, project_id: str, request_id: str,
+                                snapshot: list[tuple[str, str]], images: list[dict]) -> None:
+        db = await self._connect()
+        try:
+            await db.execute('BEGIN IMMEDIATE')
+            rows = await (await db.execute('SELECT id,updated_at FROM comic_panel WHERE project_id=? ORDER BY display_order', (project_id,))).fetchall()
+            if [(r['id'], r['updated_at']) for r in rows] != snapshot or len(images) != len(rows):
+                raise ComicConflictError('Khung đã thay đổi trong khi tạo ảnh; giữ kết quả để đối chiếu.')
+            batch = await (await db.execute('SELECT state FROM comic_image_batch WHERE request_id=? AND project_id=?', (request_id, project_id))).fetchone()
+            if not batch or batch['state'] != 'SUBMITTING':
+                raise ComicConflictError('Lượt tạo ảnh không còn chờ nhận kết quả.')
+            await db.execute('DELETE FROM comic_shot WHERE project_id=?', (project_id,))
+            for row, image in zip(rows, images):
+                await db.execute("""UPDATE comic_panel SET portrait_path=?,portrait_sha256=?,approved_sha256=NULL,
+                    protected_json=?,status='AI_IMAGE_READY',updated_at=? WHERE id=?""",
+                    (image['path'], image['sha256'], json.dumps(image['protected']), now(), row['id']))
+            await db.execute("UPDATE comic_project SET status='IMAGES_READY',updated_at=? WHERE id=?", (now(), project_id))
+            await db.execute("UPDATE comic_image_batch SET state='COMPLETED' WHERE request_id=?", (request_id,))
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+        finally:
+            await db.close()
 
     async def apply_visual_anchors_and_invalidate_portraits(
         self,

@@ -144,23 +144,6 @@ function PanelEditor({
     setDialogues(current => current.filter((_, i) => i !== index))
   }, 'Đã xóa lời thoại khỏi panel.')
 
-  const generateAI = () => run(async () => {
-    await apiJson(`/api/comicreels/panels/${panel.id}/ai-generate`, {
-      method: 'POST',
-      body: JSON.stringify({ confirm_paid: true, force: false }),
-    })
-  }, 'AI đã tạo ảnh sạch 9:16. Hãy xem kỹ trước khi OK.')
-
-  const regenerateAI = () => {
-    if (!window.confirm('Tạo lại ảnh AI sẽ dùng thêm một lượt Generate cho khung này. Tiếp tục?')) return
-    void run(async () => {
-      await apiJson(`/api/comicreels/panels/${panel.id}/ai-generate`, {
-        method: 'POST',
-        body: JSON.stringify({ confirm_paid: true, force: true }),
-      })
-    }, 'AI đã tạo lại ảnh 9:16 cho đúng khung này. Hãy review lại trước khi OK.')
-  }
-
   return (
     <article className="rounded-xl border p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -197,11 +180,11 @@ function PanelEditor({
         </div>
         {hasVisualAnchor ? (
           <div className="mt-2 rounded border px-3 py-2 text-[11px]" style={{borderColor:'var(--border)',color:'var(--muted)'}}>
-            <strong>Visual anchor:</strong> {panel.visual_anchor}
+            <details><summary>Mô tả khung đã nhận diện</summary>{panel.visual_anchor}</details>
           </div>
         ) : (
           <div className="mt-2 rounded border px-3 py-2 text-[11px] text-amber-400" style={{borderColor:'var(--border)'}}>
-            ⚠ Khung legacy chưa có visual anchor từ ảnh nguồn. Không được Generate/OK cho tới khi backfill anchor.
+            Tạo ảnh bối cảnh dùng trực tiếp ảnh truyện gốc.
           </div>
         )}
         <div className="mt-2 space-y-2">
@@ -279,37 +262,10 @@ function PanelEditor({
       </details>
 
       <div className="mt-3 flex flex-wrap gap-2">
-        {!hasAIPortrait ? (
-          <button
-            disabled={working || !aiConfigured || panel.mask.length === 0 || !hasVisualAnchor}
-            onClick={generateAI}
-            className="rounded px-3 py-2 text-xs font-semibold disabled:opacity-40"
-            style={{ background: 'var(--accent)', color: 'white' }}
-          >
-            {working ? <Loader2 size={14} className="mr-1 inline animate-spin"/> : <Sparkles size={14} className="mr-1 inline"/>}
-            AI Generate ảnh sạch 9:16
-          </button>
-        ) : (
-          <>
-            <button
-              disabled
-              className="rounded px-3 py-2 text-xs font-semibold opacity-60"
-              style={{ background: 'var(--accent)', color: 'white' }}
-            >
-              <CheckCircle2 size={14} className="mr-1 inline"/>Đã có ảnh AI 9:16
-            </button>
-            <button
-              disabled={working || !aiConfigured || !hasVisualAnchor}
-              onClick={regenerateAI}
-              className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-40"
-              style={{ borderColor: 'var(--border)' }}
-            >
-              <RefreshCcw size={14} className="mr-1 inline"/>Tạo lại ảnh AI
-            </button>
-          </>
-        )}
-
-        <button disabled={working || !hasAIPortrait || !hasVisualAnchor} onClick={() => run(async () => {
+        <span className="px-3 py-2 text-xs" style={{color:'var(--muted)'}}>
+          {hasAIPortrait ? 'Đã có ảnh bối cảnh 9:16' : 'Chờ tạo bộ ảnh từ ảnh gốc'}
+        </span>
+        <button disabled={working || !hasAIPortrait} onClick={() => run(async () => {
           await apiJson(`/api/comicreels/panels/${panel.id}/approve`, { method: 'POST' })
         }, 'Đã OK đúng hash ảnh AI hiện tại.')}
           className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-40"
@@ -476,29 +432,15 @@ export default function ComicStudioPage() {
 
   const generateAllImages = async () => {
     if (!details || !status?.ai.configured) return
-    const missingAnchors = details.panels.filter(panel => !panel.visual_anchor?.trim())
-    if (missingAnchors.length > 0) {
-      setNotice(`Có ${missingAnchors.length} khung chưa có visual anchor từ ảnh nguồn. Hãy backfill/re-analyze trước khi Generate.`)
-      return
-    }
-    const pending = details.panels.filter(
-      panel => !['AI_IMAGE_READY', 'AI_IMAGE_APPROVED'].includes(panel.status) || !panel.portrait_sha256
-    )
-    if (pending.length === 0) {
-      setNotice('Tất cả khung đã có ảnh AI 9:16. Không gọi Generate lại.')
-      return
-    }
+    if (details.panels.some(p => p.portrait_sha256) && !window.confirm('Tạo bộ ảnh mới từ ảnh truyện gốc? Bộ ảnh mới sẽ cần duyệt lại.')) return
     setWorking(true)
     try {
-      for (const panel of pending) {
-        await apiJson(`/api/comicreels/panels/${panel.id}/ai-generate`, {
-          method: 'POST',
-          body: JSON.stringify({ confirm_paid: true, force: false }),
-        })
-      }
-      const next = await apiJson<Details>(`/api/comicreels/projects/${details.project.id}`)
+      const next = await apiJson<Details>(`/api/comicreels/projects/${details.project.id}/ai-generate`, {
+        method: 'POST',
+        body: JSON.stringify({ confirm_paid: true, request_id: crypto.randomUUID() }),
+      })
       setDetails(next)
-      setNotice(`AI đã Generate xong ${pending.length} khung còn thiếu. Các khung đã có ảnh được giữ nguyên.`)
+      setNotice(`Đã nhận ${next.panels.length} ảnh bối cảnh từ một lượt tạo. Hãy đối chiếu từng khung trước khi OK.`)
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     } finally {
@@ -727,7 +669,7 @@ export default function ComicStudioPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-semibold">Gallery {details.panels.length} khung</h2>
-                <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>AI đã nhận thoại/speaker/vùng cần xóa. AI Generate sẽ xóa chữ, tái tạo phần bị che và outpaint thẳng thành 9:16.</p>
+                <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>Gửi ảnh truyện gốc một lần. ChatGPT tự đếm khung và tạo mỗi khung một ảnh 9:16 riêng theo thứ tự, không chữ và bong bóng thoại.</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -740,13 +682,13 @@ export default function ComicStudioPage() {
                   AI đọc lại thoại
                 </button>
                 <button
-                  disabled={working || !status?.ai.configured || pendingImageCount === 0 || details.panels.some(p => p.mask.length === 0)}
+                  disabled={working || !status?.ai.configured || details.panels.length === 0}
                   onClick={()=>void generateAllImages()}
                   className="rounded px-4 py-2 text-sm font-semibold disabled:opacity-40"
                   style={{background:'var(--accent)',color:'white'}}
                 >
                   {working?<Loader2 size={15} className="mr-1 inline animate-spin"/>:<Sparkles size={15} className="mr-1 inline"/>}
-                  {pendingImageCount > 0 ? `AI Generate ${pendingImageCount} khung còn thiếu` : 'Tất cả khung đã có ảnh AI'}
+                  {pendingImageCount > 0 ? 'Tạo ảnh bối cảnh từ ảnh gốc' : 'Tạo lại bộ ảnh từ ảnh gốc'}
                 </button>
               </div>
             </div>

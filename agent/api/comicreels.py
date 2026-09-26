@@ -51,6 +51,7 @@ from agent.comicreels.ai_provider import (
     verify_dialogues_in_conversation,
 )
 from agent.comicreels.vision import analyze as vision_analyze
+from agent.comicreels.image_batch import BatchNotSubmitted, generate_scene_batch
 from agent.worker._parsing import _extract_output_url
 from agent.api.flow import (
     CheckStatusRequest as FlowKitCheckStatusRequest,
@@ -135,6 +136,11 @@ class AIImageBody(BaseModel):
     confirm_paid: bool = False
     force: bool = False
     use_local_crop: bool = False
+
+
+class ImageBatchBody(BaseModel):
+    confirm_paid: bool = False
+    request_id: uuid.UUID
 
 
 class Box(BaseModel):
@@ -638,6 +644,38 @@ async def update_panel_mask(panel_id: str, body: MaskBody):
     return {"panel_id": panel_id, "mask": rects}
 
 
+@router.post('/projects/{project_id}/ai-generate')
+async def ai_generate_project(project_id: str, body: ImageBatchBody):
+    if not body.confirm_paid:
+        raise HTTPException(409, 'Cần xác nhận thao tác tạo ảnh.')
+    if not provider_status()['configured']:
+        raise HTTPException(503, 'Cần kết nối gpt_fullproxy với tài khoản ChatGPT đã đăng nhập.')
+    details = await _details(project_id)
+    panels = details['panels']
+    if not panels:
+        raise HTTPException(409, 'Cần nhận diện khung và lưu lời thoại từ ảnh gốc trước.')
+    source = _safe_file(details['project']['source_path'])
+    if sha256_file(source) != details['project']['source_sha256']:
+        raise HTTPException(409, 'Ảnh nguồn đã thay đổi.')
+    request_id = str(body.request_id)
+    if not await store.reserve_image_batch(project_id, request_id):
+        return await _details(project_id)
+    snapshot = [(p['id'], p['updated_at']) for p in panels]
+    try:
+        result = await generate_scene_batch(source, project_dir(project_id) / 'image-batches' / request_id,
+                                            expected_count=len(panels))
+        for panel, image in zip(panels, result['images']):
+            _assert_portrait_not_rejected(details['project'], panel, image['sha256'])
+        await store.apply_image_batch(project_id, request_id, snapshot, result['images'])
+    except Exception as exc:
+        state = 'NOT_SUBMITTED' if isinstance(exc, BatchNotSubmitted) else 'UNCERTAIN'
+        await store.execute("UPDATE comic_image_batch SET state=? WHERE request_id=? AND state='SUBMITTING'", (state, request_id))
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(502, f'Tạo bộ ảnh chưa hoàn tất: {exc}') from exc
+    return await _details(project_id)
+
+
 @router.post("/panels/{panel_id}/ai-generate")
 async def ai_generate_panel(panel_id: str, body: AIImageBody):
     if not body.confirm_paid:
@@ -898,11 +936,6 @@ async def approve_panel(panel_id: str):
     panel = await store.panel(panel_id)
     if not panel or not panel.get("portrait_path"):
         raise HTTPException(409, "Cần tạo ảnh 9:16 trước khi duyệt.")
-    if not str(panel.get("visual_anchor") or "").strip():
-        raise HTTPException(
-            409,
-            "Ảnh này chưa khóa visual anchor của panel nguồn; không cho duyệt để tránh cross-panel contamination.",
-        )
     digest = sha256_file(_safe_file(panel["portrait_path"]))
     if digest != panel.get("portrait_sha256"):
         raise HTTPException(409, "Ảnh 9:16 đã thay đổi ngoài state; hãy tạo lại trước khi OK.")
@@ -920,11 +953,6 @@ async def storyboard(project_id: str, body: StoryboardBody):
     if not panels:
         raise HTTPException(409, "Dự án chưa có panel.")
     for panel in panels:
-        if not str(panel.get("visual_anchor") or "").strip():
-            raise HTTPException(
-                409,
-                f"Panel {panel['display_order'] + 1} chưa khóa visual anchor từ ảnh nguồn.",
-            )
         if panel.get("status") != "AI_IMAGE_APPROVED":
             raise HTTPException(409, f"Panel {panel['display_order'] + 1} chưa được duyệt từ ảnh AI Generate.")
         if not panel.get("portrait_sha256") or panel.get("approved_sha256") != panel.get("portrait_sha256"):
