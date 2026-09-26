@@ -902,6 +902,58 @@ BẮT BUỘC:
 """.strip()
 
 
+async def recover_historical_portrait(
+    output_path: Path,
+    *,
+    conversation_url: str,
+    output_message_id: str,
+    expected_sha256: str,
+    expected_width: int | None = None,
+    expected_height: int | None = None,
+) -> tuple[Path, dict[str, int], str]:
+    if not conversation_url:
+        raise RuntimeError("Thiếu ChatGPT conversation để recovery ảnh lịch sử.")
+    if not str(output_message_id or "").strip():
+        raise RuntimeError("Historical output thiếu provider message id.")
+    expected_sha256 = str(expected_sha256 or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise RuntimeError("Historical output sha256 không hợp lệ.")
+
+    artifact_dir = output_path.parent / "gptfp-history"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    client = _client()
+    result = await asyncio.to_thread(
+        client.image.recover_existing,
+        conversation=conversation_url,
+        output_message_id=output_message_id,
+        output_dir=artifact_dir,
+        expected_sha256=expected_sha256,
+        expected_width=expected_width,
+        expected_height=expected_height,
+        visible=_VISIBLE,
+    )
+    if result.state != "verified" or not result.output_path:
+        raise RuntimeError(
+            f"GPT FullProxy historical recovery chưa xác minh: "
+            f"{result.state}: {result.reason or 'không có artifact'}"
+        )
+
+    recovered_path = Path(result.output_path).expanduser().resolve()
+    if not recovered_path.is_file():
+        raise RuntimeError("Historical recovery trả artifact path nhưng file không tồn tại.")
+    digest = sha256_file(recovered_path)
+    if digest.lower() != expected_sha256:
+        raise RuntimeError("Historical recovery artifact hash không khớp manifest.")
+
+    protected = _validate_generated_portrait(recovered_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(recovered_path, output_path)
+    if sha256_file(output_path).lower() != expected_sha256:
+        raise RuntimeError("Historical recovery working copy không khớp manifest.")
+    protected = _validate_generated_portrait(output_path)
+    return output_path, protected, expected_sha256
+
+
 async def generate_clean_portrait(
     crop_path: Path,
     regions: list[dict[str, int]],
