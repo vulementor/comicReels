@@ -19,7 +19,7 @@ $env:FLOW_AGENT_DIR = $Isolated
 if (-not $FrontendOnly) {
 Push-Location $SdkPath
 try {
-  & $Python -m pytest tests/test_image_batch.py tests/test_builtin_tool_guard.py tests/test_builtin_tools.py tests/test_builtin_tool_activation_race.py -q --junitxml="$Evidence\sdk.xml" *> "$Evidence\sdk.log"
+  & $Python -m pytest tests/test_image_batch.py tests/test_builtin_tool_guard.py tests/test_builtin_tools.py tests/test_builtin_tool_activation_race.py tests/test_abcef_dom_contract.py -q --junitxml="$Evidence\sdk.xml" *> "$Evidence\sdk.log"
   if ($LASTEXITCODE -ne 0) { throw 'SDK regression failed; see sdk.log' }
 } finally { Pop-Location }
 Push-Location $Isolated
