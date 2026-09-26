@@ -45,6 +45,8 @@ def test_history_decision_reads_accepted_and_rejected_candidates(tmp_path):
                     {
                         "output_message_id": "msg-good",
                         "artifact_sha256": "a" * 64,
+                        "width": 941,
+                        "height": 1672,
                         "verdict": "accepted",
                     },
                     {
@@ -67,6 +69,8 @@ def test_history_decision_reads_accepted_and_rejected_candidates(tmp_path):
     assert decision.state == "accepted_existing_output"
     assert decision.accepted_sha256 == "a" * 64
     assert decision.accepted_output_message_id == "msg-good"
+    assert decision.accepted_width == 941
+    assert decision.accepted_height == 1672
     assert decision.rejected_sha256 == frozenset({"b" * 64})
 
 
