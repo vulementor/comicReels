@@ -36,8 +36,8 @@ const steps: Array<[Step, string]> = [
   ['analyze', '2. Khung & thoại'],
   ['images', '3. Xóa chữ / 9:16'],
   ['approve', '4. Duyệt ảnh'],
-  ['storyboard', '5. Shot & prompt'],
-  ['video', '6. Google Flow / video'],
+  ['storyboard', '5. Kịch bản thành phần'],
+  ['video', '6. 3 ảnh + kịch bản → Flow'],
 ]
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -323,6 +323,7 @@ export default function ComicStudioPage() {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [paidConsent, setPaidConsent] = useState(false)
   const [flowProjectId, setFlowProjectId] = useState('')
+  const [referencePanelIds, setReferencePanelIds] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
 
   const refreshStatus = useCallback(async () => {
@@ -482,19 +483,30 @@ export default function ComicStudioPage() {
   }
 
   const generateShot = async (shot: Shot) => {
+    if (!details) return
     if (!paidConsent) { setNotice('Tạo video có thể tốn tín dụng. Tick xác nhận chi phí trước.'); return }
+    const approved = details.panels.filter(
+      p => p.status === 'AI_IMAGE_APPROVED' && p.approved_sha256 && p.approved_sha256 === p.portrait_sha256
+    )
+    const required = Math.min(3, approved.length)
+    if (required === 0 || referencePanelIds.length !== required) {
+      setNotice(required >= 3 ? 'Hãy chọn đúng 3 ảnh đã duyệt làm reference.' : `Hãy chọn đủ ${required} ảnh đã duyệt hiện có.`)
+      return
+    }
     setWorking(true)
     try {
-      await apiJson(`/api/comicreels/shots/${shot.id}/generate`, {
+      await apiJson(`/api/comicreels/shots/${shot.id}/generate-references`, {
         method: 'POST',
         body: JSON.stringify({
           confirm_paid: true,
-          idempotency_key: `ui:${details?.project.id}:${shot.id}:${shot.duration_s}`,
+          idempotency_key: `ui:refs:${details.project.id}:${shot.id}:${referencePanelIds.join('-')}`,
+          panel_ids: referencePanelIds,
           project_id: flowProjectId,
           resolution: '720p',
+          force: false,
         }),
       })
-      setNotice('Đã gửi đúng một shot. Không tự retry; dùng nút kiểm tra trạng thái.')
+      setNotice('Đã gửi 3 ảnh reference + kịch bản thành phần + lời thoại trực tiếp sang Google Flow. Không dùng TTS riêng và không tự retry.')
       await reload()
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)) }
     finally { setWorking(false) }
@@ -513,16 +525,49 @@ export default function ComicStudioPage() {
     ) ?? false),
     [details])
 
+  const approvedReferencePanels = useMemo(
+    () => details?.panels.filter(
+      p => p.status === 'AI_IMAGE_APPROVED' && p.approved_sha256 && p.approved_sha256 === p.portrait_sha256
+    ) ?? [],
+    [details],
+  )
+  const requiredReferenceCount = Math.min(3, approvedReferencePanels.length)
+
+  useEffect(() => {
+    if (!details?.project.id) {
+      setReferencePanelIds([])
+      return
+    }
+    const allowed = new Set(approvedReferencePanels.map(panel => panel.id))
+    setReferencePanelIds(current => {
+      const kept = current.filter(id => allowed.has(id)).slice(0, requiredReferenceCount)
+      if (kept.length === requiredReferenceCount) return kept
+      const fill = approvedReferencePanels
+        .map(panel => panel.id)
+        .filter(id => !kept.includes(id))
+        .slice(0, requiredReferenceCount - kept.length)
+      return [...kept, ...fill]
+    })
+  }, [details?.project.id, approvedReferencePanels, requiredReferenceCount])
+
   return (
     <div className="mx-auto max-w-6xl space-y-5 pb-16" lang="vi">
       <section className="rounded-2xl border p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
         <div className="flex flex-wrap items-start gap-5">
           <div className="min-w-0 flex-1">
             <div className="text-xs font-semibold uppercase tracking-[.2em]" style={{ color: 'var(--accent)' }}>ComicReels Studio</div>
-            <h1 className="mt-2 text-3xl font-bold">Một ảnh truyện → ảnh 9:16 → shot video</h1>
+            <h1 className="mt-2 text-3xl font-bold">Một ảnh truyện → ảnh 9:16 → video có thoại</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6" style={{ color: 'var(--muted)' }}>
-              AI tự nhận panel, thoại, speaker và vùng cần xóa; sau đó AI Generate ảnh sạch 9:16. Google Flow chỉ dùng ở bước dựng video.
+              AI tự nhận panel, thoại, speaker và vùng cần xóa. Khi dựng video, ComicReels gửi 3 ảnh reference + kịch bản thành phần + lời thoại trực tiếp cho Google Flow; không có bước TTS/lồng tiếng tách riêng.
             </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <a href="/projects" className="rounded border px-3 py-2 text-xs font-semibold" style={{borderColor:'var(--border)'}}>
+                Mở FlowKit gốc · Projects & công cụ video
+              </a>
+              <a href="/flowkit" className="rounded border px-3 py-2 text-xs" style={{borderColor:'var(--border)'}}>
+                Dashboard FlowKit
+              </a>
+            </div>
           </div>
           <div className="space-y-2 rounded-xl border p-3 text-xs" style={{ borderColor: 'var(--border)', background: 'var(--card)' }}>
             <div>
@@ -682,9 +727,9 @@ export default function ComicStudioPage() {
         <section className="space-y-4">
           <div className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div><h2 className="font-semibold">Shot plan và prompt</h2><p className="text-xs" style={{color:'var(--muted)'}}>Shot giữ đoạn thoại substring nguyên văn; model mặc định Omni Flash 4/6/8/10 giây.</p></div>
+              <div><h2 className="font-semibold">Kịch bản thành phần</h2><p className="text-xs" style={{color:'var(--muted)'}}>Mỗi thành phần giữ nguyên lời thoại và chỉ dẫn diễn xuất. Lời thoại sẽ đi thẳng vào prompt video của Flow, không tạo TTS riêng.</p></div>
               <div className="flex gap-2">
-                <button onClick={()=>void storyboard()} disabled={working||!allApproved} className="rounded px-3 py-2 text-sm disabled:opacity-40" style={{background:'var(--accent)',color:'white'}}><Film size={15} className="mr-1 inline"/>Tạo storyboard</button>
+                <button onClick={()=>void storyboard()} disabled={working||!allApproved} className="rounded px-3 py-2 text-sm disabled:opacity-40" style={{background:'var(--accent)',color:'white'}}><Film size={15} className="mr-1 inline"/>Tạo kịch bản thành phần</button>
                 <a href={`/api/comicreels/projects/${details.project.id}/backup`} className="rounded border px-3 py-2 text-sm" style={{borderColor:'var(--border)'}}><Download size={15} className="mr-1 inline"/>Backup</a>
               </div>
             </div>
@@ -697,16 +742,46 @@ export default function ComicStudioPage() {
               <button className="mt-2 rounded border px-3 py-1.5 text-xs" style={{borderColor:'var(--border)'}} onClick={()=>void navigator.clipboard.writeText(s.prompt)}>Copy prompt</button>
             </article>
           ))}
-          {details.shots.length>0 && <button onClick={()=>setStep('video')} className="rounded px-4 py-2 text-sm" style={{background:'var(--accent)',color:'white'}}>Sang Google Flow / video</button>}
+          {details.shots.length>0 && <button onClick={()=>setStep('video')} className="rounded px-4 py-2 text-sm" style={{background:'var(--accent)',color:'white'}}>Sang 3 ảnh + kịch bản → Flow</button>}
         </section>
       )}
 
       {step === 'video' && details && (
         <section className="space-y-4">
           <div className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
-            <h2 className="font-semibold">Google Flow và video</h2>
-            <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>Không tự gửi batch. Anh có thể copy prompt/ảnh thủ công; nút dưới chỉ gửi đúng shot khi đã tick xác nhận chi phí.</p>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <h2 className="font-semibold">3 ảnh reference + kịch bản thành phần → Google Flow</h2>
+            <p className="mt-1 text-xs" style={{color:'var(--muted)'}}>
+              Chọn 3 ảnh đã duyệt để khóa nhân vật/hình dáng/trang phục. Sau đó chọn một kịch bản thành phần bên dưới; ComicReels upload các ảnh reference và gửi nguyên kịch bản kèm lời thoại cho Flow. Không có bước TTS riêng.
+            </p>
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                <strong>Ảnh reference đã chọn: {referencePanelIds.length}/{requiredReferenceCount}</strong>
+                <span style={{color:'var(--muted)'}}>{requiredReferenceCount < 3 ? 'Dự án hiện có ít hơn 3 ảnh đã duyệt.' : 'Chọn đúng 3 ảnh.'}</span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {approvedReferencePanels.map(panel => {
+                  const selected = referencePanelIds.includes(panel.id)
+                  return (
+                    <button key={panel.id} type="button"
+                      onClick={() => setReferencePanelIds(current => {
+                        if (selected) return current.filter(id => id !== panel.id)
+                        if (current.length >= requiredReferenceCount) return current
+                        return [...current, panel.id]
+                      })}
+                      className="rounded-lg border p-2 text-left"
+                      style={{borderColor:selected?'var(--accent)':'var(--border)',background:'var(--card)'}}>
+                      <img src={`/api/comicreels/panels/${panel.id}/asset/portrait?v=${encodeURIComponent(panel.portrait_sha256 ?? '')}`}
+                        className="mx-auto h-44 w-full rounded object-contain" alt={`Reference khung ${panel.display_order + 1}`}/>
+                      <div className="mt-2 flex items-center justify-between text-xs">
+                        <span>Khung {panel.display_order + 1}</span>
+                        <span style={{color:selected?'var(--accent)':'var(--muted)'}}>{selected?'✓ Đã chọn':'Chọn'}</span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
               <label className="text-xs">Flow Project UUID (để trống dùng config/session)
                 <input value={flowProjectId} onChange={e=>setFlowProjectId(e.target.value)} className="mt-1 w-full rounded border px-3 py-2" style={{background:'var(--card)',borderColor:'var(--border)'}}/>
               </label>
@@ -717,12 +792,21 @@ export default function ComicStudioPage() {
             </div>
           </div>
           {details.shots.map(s=>(
-            <article key={s.id} className="flex flex-wrap items-center gap-3 rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
-              <div className="min-w-0 flex-1"><strong className="text-sm">Shot {s.display_order+1}</strong><div className="truncate text-xs" style={{color:'var(--muted)'}}>{s.dialogue_text||'Cảnh phản ứng im lặng'} · {s.duration_s}s · {s.status}</div></div>
-              <button disabled={working||!paidConsent} onClick={()=>void generateShot(s)} className="rounded border px-3 py-2 text-xs disabled:opacity-40" style={{borderColor:'var(--border)'}}><Play size={14} className="mr-1 inline"/>Tạo đúng shot này</button>
-              <button disabled={working||s.status!=='PROCESSING'} onClick={async()=>{
+            <article key={s.id} className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="min-w-0 flex-1"><strong className="text-sm">Kịch bản {s.display_order+1}</strong><div className="truncate text-xs" style={{color:'var(--muted)'}}>{s.dialogue_text||'Cảnh phản ứng im lặng'} · {s.duration_s}s · {s.status}</div></div>
+                <button disabled={working||!paidConsent||referencePanelIds.length!==requiredReferenceCount||requiredReferenceCount===0}
+                  onClick={()=>void generateShot(s)} className="rounded border px-3 py-2 text-xs disabled:opacity-40" style={{borderColor:'var(--border)'}}>
+                  <Play size={14} className="mr-1 inline"/>Tạo video bằng {requiredReferenceCount} ảnh này
+                </button>
+                <button disabled={working||s.status!=='PROCESSING'} onClick={async()=>{
                 try{await apiJson(`/api/comicreels/shots/${s.id}/poll`,{method:'POST'});setNotice('Đã kiểm tra trạng thái, nếu có signed URL video đã được lưu local.');await reload()}catch(e){setNotice(e instanceof Error?e.message:String(e))}
               }} className="rounded border px-3 py-2 text-xs disabled:opacity-40" style={{borderColor:'var(--border)'}}>Kiểm tra trạng thái</button>
+              </div>
+              <details className="mt-3 rounded border p-3" style={{borderColor:'var(--border)'}}>
+                <summary className="cursor-pointer text-xs font-semibold">Xem kịch bản + lời thoại sẽ gửi sang Flow</summary>
+                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-[11px]" style={{color:'var(--muted)'}}>{s.prompt}</pre>
+              </details>
             </article>
           ))}
           <div className="rounded-xl border p-4" style={{background:'var(--surface)',borderColor:'var(--border)'}}>
@@ -757,7 +841,7 @@ export default function ComicStudioPage() {
           </div>
 
           <div className="rounded-xl border p-4 text-xs" style={{background:'var(--surface)',borderColor:'var(--border)',color:'var(--muted)'}}>
-            Batch generation được API bảo vệ bằng confirm_paid + idempotency key. Studio cố ý ưu tiên nút tạo từng shot; chỉ khi local test đạt và anh muốn mới bật thao tác batch trong UI để tránh một cú click tiêu nhiều tín dụng.
+            ComicReels chỉ gửi từng kịch bản thành phần sau khi anh chọn ảnh reference và xác nhận chi phí. Lời thoại nằm ngay trong prompt video; tuyến này không tạo hoặc ghép file TTS riêng. Batch API vẫn bị khóa để tránh một cú click tiêu nhiều tín dụng.
           </div>
         </section>
       )}
