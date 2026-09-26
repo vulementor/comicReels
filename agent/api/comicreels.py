@@ -676,6 +676,7 @@ async def ai_generate_panel(panel_id: str, body: AIImageBody):
             source_width=int(project["source_width"]),
             source_height=int(project["source_height"]),
             visual_anchor=visual_anchor,
+            force_regenerate=bool(body.force),
         )
     except Exception as exc:
         raise HTTPException(502, f"AI Generate ảnh thất bại: {exc}") from exc
