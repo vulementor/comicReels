@@ -13,7 +13,8 @@ from agent.comicreels.images import sha256_file
 SCENE_BATCH_PROMPT = (
     'Tự đếm các khung trong ảnh truyện này. Mỗi khung tạo một ảnh bối cảnh 9:16 riêng, '
     'đúng thứ tự; xóa chữ và bong bóng, giữ nguyên nhân vật, tư thế, biểu cảm, '
-    'bối cảnh và nét vẽ. Không ghép các khung thành một ảnh.'
+    'bối cảnh và nét vẽ. Không ghép các khung thành một ảnh.\n\n'
+    'Yêu cầu bắt buộc: Giữ đúng thứ tự ảnh, biểu cảm nhân vật.'
 )
 
 
