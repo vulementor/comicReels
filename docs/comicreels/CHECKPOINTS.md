@@ -1,10 +1,43 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## FBR-1 — LOCAL_PASS / LIVE_PASS; owner merge acceptance pending (2026-09-27)
+
+The owner instructed continued work until every checkpoint is complete. This supersedes the
+previous startup wait after FBR-0; the full deliverable still includes a real accepted clip.
+FBR-1 work is on `fbr/1-flow-readonly-discovery`, based on clean integration
+`1675ea5eb92793383b9636eae6e3d8efbdaa7091`. KBS pin remains `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+
+Live read-only discovery observed the home project list, opened existing project
+`487247a1-00f4-4de3-83c1-4c16ce834b93`, and captured exact project-media request shape via KBS.
+No project/media mutation or generation occurred; browser closed and lease released afterward.
+New source adapter enforces bounded structural evidence and an exact single-use read replay
+allowlist. **583 unit PASS; SDK 30 PASS / 7 SKIP; npm ci/build/lint PASS; targeted Ruff PASS.**
+76 targeted discovery/provider/stream tests pass, including the independent review repairs.
+Browser-page authenticated replay is now **validated**: 10,365-byte native capture and
+10,363-byte complete streamed replay matched structural shape. The generic KBS request-context
+channel stays UNVERIFIED (`body_size_unknown`); its size guard was not weakened.
+Exact tested source digest: `f790f2740a196bda56cd9e24352d9aeb0b08eae090f2ea1d4cfb61261c64c35a`.
+Evidence: `local-test-data/source-batch-1675ea5-855df4fb65394e989c51ed83fa16568b/`, including
+`result.json` and `flow-discovery-page-live.json` (PASS at 07:15:28Z). Profile/account continuity
+passed across two opens; both leases released and owned marker removed. No credentials persisted.
+Active application backend remains extension. Historical unknown
+jobs remain unreconciled. See [FBR-1 discovery ledger](FBR-1-DISCOVERY.md).
+
+Actual clip project `1d2463a90e624eb59cc05979c38d31db` retains three approved images with
+matching file hashes. One shot is FAILED and two READY; all video paths remain null. No final
+clip exists. The first submission recorded `PUBLIC_ERROR_UNUSUAL_ACTIVITY`; no retry occurred.
+
+ROLLBACK_REVISION: `1675ea5eb92793383b9636eae6e3d8efbdaa7091`; active extension backend unchanged.
+OWNER_DECISION: implementation continuation authorized; explicit FBR-1 merge acceptance pending.
+NEXT_ALLOWED: coherent commit/push, owner merge acceptance, exact merged regression/live smoke.
+FORBIDDEN: paid generation, destructive project changes, raw credential/body persistence, or
+claiming the migration/clip is finished. Paid preset/cost still needs concrete approval later.
+
 ## FBR-0 — ACCEPTED / CLOSED (2026-09-27)
 
 Owner explicitly confirmed merge and closeout after the FBR-0 report. The checkpoint was
 merged into `feature/comicreels-segments-03-16`, pushed and verified against the remote.
-**FBR-0 is closed. FBR-1 has not started and requires separate owner authorization.**
+**FBR-0 is closed. The later FBR-1 record above supersedes the historical startup wait below.**
 
 - WORKING_BRANCH: `feature/comicreels-segments-03-16`.
 - EXACT_MERGED_SHA / POST_MERGE_TESTED_SHA: `fc1d7b5d4cbb65a67058588f948ad589f118abb5`.
