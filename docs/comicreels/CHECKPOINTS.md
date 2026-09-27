@@ -6,8 +6,10 @@ Latest verified state: **2026-09-27 13:17 Asia/Saigon**. Owner reported login co
 the login helper closed cleanly and released its lease before the provider acquired ownership.
 The following record supersedes the historical blocked entries below.
 
-- WORKING_BRANCH: `fbr/0-flow-browser-bootstrap`; checkpoint source is the commit containing
-  this record (resolve with `git log -1 -- docs/comicreels/CHECKPOINTS.md`). Tested working-tree
+- WORKING_BRANCH: `fbr/0-flow-browser-bootstrap`; implementation checkpoint was committed and
+  pushed as `c903fce89e98929c77e4ece4c91baba1481b592c` (local and remote verified equal).
+  A subsequent documentation-only receipt records that SHA; resolve its branch tip with
+  `git log -1 -- docs/comicreels/CHECKPOINTS.md`. Tested working-tree
   base: `e3f140800a858de507c373137a1cba37779a208a`; exact tested source digest:
   `8a7e2bccd5176da8ef86fcf5325fb0df0e6b93b77703de4fac6c75bfb271719c`.
 - MERGED_HEAD / rollback: `fbcf8560bb6c68b831535e8fe7a1d904446ee0c6`, on

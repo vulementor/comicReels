@@ -110,6 +110,8 @@ does not wait for auth, register a worker, or change the selected application ba
 
 ## Remaining gates
 
-- Coherent checkpoint commit/push, then OWNER_CONFIRM_REQUIRED before merge.
+- Implementation committed/pushed at `c903fce89e98929c77e4ece4c91baba1481b592c`, with
+  local/remote equality verified. This documentation-only receipt follows that checkpoint.
+  OWNER_CONFIRM_REQUIRED before merge.
 - After explicit owner confirmation: merge to the integration branch, verify exact merged SHA
   and final smoke/regression, record ACCEPTED/CLOSED. No FBR-1 or paid generation is authorized.
