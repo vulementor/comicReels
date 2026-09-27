@@ -1054,6 +1054,11 @@ async def flow_preflight(project_id: str = ""):
     }
 
 
+def _definitive_flow_rejection(error: Any) -> bool:
+    text = str(error or "")
+    return "PUBLIC_ERROR_UNUSUAL_ACTIVITY" in text
+
+
 def _approved_portrait(panel: dict[str, Any], shot: dict[str, Any]) -> Path:
     approved = str(panel.get("approved_sha256") or "")
     if panel.get("status") != "AI_IMAGE_APPROVED" or not approved or approved != panel.get("portrait_sha256"):
@@ -1082,11 +1087,30 @@ async def _submit_video(shot: dict[str, Any], body: FlowGenerateBody | Reference
     prompt = reference_video_prompt(
         shot["prompt"], len(panels), source_reference=panel_ids.index(shot["panel_id"]) + 1,
     ) if references else shot["prompt"]
+    reference_hashes = [panel["approved_sha256"] for panel in panels]
+    previous_payload = shot.get("flow_payload") or {}
+    if (
+        shot.get("status") == "SUBMISSION_UNKNOWN"
+        and _definitive_flow_rejection(previous_payload.get("error"))
+    ):
+        # The provider explicitly rejected the generation RPC. This differs from
+        # a timeout/disconnect where a paid job may already exist.
+        await store.update_shot(shot["id"], status="FAILED")
+    reusable_media_ids: list[str] = []
+    previous_media_ids = previous_payload.get("reference_image_media_ids") or []
+    if (
+        _definitive_flow_rejection(previous_payload.get("error"))
+        and previous_payload.get("project_id") == pid
+        and previous_payload.get("reference_image_sha256") == reference_hashes
+        and len(previous_media_ids) == len(panels)
+        and all(isinstance(media_id, str) and media_id for media_id in previous_media_ids)
+    ):
+        reusable_media_ids = list(previous_media_ids)
     payload: dict[str, Any] = {
         "project_id": pid,
         "flowkit_delegated": True,
         "reference_panel_ids": panel_ids,
-        "reference_image_sha256": [panel["approved_sha256"] for panel in panels],
+        "reference_image_sha256": reference_hashes,
         "script_prompt": prompt,
         "generation_preset": {
             "model_family": "omni_flash", "duration_s": 10, "resolution": "360p",
@@ -1104,24 +1128,25 @@ async def _submit_video(shot: dict[str, Any], body: FlowGenerateBody | Reference
 
     paid_submit_started = False
     try:
-        media_ids: list[str] = []
-        for index, portrait in enumerate(portraits):
-            upload = await flowkit_upload_image(FlowKitUploadImageRequest(
-                file_path=str(portrait), project_id=pid,
-                file_name=f"{shot['id']}-ref-{index + 1}.png" if references else f"{shot['id']}.png",
-            ))
-            # FlowKit may resolve/create its existing session project on the first
-            # upload. Pin that returned project for all subsequent operations.
-            if not pid:
-                pid = str(upload.get("project_id") or "")
+        media_ids: list[str] = list(reusable_media_ids)
+        if not media_ids:
+            for index, portrait in enumerate(portraits):
+                upload = await flowkit_upload_image(FlowKitUploadImageRequest(
+                    file_path=str(portrait), project_id=pid,
+                    file_name=f"{shot['id']}-ref-{index + 1}.png" if references else f"{shot['id']}.png",
+                ))
+                # FlowKit may resolve/create its existing session project on the first
+                # upload. Pin that returned project for all subsequent operations.
                 if not pid:
-                    pid = str((await flow_preflight())["project_id"] or "")
-                if not pid:
-                    raise HTTPException(502, "FlowKit upload chưa trả project; chưa gửi video.")
-            media_id = str(upload.get("media_id") or "").strip()
-            if not media_id:
-                raise HTTPException(502, f"FlowKit upload reference {index + 1} không trả media ID.")
-            media_ids.append(media_id)
+                    pid = str(upload.get("project_id") or "")
+                    if not pid:
+                        pid = str((await flow_preflight())["project_id"] or "")
+                    if not pid:
+                        raise HTTPException(502, "FlowKit upload chưa trả project; chưa gửi video.")
+                media_id = str(upload.get("media_id") or "").strip()
+                if not media_id:
+                    raise HTTPException(502, f"FlowKit upload reference {index + 1} không trả media ID.")
+                media_ids.append(media_id)
         payload.update(project_id=pid, reference_image_media_ids=media_ids, phase="submitting")
         await store.update_shot(shot["id"], flow_payload_json=json.dumps(payload, ensure_ascii=False))
         common = dict(prompt=prompt, project_id=pid, scene_id=shot["id"],
@@ -1152,8 +1177,10 @@ async def _submit_video(shot: dict[str, Any], body: FlowGenerateBody | Reference
         await store.update_shot(shot["id"], status="PROCESSING")
     except Exception as exc:
         payload["error"] = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+        definitive_rejection = _definitive_flow_rejection(payload["error"])
         await store.update_shot(
-            shot["id"], status="SUBMISSION_UNKNOWN" if paid_submit_started else "FAILED",
+            shot["id"],
+            status="FAILED" if definitive_rejection or not paid_submit_started else "SUBMISSION_UNKNOWN",
             flow_payload_json=json.dumps(payload, ensure_ascii=False),
         )
         if isinstance(exc, HTTPException):
