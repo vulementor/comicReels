@@ -143,6 +143,18 @@ async def _resolve_direct_project(client, project_id: str) -> str:
     return pid
 
 
+@router.post("/session-project/rotate")
+async def rotate_session_project():
+    """Create and pin a fresh Flow session project without submitting generation."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    try:
+        return await ensure_session_project(client, force_new=True)
+    except Exception as exc:
+        raise HTTPException(502, f"Could not rotate Flow session project: {exc}") from exc
+
+
 @router.get("/status")
 async def extension_status():
     """Extension health.
