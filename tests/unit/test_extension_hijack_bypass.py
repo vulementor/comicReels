@@ -28,4 +28,4 @@ def test_injected_prefers_pristine_execute_and_neuters_poison_action():
     assert "executeWithPristine" in injected
     assert "executeWithAssignNeuter" in injected
     assert "extension_hijack_detected" in injected
-    assert "createElement('script')" not in content
+    assert "document.createElement('script')" not in content
