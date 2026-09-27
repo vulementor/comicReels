@@ -15,6 +15,23 @@ curl -s http://127.0.0.1:8100/api/flow/status
 Also needed: **one signed-in `https://flow.google.com/` tab left open**. Only the
 page can sign a Flow request, so nothing works headless.
 
+## Browser-first migration status
+
+The owner has approved a checkpointed Flow transport refactor toward a persistent browser-profile
+backend using `flow.google.com` + `kabin_browser_semantic`.
+
+This does **not** remove FlowKit's creative/scenario layer. Project/story/entity creation, scene
+chains, transition prompts, creative mix, pipeline/resume, review/regen, Gallery/Logs/Guide/Settings,
+TTS/concat/branding and related `/fk-*` skills remain canonical.
+
+Until FBR-5 is explicitly accepted, the current extension transport remains a supported fallback and
+the extension pre-flight above remains valid when that backend is selected. Do not delete the
+extension/WebSocket path early.
+
+Architecture: `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`  
+Execution checkpoints: `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md`  
+Current state: `docs/comicreels/CHECKPOINTS.md`
+
 ## How to work
 
 - Always use `/fk-*` skills — all rules and workflows live inside each skill
