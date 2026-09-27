@@ -1,5 +1,15 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## Cập nhật prompt + bộ ảnh đã duyệt — 27/09/2026
+
+**Trạng thái: IMAGES_APPROVED + PROMPTS_READY; dừng trước Flow generation có credit.** Người dùng xác nhận prompt batch ổn định hơn khi thêm câu bắt buộc giữ thứ tự và biểu cảm. Canonical prompt trong code hiện kết thúc bằng: `Yêu cầu bắt buộc: Giữ đúng thứ tự ảnh, biểu cảm nhân vật.` tại revision `9eac3eb12b38f0800dda68c5741e84b98995ebcf`.
+
+Từ conversation ChatGPT do người dùng cung cấp, VULE-PC dùng Remote Desktop Commander + `gpt_fullproxy` ở chế độ read-only để tách đúng gallery mới nhất, không resubmit prompt. Ba ảnh 941x1672 mới được lấy theo DOM order, QA trực quan khớp ba panel tốt hơn: khung 1 ngựa há miệng; khung 2 ngựa ngậm miệng và thỏ dựng/đưa tay; khung 3 ngựa quay trái, ngậm miệng. Bộ này đã được import atomic bằng `reserve_image_batch -> apply_image_batch`, sau đó cả ba ảnh được duyệt qua API guard thành `AI_IMAGE_APPROVED`.
+
+Storyboard đã được dựng lại với `omni_flash`, 10 giây; 3/3 shot ở trạng thái `READY`, project `PROMPTS_READY`. Flow preflight trả `ready=true`, extension 0.3.2 kết nối. Chưa gửi bất kỳ Flow generation job nào trong vòng này, vì bước đó vẫn là paid/external hard stop.
+
+Windows launcher cũng sửa `npm` thành `npm.cmd`; full regression tại revision `9eac3eb` PASS SDK tests, ComicReels unit tests, frontend build và lint. Runtime VULE-PC đã restart đúng revision này với profile ChatGPT local và status `ai.configured=true`.
+
 ## Cập nhật live batch — 27/09/2026, VULE-PC
 
 **Trạng thái: SOURCE_BATCH_LIVE_PASS + IMAGE_QA_REVIEW_PENDING.** Một ảnh truyện gốc được gửi đúng một lần qua `gpt_fullproxy` với prompt ngắn tự đếm khung; không crop input, không loop Generate từng panel, không thao tác web thủ công. Live test trên source truyện 3 khung đã trả **3 PNG 941x1672 riêng, đúng thứ tự**, không chữ/bong bóng, trong cùng một conversation receipt.
