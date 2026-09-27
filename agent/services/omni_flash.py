@@ -195,7 +195,8 @@ async def generate_omni_flash_text_video(
             resolution=resolution,
         )
         payload = await client._batch_payload(
-            fb.RPC_GEN_VIDEO_TEXT, freq, fb.CAPTCHA_VIDEO, timeout=120)
+            fb.RPC_GEN_VIDEO_TEXT, freq, fb.CAPTCHA_VIDEO, timeout=120,
+            project_id=pid)
         submitted = fb.read_text_video_submit(payload)
     except Exception as exc:
         return {"status": 502, "error": f"{type(exc).__name__}: {exc}"}
@@ -266,7 +267,7 @@ async def _submit_omni_frame_video(
                 "_360p" if resolution == "360p" else ""
             )
         payload = await client._batch_payload(
-            rpcid, freq, fb.CAPTCHA_VIDEO, timeout=120,
+            rpcid, freq, fb.CAPTCHA_VIDEO, timeout=120, project_id=pid,
         )
         operation = fb.read_operation(payload)
         client._remember_operation(operation.operation_id, pid)
@@ -355,6 +356,7 @@ async def generate_omni_flash_video(
         )
         payload = await client._batch_payload(
             fb.RPC_GEN_VIDEO_REFERENCES, freq, fb.CAPTCHA_VIDEO, timeout=120,
+            project_id=pid,
         )
         operation = fb.read_operation(payload)
         client._remember_operation(operation.operation_id, pid)
