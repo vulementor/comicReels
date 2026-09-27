@@ -4,6 +4,7 @@ import pytest
 
 from agent.services import flow_batch as fb
 from agent.services import flow_client as fc
+from agent.api import flow as flow_api
 
 
 @pytest.mark.asyncio
@@ -74,3 +75,33 @@ async def test_non_generation_rpc_bypasses_generation_guard(monkeypatch):
     result = await client.batch_rpc("meta", "x")
     assert result["status"] == 200
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_flow_status_exposes_extension_version(monkeypatch):
+    class FakeClient:
+        connected = True
+        _flow_key = None
+        generation_guard_status = {
+            "cooldown_active": False,
+            "cooldown_remaining_s": 0.0,
+            "last_unusual_activity_at": None,
+            "last_unusual_activity_rpc": None,
+        }
+        ws_stats = {
+            "connected": True,
+            "active_connections": 1,
+            "authenticated_connections": 0,
+            "extension_versions": ["0.5.2"],
+            "flow_url_supported": True,
+            "connects": 1,
+            "disconnects": 0,
+            "uptime_s": 3,
+        }
+
+    monkeypatch.setattr(flow_api, "get_flow_client", lambda: FakeClient())
+    monkeypatch.setattr(flow_api, "current_session_project", lambda: {"project_id": None})
+
+    status = await flow_api.extension_status()
+    assert status["extension_session"]["extension_versions"] == ["0.5.2"]
+    assert status["extension_session"]["active_connections"] == 1
