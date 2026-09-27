@@ -287,6 +287,22 @@ async def test_explicit_unusual_activity_rejection_is_retryable_and_reuses_refs(
     assert saved["idempotency_key"] == "attempt-after-unusual"
 
 
+async def test_captcha_failure_is_retryable_without_unknown_receipt(comic, monkeypatch):
+    async def captcha_failed(body):
+        comic.calls["submits"].append(body.model_dump())
+        raise api.HTTPException(
+            502,
+            "FlowBatchError: MZZa6b: CAPTCHA_FAILED: Invalid site key",
+        )
+
+    monkeypatch.setattr(api, "flowkit_generate_video_refs", captcha_failed)
+    with pytest.raises(api.HTTPException):
+        await api._generate_shot_from_references(comic.shot["id"], request(comic))
+    failed = await comic.store.shot(comic.shot["id"])
+    assert failed["status"] == "FAILED"
+    assert failed["flow_payload"]["reference_image_media_ids"]
+
+
 async def test_unexpected_receipt_is_persisted_before_reporting_error(comic, monkeypatch):
     async def multiple(body):
         return {"operations": [{"operation": {"name": "op-1"}}, {"operation": {"name": "op-2"}}]}
