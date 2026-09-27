@@ -1,6 +1,47 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
-## FBR-0 — LOCAL_PASS / LIVE_PASS; OWNER_CONFIRM_REQUIRED before merge
+## FBR-0 — ACCEPTED / CLOSED (2026-09-27)
+
+Owner explicitly confirmed merge and closeout after the FBR-0 report. The checkpoint was
+merged into `feature/comicreels-segments-03-16`, pushed and verified against the remote.
+**FBR-0 is closed. FBR-1 has not started and requires separate owner authorization.**
+
+- WORKING_BRANCH: `feature/comicreels-segments-03-16`.
+- EXACT_MERGED_SHA / POST_MERGE_TESTED_SHA: `fc1d7b5d4cbb65a67058588f948ad589f118abb5`.
+  Local HEAD and remote integration HEAD were equal before the post-merge gates.
+  The final integration tip adds only this documentation closeout and its implementation ledger;
+  resolve it using `git log -1 -- docs/comicreels/CHECKPOINTS.md`.
+- MERGED_CHECKPOINT_TIP: `dc9f214db9f2c52108963ce5e209753a38f3a93e`.
+  IMPLEMENTATION_COMMIT: `c903fce89e98929c77e4ece4c91baba1481b592c`.
+- KBS_HEAD / KBS_PIN / KBS_REMOTE_MAIN: `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`;
+  canonical KBS checkout clean. Live distribution provenance matched that exact commit.
+- SOURCE_TO_RUNTIME: post-merge regression used a fresh `git archive` deployment of the exact
+  merged SHA. Before live verification, its ZIP commit comment and every archived file's bytes
+  were checked against the deployed files. No runtime-only development or worker startup.
+- TESTS_AFTER_MERGE: **528 unit PASS; SDK 30 PASS / 7 SKIP; fresh npm ci, build and lint PASS**.
+- LIVE_AFTER_MERGE: two controlled opens at **06:27:30Z / 06:27:36Z** using the same canonical
+  `flow-browser` profile. Both fresh captures returned authenticated/ready=true; KBS semantic
+  capture supported/nonempty (2 interactive nodes at depth 4). Account continuity was compared
+  in memory and passed. Directory identity/path unchanged. Both cycles blocked a competing
+  lease and verified page close, lease release and owned-marker removal.
+- CURRENT_SESSION / LEASE: browser closed; lease released. Persistent login data retained in
+  the same local profile. No account identity, cookies, tokens or raw auth were published.
+- BACKEND: active application remains extension/batch; browser_shadow is opt-in. No project
+  selected or modified and no new paid effects. Historical pending/unknown jobs remain
+  unreconciled; FBR-0 did not start or alter that queue.
+- EVIDENCE: `local-test-data/source-batch-fc1d7b5-853676db81d84a4990416b1370e13ee6/`
+  contains committed-source `result.json`, `flow-live.json`, JUnit and frontend logs.
+- ROLLBACK_REVISION: `fbcf8560bb6c68b831535e8fe7a1d904446ee0c6`; active extension selection
+  already preserved and there is no database migration.
+- KNOWN_GAPS: observed vi-VN auth layout only; unobserved layouts remain UNKNOWN. Browser
+  generation is not implemented. Existing build chunk-size advisory and the optional review
+  fixture suggestions documented below remain non-blocking.
+- NEXT_ALLOWED_ACTION: request separate authorization for FBR-1 read-only KBS discovery.
+- FORBIDDEN_NEXT_ACTIONS: automatically start FBR-1, paid generation, parallel profile owners,
+  auth export or declaring the entire browser migration complete.
+- OWNER_CONFIRM_REQUIRED: FBR-1 only; FBR-0 merge/acceptance authority is satisfied.
+
+## FBR-0 — historical pre-merge LOCAL_PASS / LIVE_PASS report
 
 Latest verified state: **2026-09-27 13:17 Asia/Saigon**. Owner reported login complete;
 the login helper closed cleanly and released its lease before the provider acquired ownership.

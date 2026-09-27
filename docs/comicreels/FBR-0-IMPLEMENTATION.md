@@ -108,10 +108,20 @@ with provider:
 The live gate bounded read-only capture retries to 35 seconds per open. The provider itself
 does not wait for auth, register a worker, or change the selected application backend.
 
-## Remaining gates
+## Owner-approved merge and closeout
 
-- Implementation committed/pushed at `c903fce89e98929c77e4ece4c91baba1481b592c`, with
-  local/remote equality verified. This documentation-only receipt follows that checkpoint.
-  OWNER_CONFIRM_REQUIRED before merge.
-- After explicit owner confirmation: merge to the integration branch, verify exact merged SHA
-  and final smoke/regression, record ACCEPTED/CLOSED. No FBR-1 or paid generation is authorized.
+- Implementation: `c903fce89e98929c77e4ece4c91baba1481b592c`; reviewed checkpoint tip:
+  `dc9f214db9f2c52108963ce5e209753a38f3a93e`.
+- Owner confirmed merge/closeout. Merged and pushed to `feature/comicreels-segments-03-16`
+  as `fc1d7b5d4cbb65a67058588f948ad589f118abb5`; local and remote equality verified.
+- Exact merged commit exported to an isolated runtime test directory with `git archive`.
+  Final regression: 528 unit PASS, SDK 30 PASS / 7 SKIP, fresh npm ci/build/lint PASS.
+  Archive comment matched the merged SHA and every archived file matched deployed bytes
+  before the live smoke imported its provider/auth adapter.
+- Final live two-cycle smoke at 06:27:30Z / 06:27:36Z on 2026-09-27: same profile and
+  account, authenticated fresh captures, supported KBS snapshots, competing-owner lock rejected,
+  unchanged directory identity, page closure, lease release and owned-marker removal all PASS.
+- Evidence: `local-test-data/source-batch-fc1d7b5-853676db81d84a4990416b1370e13ee6`.
+  This closeout changes documentation only; product/test bytes remain those verified above.
+- **FBR-0 ACCEPTED/CLOSED.** Active backend remains extension/batch. Stop here; separate owner
+  authorization is required for FBR-1. Paid generation is not authorized.
