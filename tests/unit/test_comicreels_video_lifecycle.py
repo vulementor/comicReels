@@ -255,6 +255,38 @@ async def test_submit_timeout_is_not_automatically_retried(comic, monkeypatch):
     assert len(comic.calls["submits"]) == 1
 
 
+async def test_explicit_unusual_activity_rejection_is_retryable_and_reuses_refs(comic, monkeypatch):
+    async def unusual(body):
+        comic.calls["submits"].append(body.model_dump())
+        raise api.HTTPException(
+            502,
+            "RpcError: MZZa6b failed: PUBLIC_ERROR_UNUSUAL_ACTIVITY",
+        )
+
+    monkeypatch.setattr(api, "flowkit_generate_video_refs", unusual)
+    with pytest.raises(api.HTTPException):
+        await api._generate_shot_from_references(comic.shot["id"], request(comic))
+    failed = await comic.store.shot(comic.shot["id"])
+    assert failed["status"] == "FAILED"
+    assert len(comic.calls["uploads"]) == 3
+    assert failed["flow_payload"]["reference_image_media_ids"]
+
+    async def success(body):
+        comic.calls["submits"].append(body.model_dump())
+        return {"operations": [{"operation": {"name": "op-retry"}}]}
+
+    monkeypatch.setattr(api, "flowkit_generate_video_refs", success)
+    result = await api._generate_shot_from_references(
+        comic.shot["id"],
+        request(comic, force=True, idempotency_key="attempt-after-unusual"),
+    )
+    assert result["deduplicated"] is False
+    assert len(comic.calls["uploads"]) == 3
+    saved = await comic.store.shot(comic.shot["id"])
+    assert saved["status"] == "PROCESSING"
+    assert saved["idempotency_key"] == "attempt-after-unusual"
+
+
 async def test_unexpected_receipt_is_persisted_before_reporting_error(comic, monkeypatch):
     async def multiple(body):
         return {"operations": [{"operation": {"name": "op-1"}}, {"operation": {"name": "op-2"}}]}
