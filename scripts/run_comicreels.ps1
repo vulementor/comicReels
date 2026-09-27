@@ -95,7 +95,7 @@ if ((-not (Test-Path "dashboard\node_modules")) -or ($OldLockHash -ne $LockHash)
 }
 
 $backend = Start-Process -PassThru -NoNewWindow $VenvPython -ArgumentList "-m","agent.main" -WorkingDirectory $RuntimeRoot
-$frontend = Start-Process -PassThru -NoNewWindow "npm" -WorkingDirectory "$RuntimeRoot\dashboard" -ArgumentList "run","dev","--","--host","127.0.0.1"
+$frontend = Start-Process -PassThru -NoNewWindow "npm.cmd" -WorkingDirectory "$RuntimeRoot\dashboard" -ArgumentList "run","dev","--","--host","127.0.0.1"
 
 Write-Host "ComicReels source:  $SourceRoot"
 Write-Host "Runtime commit:     $Commit"
