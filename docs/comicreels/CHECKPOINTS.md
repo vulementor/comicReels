@@ -1,5 +1,13 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## Cập nhật Flow live — 27/09/2026
+
+**Trạng thái: FLOW_R2V_BLOCKED_BY_GOOGLE; không resend tự động.** UI Windows đã được sửa từ gốc: launcher hiện dọn stale ComicReels listeners/Vite cache trước khi start; revision `e61c4cb` và regression kế tiếp tại `6948c432` đều PASS trên VULE-PC. Vite `/src/App.tsx` trả HTTP 200 sau restart sạch.
+
+Live Flow được gửi đúng preset đã chốt: Omni Flash, 10s, 360p, 1 variant, ba ảnh reference đã approved. Ba reference media của shot 1 upload thành công vào cùng Flow project và còn truy xuất được qua Flow media API. Tuy nhiên RPC Ingredients/R2V `MZZa6b` bị Google trả `PUBLIC_ERROR_UNUSUAL_ACTIVITY` hai lần, đều không có operation/workflow receipt hợp lệ. Shot 2/3 chưa được gửi.
+
+State machine đã sửa trên GitHub: explicit unusual-activity rejection là definitive server rejection và về `FAILED`, còn timeout/mất receipt vẫn giữ `SUBMISSION_UNKNOWN`; retry sau definitive rejection tái sử dụng ba media reference cũ thay vì upload trùng. Regression mới tại `6948c43220ff2c4ab4c778311624a26791ca103e` PASS. Sau lần retry live, Google vẫn chặn R2V nên dừng, không tự degrade sang single-image/first-frame mode và không gửi thêm paid generation.
+
 ## Cập nhật prompt + bộ ảnh đã duyệt — 27/09/2026
 
 **Trạng thái: IMAGES_APPROVED + PROMPTS_READY; dừng trước Flow generation có credit.** Người dùng xác nhận prompt batch ổn định hơn khi thêm câu bắt buộc giữ thứ tự và biểu cảm. Canonical prompt trong code hiện kết thúc bằng: `Yêu cầu bắt buộc: Giữ đúng thứ tự ảnh, biểu cảm nhân vật.` tại revision `9eac3eb12b38f0800dda68c5741e84b98995ebcf`.
