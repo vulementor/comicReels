@@ -1056,7 +1056,10 @@ async def flow_preflight(project_id: str = ""):
 
 def _definitive_flow_rejection(error: Any) -> bool:
     text = str(error or "")
-    return "PUBLIC_ERROR_UNUSUAL_ACTIVITY" in text
+    return (
+        "PUBLIC_ERROR_UNUSUAL_ACTIVITY" in text
+        or "CAPTCHA_FAILED" in text
+    )
 
 
 def _approved_portrait(panel: dict[str, Any], shot: dict[str, Any]) -> Path:
