@@ -17,6 +17,13 @@ page can sign a Flow request, so nothing works headless.
 
 ## Browser-first migration status
 
+Development on VULE-PC follows **LOCAL-SOURCE-FIRST**: local source edits/tests, supported
+source-to-runtime sync, bounded live validation, then a coherent checkpoint commit/push.
+Owner confirmation is required before merge and separately before the next FBR. Runtime-only
+patches are not durable fixes. For local dirty-source regression use
+`scripts/verify_windows_batch.ps1 -WorkingTree`; the default committed mode is for exact-revision
+validation. Register reviewed new source files with `git add -N` before a working-tree snapshot.
+
 The owner has approved a checkpointed Flow transport refactor toward a persistent browser-profile
 backend using `flow.google.com` + `kabin_browser_semantic`.
 

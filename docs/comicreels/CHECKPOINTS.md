@@ -1,5 +1,132 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## FBR-0 — LOCAL_PASS / LIVE_PASS; OWNER_CONFIRM_REQUIRED before merge
+
+Latest verified state: **2026-09-27 13:17 Asia/Saigon**. Owner reported login complete;
+the login helper closed cleanly and released its lease before the provider acquired ownership.
+The following record supersedes the historical blocked entries below.
+
+- WORKING_BRANCH: `fbr/0-flow-browser-bootstrap`; checkpoint source is the commit containing
+  this record (resolve with `git log -1 -- docs/comicreels/CHECKPOINTS.md`). Tested working-tree
+  base: `e3f140800a858de507c373137a1cba37779a208a`; exact tested source digest:
+  `8a7e2bccd5176da8ef86fcf5325fb0df0e6b93b77703de4fac6c75bfb271719c`.
+- MERGED_HEAD / rollback: `fbcf8560bb6c68b831535e8fe7a1d904446ee0c6`, on
+  `feature/comicreels-segments-03-16`. No implementation merge yet.
+- KBS_HEAD / KBS_PIN / remote main: `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+  Canonical KBS checkout is clean; live import provenance was checked against the installed
+  distribution's direct_url commit. Runtime versions: KBS 0.1.4, Camoufox 0.5.6, Playwright 1.62.0.
+- FLOW_BACKEND: active application remains extension/batch. FBR-0 provider is `browser_shadow`,
+  explicitly opted into only for the bounded read-only smoke. No worker was started.
+- PROFILE_LOGICAL_NAME: `flow-browser`; PROFILE_PATH_CONFIGURED: true in local-only JSON;
+  persistent directory and identity unchanged across both opens. No profile/auth data copied.
+- SESSION_STATE: authenticated during both fresh captures, same account across controlled reopen.
+  Browser now closed; passive health correctly returns unknown rather than cached readiness.
+  LEASE_STATE: released; owned durable markers removed; competing acquisition returned PROFILE_BUSY
+  in each live cycle. FLOW_HOST: `flow.google.com`; no project selected or modified.
+- TESTS: 528 ComicReels unit PASS (21 provider/lease, 13 observed-auth, 4 source snapshot);
+  GPT FullProxy SDK 30 PASS / 7 SKIP; fresh npm ci, frontend build/lint PASS. Targeted Python
+  Ruff PASS. Generated AGENTS.md was regenerated twice with a clean second diff.
+- LIVE_EVIDENCE: two cycles at 06:17:35Z and 06:17:41Z, each authenticated/ready=true,
+  KBS supported nonempty semantic capture (2 interactive nodes at depth 4), unchanged profile,
+  conflict lock verified, page closed, lease released, marker removed. Same provider retained
+  the verified identity in memory to compare the reopened account; receipt contains no identity.
+- SOURCE_TO_RUNTIME: a fresh isolated test deployment of the actual local working tree was
+  regression-tested and used for live imports. Both provider/auth module hashes matched its
+  manifest. Active application runtime remains untouched. Only these checkpoint/ledger docs
+  changed after the final gate; implementation/test bytes match the tested snapshot.
+- Local detailed evidence: `local-test-data/source-batch-e3f1408-5e90b33ed52e4f9ca7de76a6eaebc39f/`
+  contains `result.json`, `flow-live.json`, JUnit and build/lint logs (ignored, not published).
+  This record retains the sanitized acceptance results for a fresh checkout.
+- REVIEW: independent foundation review repaired with regression tests; separate review of the
+  newly observed auth adapter found no blocking issue. Actual DOM label newline caused the first
+  auth smoke to remain UNKNOWN; its regression failed first, then passed after whitespace
+  normalization. The final full gate and live smoke above validate the repaired implementation.
+- PAID_EFFECT_STATE: none submitted. PENDING_OR_UNKNOWN_JOB: historical application state has
+  not been reconciled; FBR-0 did not start jobs or inspect/mutate that queue.
+- KNOWN_GAPS: auth adapter supports only the observed vi-VN account control; other/changed
+  layouts remain UNKNOWN. This is profile bootstrap, not a browser generation backend.
+  Existing frontend chunk-size advisory remains. Optional review suggestions (outer-container
+  zero-count fixture and explicit selector-regex assertion) are deferred, not blockers.
+- NEXT_ALLOWED_ACTION: owner confirms this concrete FBR-0 checkpoint for merge and closeout;
+  then merge into the integration branch, verify exact merged SHA and final smoke/regression.
+- FORBIDDEN_NEXT_ACTIONS: merge without that confirmation, FBR-1, paid generation, parallel
+  profile owners, auth export, or declaring the whole browser migration complete.
+- OWNER_CONFIRM_REQUIRED: **merge and close FBR-0**. The owner login confirmation is already
+  satisfied. See [implementation ledger](FBR-0-IMPLEMENTATION.md) for decisions and adapter use.
+
+## FBR-0 local implementation — historical state before owner login
+
+**STATUS: BLOCKED on live login; offline foundation implemented and validated locally.** The owner-authorized dedicated
+`flow-browser` binding is now known, so offline foundation work can proceed without guessing
+the earlier Chrome identity. At the latest inspection the new profile directory was empty and
+no login-helper process was running. Automatic launch remains tool-policy blocked; no retry.
+
+- Local provider/OS lease and KBS page wrapper implemented on `fbr/0-flow-browser-bootstrap`;
+  source changes are uncommitted. Base LOCAL_HEAD / REMOTE_HEAD remains
+  `e3f140800a858de507c373137a1cba37779a208a`. MERGED_HEAD/rollback remains
+  `fbcf8560bb6c68b831535e8fe7a1d904446ee0c6`.
+- KBS_HEAD / optional exact KBS_PIN: `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+  An isolated test install consumes the Git commit; application runtime dependencies unchanged.
+- FLOW_BACKEND remains extension/batch. New provider is an opt-in read-only shadow foundation.
+- PROFILE_LOGICAL_NAME: `flow-browser`; PROFILE_PATH_CONFIGURED: true, local-only.
+  LEASE_STATE: not acquired for the actual profile; SESSION_STATE: awaiting manual sign-in.
+  FLOW_HOST target: `flow.google.com`; FLOW_PROJECT_ID: not selected.
+- TESTS: final local-source regression PASS: 515 unit tests (including 21 provider/lease and
+  4 snapshot tests); GPT FullProxy SDK 30 PASS / 7 SKIP; fresh npm ci, frontend build and lint
+  PASS. Targeted Python Ruff and compile checks PASS. Generated AGENTS.md is idempotent.
+  The frontend build has an existing chunk-size advisory; it did not fail the build.
+- Final tested working-tree digest:
+  `e1bb144297509591a966566df21c270bcbcaf35f5db0f994af49e3e521d7bfbf`.
+  Local evidence: `local-test-data/source-batch-e3f1408-03c6289030ce4ab7b522cc8c2e703558/result.json`.
+  This digest covers the snapshot before this evidence-note update; no implementation/test
+  bytes were changed after the final gate. The snapshot is a local test deployment, not a
+  replacement for the active application runtime.
+- Independent review repairs: durable owner marker retained after crash/uncertain close;
+  passive diagnostics never report cached authentication as current readiness; identity changes
+  latch the block. Regression includes the failed-then-passing reproductions.
+- LIVE_EVIDENCE: none yet. Default auth probe deliberately returns UNKNOWN; a real Flow adapter
+  must be grounded in the owner-signed-in surface before declaring readiness.
+- PAID_EFFECT_STATE: no new job. PENDING_OR_UNKNOWN_JOB: historical state not reconciled.
+- LOCAL-SOURCE-FIRST now encoded in setup.py/generated AGENTS.md, CLAUDE.md and execution plan.
+  Working-tree regression snapshots current bytes instead of stale HEAD, with a source digest.
+- NEXT_ALLOWED_ACTION: owner opens the prepared login helper
+  and signs in, then implement/validate the observed auth probe and controlled same-profile reopen.
+- Source changes remain local/uncommitted pending that live step; no checkpoint implementation
+  push or merge performed. The earlier documentation-only remote branch remains unchanged.
+- FORBIDDEN_NEXT_ACTIONS: claim LIVE_PASS from fakes, merge, FBR-1, paid generation, parallel
+  profile owners or auth export. OWNER_CONFIRM_REQUIRED: login completion; merge gate later.
+- Detailed decisions/tests/remaining work: [FBR-0-IMPLEMENTATION.md](FBR-0-IMPLEMENTATION.md).
+
+## FBR-0 local follow-up — owner authorizes a dedicated profile
+
+The owner explicitly authorized creation of one separate profile for manual sign-in on 27/09.
+This supersedes the earlier prohibition on creating a profile for this specific bootstrap.
+Logical binding: `flow-browser`; browser kind: Camoufox. The dedicated directory was created
+and its local JSON configuration validated. Physical paths remain outside Git in local config.
+No existing Chrome or other service profile was copied, modified or closed.
+
+- STATUS: BLOCKED pending manual browser launch and owner sign-in; no FBR-0 LIVE_PASS.
+- WORKING_BRANCH: `fbr/0-flow-browser-bootstrap`.
+- LOCAL_HEAD / REMOTE_BRANCH_HEAD before this local note:
+  `e3f140800a858de507c373137a1cba37779a208a` (documentation-only pre-flight).
+- MERGED_HEAD / KBS_HEAD / KBS_PIN / FLOW_BACKEND: unchanged from pre-flight below.
+- PROFILE_LOGICAL_NAME: `flow-browser`; PROFILE_PATH_CONFIGURED: true in local-only config.
+- LEASE_STATE: not acquired; SESSION_STATE: awaiting manual sign-in; FLOW_HOST target:
+  `flow.google.com`; no Flow project selected.
+- The automatic launch command was rejected by tool policy (`blocked by policy`, no more
+  specific reason supplied). No equivalent automatic launch was retried.
+- An ignored local launcher was prepared with an exclusive profile lock, persistent Camoufox
+  context, fixed Flow entry URL and no credential inspection. It is a login helper, not the
+  implemented/tested FlowBrowserSessionProvider.
+- TESTS: helper Python compilation, local JSON binding/directory validation, and Git exclusion
+  checks PASS. Browser launch/authentication/reopen and full product regression NOT RUN.
+- PAID_EFFECT_STATE: none submitted; existing pending/unknown jobs remain unreconciled.
+- NEXT_ALLOWED_ACTION: owner opens the local login helper and signs in; then verify the same
+  profile and perform a controlled lease handoff before implementation/live bootstrap tests.
+- FORBIDDEN_NEXT_ACTIONS: parallel profile owners, profile replacement, auth extraction, paid
+  generation, FBR-1 or merge. OWNER_CONFIRM_REQUIRED: manual login completion now; checkpoint
+  acceptance remains a later gate. This local note is intentionally not a checkpoint push.
+
 ## FBR-0 pre-flight — 27/09/2026: canonical profile unresolved
 
 **CHECKPOINT: FBR-0; STATUS: BLOCKED; implementation and browser live validation NOT STARTED.**

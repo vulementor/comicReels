@@ -42,8 +42,10 @@ Mandatory invariants:
 1. **Preserve FlowKit creative/scenario capabilities.** Do not remove or simplify
    `fk-create-project`, scene chains, transition prompts, `fk-creative-mix`,
    `fk-pipeline`, `fk-gen-videos`, review/regen, TTS/concat/branding, Gallery/Logs/Guide/Settings.
-2. **GitHub first, VULE-PC second.** Every code/fix change must exist on GitHub before it is synced
-   to VULE-PC for Remote Desktop Commander testing. Runtime-only patches are invalid evidence.
+2. **LOCAL-SOURCE-FIRST.** Develop, debug and test in the canonical local source repository on
+   VULE-PC. Deploy/sync from that source for live validation; never develop in AppData runtime.
+   GitHub records coherent checkpoints, not every small fix. Push after tests and evidence are
+   ready; merge only after explicit owner confirmation. Validate the exact merged revision.
 3. **Checkpoint discipline.** Follow
    `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md`. Complete regression + live
    evidence, update `docs/comicreels/CHECKPOINTS.md`, then obtain explicit owner confirmation

@@ -8,21 +8,21 @@ Architecture authority: `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`
 
 These rules apply to every checkpoint:
 
-1. **GitHub first.** All implementation/fix changes are committed to GitHub before local execution.
-2. **VULE-PC test only.** Sync the accepted GitHub revision to VULE-PC and test there through Remote Desktop Commander.
-3. **No runtime-only fixes.** A local runtime patch that is not represented in GitHub is invalid evidence.
+1. **LOCAL-SOURCE-FIRST (owner update 27/09).** Implement/debug/test directly in the canonical local source checkout on VULE-PC, on a checkpoint branch. GitHub is durable checkpoint history; do not push every small fix.
+2. **Source-to-runtime validation.** Deploy/sync the actual local source through supported tooling, then run the checkpoint's bounded live validation. Dirty local source is allowed; regression must cover those exact bytes.
+3. **No runtime-only fixes.** AppData runtime is a deployment target, never source development. Fix source and deploy again.
 4. **One checkpoint at a time.** Do not mix FBR scopes.
 5. **Regression before live.** Unit/integration/build/lint must pass before browser live validation.
 6. **Sanitized evidence only.** Never commit cookies, tokens, browser profile contents or raw auth.
 7. **No paid generation as diagnostics.** Paid calls exist only at the explicit paid checkpoint.
 8. **No uncertain resend.** Unknown paid outcome must be reconciled before any retry.
 9. **Preserve FlowKit creative capabilities.** Do not remove or rewrite scenario/creative/pipeline skills merely because transport changes.
-10. **Owner confirmation required.** At checkpoint closeout, report evidence and wait for explicit owner confirmation before advancing to the next checkpoint.
+10. **Owner confirmation required.** After a coherent checkpoint passes, update docs, commit and push its branch, review the diff, and wait for explicit owner confirmation before merge. Sync and verify the exact merged revision, close out, then stop for separate permission before the next checkpoint. Never merge BLOCKED.
 
 ## Checkpoint status vocabulary
 
 - `PLANNED` — scope documented, no code accepted.
-- `IN_PROGRESS` — GitHub implementation exists but checkpoint not yet validated.
+- `IN_PROGRESS` — local implementation exists but checkpoint not yet validated; a GitHub push is not required for local iteration.
 - `LOCAL_PASS` — regression + VULE-PC non-paid live test pass.
 - `LIVE_PASS` — required external live behavior is proven.
 - `BLOCKED` — stop condition hit; do not advance.
