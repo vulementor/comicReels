@@ -62,6 +62,7 @@ def factory(config, contexts):
     def create(**kwargs):
         assert kwargs['persistent_context'] is True
         assert kwargs['headless'] is False
+        assert kwargs['main_world_eval'] is True
         assert kwargs['user_data_dir'] == str(config.user_data_dir)
         context = Context()
         contexts.append(context)

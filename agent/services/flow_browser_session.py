@@ -208,7 +208,8 @@ class FlowBrowserSessionProvider:
         try:
             from kabin_browser_semantic import BrowserSession
             self._manager = self._factory(persistent_context=True,
-                user_data_dir=str(self.config.user_data_dir), headless=False, locale='vi-VN')
+                user_data_dir=str(self.config.user_data_dir), headless=False, locale='vi-VN',
+                main_world_eval=True)
             self._context = self._manager.__enter__()
             page = self._context.pages[0] if self._context.pages else self._context.new_page()
             if inspect.iscoroutinefunction(page.goto):
