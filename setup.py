@@ -115,6 +115,47 @@ _CRITICAL_RULES = """\
 16. **Review before upscale** — ALWAYS run `/fk-review-video` (light mode) after video generation, before upscaling. Scenes scoring < 7.5 get `video_prompt` updated from review errors, then regen video. Max 2 review-regen cycles.
 """
 
+_BROWSER_FIRST_MIGRATION = """\
+## Browser-First Flow Refactor Contract
+
+The owner has approved a checkpointed migration from the Chrome-extension/WebSocket Flow transport
+to a persistent browser-profile-first backend using `flow.google.com` + `kabin_browser_semantic`.
+
+**This is a transport refactor, not a FlowKit creative rewrite.**
+
+Mandatory invariants:
+
+1. **Preserve FlowKit creative/scenario capabilities.** Do not remove or simplify
+   `fk-create-project`, scene chains, transition prompts, `fk-creative-mix`,
+   `fk-pipeline`, `fk-gen-videos`, review/regen, TTS/concat/branding, Gallery/Logs/Guide/Settings.
+2. **GitHub first, VULE-PC second.** Every code/fix change must exist on GitHub before it is synced
+   to VULE-PC for Remote Desktop Commander testing. Runtime-only patches are invalid evidence.
+3. **Checkpoint discipline.** Follow
+   `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md`. Complete regression + live
+   evidence, update `docs/comicreels/CHECKPOINTS.md`, then obtain explicit owner confirmation
+   before advancing to the next FBR checkpoint.
+4. **Session continuity is mandatory.** Reuse one persistent signed-in Flow profile with an
+   explicit lease/lock. Never clear cookies/storage, sign out, silently switch profiles, or commit
+   browser profile data/tokens/cookies.
+5. **KBS stays generic.** `kabin_browser_semantic` owns generic browser semantics, resolver,
+   network/body/replay/settle capabilities. Flow-specific selectors, RPC meaning and product rules
+   remain in FlowKit/ComicReels adapters.
+6. **Browser-first is hybrid, not click-only.** Prefer validated browser-authenticated recipes,
+   deterministic actions, network observation/replay, then semantic resolution as needed.
+7. **Paid effects keep strict receipt/idempotency gates.** Never use paid generation as a transport
+   diagnostic. Never resend an unknown paid outcome until it is reconciled.
+8. **Do not delete the extension early.** FBR-0 through FBR-4 keep the extension transport as
+   fallback. Browser-first becomes default only after FBR-5 owner acceptance. Extension/WS removal
+   is a separate FBR-6 cleanup checkpoint.
+9. **Current pre-flight remains valid until cutover.** While the extension backend is selected,
+   `extension_connected: true` is still required. Do not rewrite operational health rules ahead
+   of the accepted checkpoint.
+10. **Repository state is the handoff.** Architecture authority:
+    `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`. Current accepted state:
+    `docs/comicreels/CHECKPOINTS.md`. No conversation-only decision is durable until documented.
+
+"""
+
 _PIPELINE_OVERVIEW = """\
 ## Pipeline Order
 
@@ -178,6 +219,7 @@ def _agents_md_body(skills, title):
         f"# Must return: {{\"extension_connected\": true}}\n"
         f"```\n\n"
         f"{_CRITICAL_RULES}\n"
+        f"{_BROWSER_FIRST_MIGRATION}\n"
         f"{_PIPELINE_OVERVIEW}\n"
         f"{_BATCH_API}\n"
         f"## Skills\n\n"
