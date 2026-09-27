@@ -171,6 +171,7 @@ async def extension_status():
         "flow_project_id": FLOW_PROJECT_ID or None,
         "allow_degraded": FLOW_ALLOW_DEGRADED,
         "flow_key_present": client._flow_key is not None,
+        "extension_session": client.ws_stats,
         "generation_throttle": {
             "min_interval_s": FLOW_GENERATION_MIN_INTERVAL_S,
             "max_concurrent": FLOW_GENERATION_MAX_CONCURRENT,
