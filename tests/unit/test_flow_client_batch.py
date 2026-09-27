@@ -39,9 +39,12 @@ def client(monkeypatch):
     c.responses = {}
     c.calls = []
 
-    async def fake_batch_rpc(rpcid, freq, captcha_action=None, match=None, timeout=300):
+    async def fake_batch_rpc(
+        rpcid, freq, captcha_action=None, match=None, timeout=300, project_id=None
+    ):
         c.calls.append({"rpcid": rpcid, "freq": freq,
-                        "captcha": captcha_action, "match": match})
+                        "captcha": captcha_action, "match": match,
+                        "project_id": project_id})
         canned = c.responses.get(rpcid, {"data": ""})
         return canned(match) if callable(canned) else canned
 
@@ -62,6 +65,12 @@ class TestGenerateImages:
         client.responses[fb.RPC_GEN_IMAGE] = {"data": envelope(fb.RPC_GEN_IMAGE, [[IMAGE_URL]])}
         await client.generate_images("a cat", PROJECT)
         assert client.calls[0]["captcha"] == fb.CAPTCHA_IMAGE
+
+    async def test_generation_carries_target_project_to_browser(self, client):
+        client.responses[fb.RPC_GEN_IMAGE] = {"data": envelope(fb.RPC_GEN_IMAGE, [[IMAGE_URL]])}
+        await client.generate_images("a cat", PROJECT)
+        assert client.calls[0]["project_id"] == PROJECT
+
 
     async def test_character_refs_ride_in_the_reference_slot(self, client):
         client.responses[fb.RPC_GEN_IMAGE] = {"data": envelope(fb.RPC_GEN_IMAGE, [[IMAGE_URL]])}
