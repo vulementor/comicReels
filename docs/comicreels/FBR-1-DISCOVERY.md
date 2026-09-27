@@ -1,6 +1,11 @@
 # FBR-1 — read-only Flow discovery
 
-Status: LOCAL_PASS / LIVE_PASS; owner acceptance and merge pending.
+Status: ACCEPTED / CLOSED. Owner authorized merge and continuation to FBR-2.
+PR #4 merged at `15dfa1f72f048174409cc2a264be0aae55eecf54`. Its exact archive passed all
+583 unit tests, SDK 30 PASS / 7 SKIP, npm ci/build/lint and the browser-page read/continuity smoke.
+Both native and replay bodies were 10,364 bytes with matching structure; both profile leases
+released. Post-merge evidence: `local-test-data/source-batch-15dfa1f-c5bcab9286b44934836f52aaead369ad/`.
+The following pre-merge ledger is retained as history.
 Base integration `1675ea5eb92793383b9636eae6e3d8efbdaa7091`;
 branch `fbr/1-flow-readonly-discovery`; KBS pin `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
 

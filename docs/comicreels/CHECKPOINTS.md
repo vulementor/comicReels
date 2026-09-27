@@ -1,6 +1,19 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
-## FBR-1 — LOCAL_PASS / LIVE_PASS; owner merge acceptance pending (2026-09-27)
+## FBR-1 — ACCEPTED / CLOSED (2026-09-27)
+
+Owner explicitly instructed: "Merge FBR-1, tiếp tục FBR-2". PR #4 was merged and the canonical
+checkout fast-forwarded to **15dfa1f72f048174409cc2a264be0aae55eecf54** (local = remote).
+The exact merged archive passed **583 unit; SDK 30 PASS / 7 SKIP; npm ci/build/lint**.
+Live replay on that archive passed at **07:26:23Z**: native and browser-page response bodies
+were each 10,364 bytes with matching structure. Same profile/account survived close/reopen;
+observer closed, both leases released, owned marker removed. Every deployed archive file was
+byte-checked against its Git ZIP, including the ZIP's exact commit identity, before live use.
+Evidence: `local-test-data/source-batch-15dfa1f-c5bcab9286b44934836f52aaead369ad/`.
+No paid effects or project mutations. Active backend remains extension. FBR-2 implementation
+is explicitly authorized; its merge and all paid work remain separate gates.
+
+## FBR-1 — historical pre-merge LOCAL_PASS / LIVE_PASS (2026-09-27)
 
 The owner instructed continued work until every checkpoint is complete. This supersedes the
 previous startup wait after FBR-0; the full deliverable still includes a real accepted clip.
