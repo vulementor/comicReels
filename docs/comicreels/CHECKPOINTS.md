@@ -1,14 +1,22 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## Cập nhật live batch — 27/09/2026, VULE-PC
+
+**Trạng thái: SOURCE_BATCH_LIVE_PASS + IMAGE_QA_REVIEW_PENDING.** Một ảnh truyện gốc được gửi đúng một lần qua `gpt_fullproxy` với prompt ngắn tự đếm khung; không crop input, không loop Generate từng panel, không thao tác web thủ công. Live test trên source truyện 3 khung đã trả **3 PNG 941x1672 riêng, đúng thứ tự**, không chữ/bong bóng, trong cùng một conversation receipt.
+
+Lỗi gốc của lượt trước nằm ở collector: sau ảnh đầu tiên, gallery có thể tạm yên hơn 2 giây rồi mới thêm ảnh 2/3. SDK revision `19414dd270d5d55aed48cda3cf8b259049d688c4` đổi completion gate sang quiet window 30 giây kể từ thay đổi gallery cuối; mỗi blob mới reset timer. Regression trên VULE-PC tại ComicReels `3a5426b9302bc5efeea02b56b3da8ed80c16f99b` + SDK này PASS cả SDK tests, unit tests, frontend build và lint. Live batch sau sửa exit code 0 và ghi đủ `scene-1.png`, `scene-2.png`, `scene-3.png` ngay lần đầu, không cần resubmit/reconcile cứu hộ.
+
+QA nội dung vẫn tách khỏi PASS kỹ thuật. Scene 1/2 bám panel nguồn tương đối tốt; scene 3 giữ đúng nhân vật/bối cảnh nhưng tư thế/hướng con ngựa chưa sát tuyệt đối panel gốc, nên **chưa tự duyệt ảnh vào project**. Bộ ảnh cũ vẫn giữ verdict IMAGE_QA_FAILED; bộ live mới đang chờ cửa duyệt hình ảnh. Chưa merge PR #3, chưa gửi Google Flow, chưa tạo video thật.
+
 ## Chỉ đạo mới nhất — 26/09/2026, 20:36 Asia/Saigon
 
 Code/fix phải lên GitHub trước. VULE-PC chỉ để test qua command của Remote Desktop Commander; mọi test ChatGPT chỉ qua `gpt_fullproxy`, không thao tác web trực tiếp.
 
 Luồng tạo ảnh được sửa từ gốc: một ảnh truyện nguyên bản + một prompt ngắn yêu cầu ChatGPT tự đếm khung, tạo mỗi khung một ảnh 9:16 riêng theo thứ tự. Không ấn định hai/ba ảnh, không gửi crop từng khung, không lặp Generate từng panel. SDK mới trả danh sách ảnh; ComicReels chỉ thay bộ ảnh khi nhận đủ, không trùng và đúng định dạng. Thoại giữ nguyên; bộ ảnh mới cần duyệt lại. FlowKit core và cửa duyệt video giữ nguyên.
 
-SDK được pin tại `d580dc7729a6943ef419d1b960519e27e8911875`. Trạng thái ở thời điểm push: **chưa chạy regression/live test cho thay đổi batch**. Báo cáo cũ bên dưới là lịch sử, không chứng minh revision mới. Xem [kế hoạch sửa luồng](../superpowers/plans/2026-09-26-source-image-batch.md).
+SDK hiện được pin tại `19414dd270d5d55aed48cda3cf8b259049d688c4`. Regression và live batch đã PASS trên VULE-PC như cập nhật 27/09 ở trên. Báo cáo cũ bên dưới là lịch sử; xem [kế hoạch sửa luồng](../superpowers/plans/2026-09-26-source-image-batch.md).
 
-Việc tạo lại ảnh đã được người dùng cho phép; không yêu cầu xác nhận lại. Dừng các lượt thao tác web thủ công. Bộ ảnh hiện tại vẫn IMAGE_QA_FAILED, chưa có live batch mới được nghiệm thu; chưa merge PR #3, chưa tạo Flow video.
+Việc tạo lại ảnh đã được người dùng cho phép; không yêu cầu xác nhận lại. Dừng các lượt thao tác web thủ công. Bộ ảnh cũ vẫn IMAGE_QA_FAILED; live batch mới đã chạy thành công nhưng chưa được duyệt vào project. Chưa merge PR #3, chưa tạo Flow video.
 
 ## Hiện tại — 26/09/2026, sau chỉ đạo “ComicReels Latest”
 
@@ -30,7 +38,7 @@ Nhánh `feature/comicreels-segments-03-16`, Draft PR #3. Chưa merge.
 
 **Cập nhật bước 4:** người dùng phát hiện ba ảnh gần như một. Đối chiếu ảnh thật trên VULE-PC xác nhận khung 2 lặp bố cục/tư thế khung 1, khung 3 quay sai hướng. Đã sao lưu DB, bỏ duyệt riêng khung 2/3; giữ nguyên ba file và ba kịch bản. Verdict lịch sử được sửa; code bổ sung chặn ảnh đã bị loại ở approval, storyboard, video và kết quả provider/cache. Revision `c76f7a9` đạt 467 unit tests trên Windows và đã cập nhật runtime; API thật chặn duyệt lại cả hai ảnh bằng HTTP 409. Reload Chrome qua RDC: chỉ ảnh 1 còn được chọn làm reference, tạo video bị chặn do thiếu ảnh đã duyệt. Xem [IMAGE-QA-2026-09-26.md](IMAGE-QA-2026-09-26.md) để phân biệt kết quả kiểm tra code với chất lượng ảnh.
 
-**Bước tiếp theo:** cần anh đồng ý tạo lại riêng hai ảnh sai từ đúng crop khung 2/3. Phạm vi bước 4 trước đó chỉ đối chiếu ảnh sẵn có; chưa gửi lượt Generate mới hoặc tác vụ Flow có phí. Tiếp tục bằng RDC và Chrome đăng nhập sẵn.
+**Bước tiếp theo hiện tại:** không quay lại cách Generate riêng từng crop. Dùng bộ batch 3 ảnh mới để QA từng khung; chỉ sau khi ảnh đạt mới áp vào project và duyệt hash. Google Flow/video vẫn giữ hard stop riêng.
 
 ## Lịch sử ngày 25/09/2026 (không chứng minh revision hiện tại)
 
