@@ -18,6 +18,20 @@ $GptfpRequiredRef = if ($env:COMICREELS_GPTFP_REF) {
 $GptfpBranch = if ($env:COMICREELS_GPTFP_BRANCH) { $env:COMICREELS_GPTFP_BRANCH } else { "feature/comicreels-image-attachments" }
 $GptfpRepo = if ($env:COMICREELS_GPTFP_REPO) { $env:COMICREELS_GPTFP_REPO } else { "https://github.com/vulementor/gpt_fullproxy.git" }
 
+function Stop-ComicReelsListener([int]$Port, [string]$CommandPattern) {
+  $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+  foreach ($listener in $listeners) {
+    $ownerPid = [int]$listener.OwningProcess
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$ownerPid" -ErrorAction SilentlyContinue
+    $commandLine = if ($proc) { [string]$proc.CommandLine } else { "" }
+    if ($commandLine -notmatch $CommandPattern) {
+      throw "Port $Port is already in use by PID $ownerPid and is not a recognized ComicReels process."
+    }
+    Stop-Process -Id $ownerPid -Force -ErrorAction Stop
+    Start-Sleep -Milliseconds 250
+  }
+}
+
 New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Venv) | Out-Null
 
@@ -94,8 +108,16 @@ if ((-not (Test-Path "dashboard\node_modules")) -or ($OldLockHash -ne $LockHash)
   Set-Content -NoNewline -Encoding ASCII $LockStamp $LockHash
 }
 
+Stop-ComicReelsListener 8100 "agent\.main"
+Stop-ComicReelsListener 5173 "vite"
+
+$ViteCache = Join-Path $RuntimeRoot "dashboard\node_modules\.vite"
+$ViteTemp = Join-Path $RuntimeRoot "dashboard\node_modules\.vite-temp"
+if (Test-Path $ViteCache) { Remove-Item -Recurse -Force $ViteCache }
+if (Test-Path $ViteTemp) { Remove-Item -Recurse -Force $ViteTemp }
+
 $backend = Start-Process -PassThru -NoNewWindow $VenvPython -ArgumentList "-m","agent.main" -WorkingDirectory $RuntimeRoot
-$frontend = Start-Process -PassThru -NoNewWindow "npm.cmd" -WorkingDirectory "$RuntimeRoot\dashboard" -ArgumentList "run","dev","--","--host","127.0.0.1"
+$frontend = Start-Process -PassThru -NoNewWindow "npm.cmd" -WorkingDirectory "$RuntimeRoot\dashboard" -ArgumentList "run","dev","--","--host","127.0.0.1","--force"
 
 Write-Host "ComicReels source:  $SourceRoot"
 Write-Host "Runtime commit:     $Commit"
