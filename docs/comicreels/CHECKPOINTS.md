@@ -1,5 +1,25 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## Chỉ đạo kiến trúc mới — 27/09/2026: Flow browser-first refactor
+
+**OWNER APPROVED — FBR-0 PLANNED.** Refactor phần transport/runtime làm việc với Google Flow theo hướng mở `https://flow.google.com/` bằng một persistent browser profile đã đăng nhập, sau đó dùng `kabin_browser_semantic` (KBS) cho browser semantics, resolver, network observation, body capture, authenticated replay và settle.
+
+Đây **không phải** là rewrite FlowKit creative layer. Các kịch bản và năng lực hiện có của FlowKit phải giữ nguyên: `fk-create-project`, project/story/entity semantics, ROOT/CONTINUATION chain, transition prompts, `fk-creative-mix`, `fk-pipeline`, `fk-gen-videos`, review/regen, Gallery/Logs/Guide/Settings, TTS/concat/branding/SEO/YouTube và các skill liên quan.
+
+Authority mới:
+- kiến trúc: [FLOW-BROWSER-FIRST-ARCHITECTURE.md](FLOW-BROWSER-FIRST-ARCHITECTURE.md);
+- kế hoạch checkpoint: [2026-09-27-flow-browser-refactor.md](../superpowers/plans/2026-09-27-flow-browser-refactor.md);
+- operational agent rules được sinh từ `setup.py` vào `AGENTS.md`.
+
+**Nguyên tắc thực thi bắt buộc:** GitHub trước → sync VULE-PC → regression → live evidence → cập nhật checkpoint → báo cáo → **OWNER_CONFIRM_REQUIRED** trước khi sang checkpoint kế tiếp. Không sửa runtime tay làm nguồn sự thật. Không dùng paid generation làm diagnostic.
+
+**Session continuity:** một persistent Flow profile + explicit lease/lock; không xoá cookie/storage, không logout, không tự tạo profile thay thế, không commit profile/token/cookie. KBS chỉ giữ live browser handles; Flow-specific selector/RPC/product semantics ở FlowKit/ComicReels adapter.
+
+**Extension preservation:** FBR-0..FBR-4 vẫn giữ extension/WebSocket transport làm fallback. Browser-first chỉ thành default sau FBR-5 được owner chấp thuận. Xoá extension là FBR-6 riêng, không tự động đi kèm cutover.
+
+**Checkpoint hiện tại:** FBR-0 chưa code. Việc được phép tiếp theo là thiết kế + implement browser session provider/profile lease/KBS pin/read-only health. Chưa được phép paid generation bằng backend mới.
+
+
 ## Cập nhật Flow live — 27/09/2026
 
 **Trạng thái: FLOW_R2V_BLOCKED_BY_GOOGLE; không resend tự động.** UI Windows đã được sửa từ gốc: launcher hiện dọn stale ComicReels listeners/Vite cache trước khi start; revision `e61c4cb` và regression kế tiếp tại `6948c432` đều PASS trên VULE-PC. Vite `/src/App.tsx` trả HTTP 200 sau restart sạch.
