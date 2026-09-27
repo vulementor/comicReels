@@ -1,5 +1,90 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## FBR-0 pre-flight — 27/09/2026: canonical profile unresolved
+
+**CHECKPOINT: FBR-0; STATUS: BLOCKED; implementation and browser live validation NOT STARTED.**
+
+Owner activated FBR-0 in the 27/09 handoff. The stop is missing canonical Flow profile identity,
+not missing permission to implement FBR-0. The handoff explicitly requires stopping and asking
+the owner when the canonical profile cannot be determined safely. No replacement profile may
+be created or inferred from whichever Chrome process happens to be running.
+
+### Repository provenance at pre-flight
+
+- WORKING_BRANCH: `fbr/0-flow-browser-bootstrap`, created from the clean integration baseline.
+- INTEGRATION_BRANCH: `feature/comicreels-segments-03-16`.
+- LOCAL_HEAD at inspection, before this documentation-only checkpoint:
+  `fbcf8560bb6c68b831535e8fe7a1d904446ee0c6`.
+- REMOTE_BRANCH_HEAD: FBR branch did not exist at inspection; its documentation commit is to be
+  pushed separately. Resolve the latest branch SHA with `git rev-parse HEAD` / `git ls-remote`
+  when resuming; do not mistake the pre-flight SHA for an implementation revision.
+- MERGED_HEAD / rollback baseline:
+  `fbcf8560bb6c68b831535e8fe7a1d904446ee0c6`; no FBR-0 merge performed.
+- KBS_BRANCH: `main`.
+- KBS_HEAD: `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+- KBS_PIN: not configured in ComicReels yet. The existing GPT FullProxy SDK pin is not a KBS pin.
+- Fresh `git fetch origin --prune` succeeded for both repositories. Both local baseline HEADs
+  matched their respective remote branches, with ahead/behind `0/0`; both worktrees were clean
+  before this record.
+- RUNTIME_HEAD: not verified against running process source. A local `running.json` receipt
+  reported `b28fc4a0b08267e9946eea82c3ab12728c68e55b`; that receipt alone is not live provenance.
+
+### Profile and live evidence
+
+- FLOW_BACKEND: existing extension / `batch`; no browser backend implemented or selected.
+- PROFILE_LOGICAL_NAME: UNRESOLVED.
+- PROFILE_PATH_CONFIGURED: no verified Flow binding found in the inspected workspace registry,
+  repository config or current-shell Flow profile configuration.
+- Workspace `profile-bindings.json` contains only `github-review-reel` and `shopee-affiliate`.
+  The inspected workspace profile directory also contains `kfgt-facebook-main`; none proves a
+  canonical Flow binding.
+- Historical `LOCAL-TEST-RESULTS-2026-09-26-WINDOWS.md` records reuse of signed-in Chrome but
+  does not bind it to a physical/logical Flow profile.
+- A running Chrome process has a profile-directory argument, but it is only an unverified
+  candidate. Do not use it as authority or commit its physical profile path.
+- Available browser-tool inventory exposed only the Codex in-app browser with no tabs; it did
+  not expose the existing Chrome Flow surface for profile/identity verification.
+- LEASE_STATE: NOT_ACQUIRED_BY_THIS_TASK; existing browser ownership not changed.
+- SESSION_STATE: NOT_VERIFIED_FOR_BROWSER_BACKEND; no login, logout, close or reopen performed.
+- FLOW_HOST: target `flow.google.com`; authenticated browser page not observed by this task.
+- FLOW_PROJECT_ID: not selected or verified for FBR-0.
+- Read-only local `GET /health`: `status=ok`, `extension_connected=true`.
+- Read-only local `GET /api/flow/status`: `transport=batch`. Extension health does not prove
+  browser-provider readiness or same-profile authentication continuity.
+
+### Validation and limits
+
+- TESTS: Git provenance/status checks and read-only local health probes completed. Provider
+  tests, full regression, frontend build/lint and browser live smoke NOT RUN: implementation
+  stopped before profile selection. This is not LOCAL_PASS or LIVE_PASS.
+- LIVE_EVIDENCE: no canonical-profile lease/capture/close/reopen evidence acquired.
+- PAID_EFFECT_STATE: no paid requests submitted by this task. Historical
+  `PUBLIC_ERROR_UNUSUAL_ACTIVITY` remains unresolved; do not assume recovery.
+- PENDING_OR_UNKNOWN_JOB: not reconciled against live job records in this pre-flight; no new
+  job created by this task. Historical checkpoint records remain the only job-state evidence.
+- No source code, KBS code, generated AGENTS.md, runtime deployment, profile data or auth values
+  changed by this pre-flight. Only this checkpoint record was edited.
+
+### Resume contract
+
+- NEXT_ALLOWED_ACTION: owner identifies the canonical existing Flow profile and its local
+  configuration/binding; then verify ownership and continue FBR-0 on this branch. Keep physical
+  profile paths in local configuration, not committed documentation.
+- The owner's latest explicit working policy is LOCAL-SOURCE-FIRST: develop/test in the
+  canonical local source repo, deploy through supported tooling, and push a coherent checkpoint.
+  Older GitHub-first / Remote Desktop-only paragraphs below and in generated operating rules
+  are historical. Before implementation, reconcile the authority source (`setup.py`), generated
+  `AGENTS.md`, and execution plan with this policy; preserve historical evidence.
+- Known validation gap: `scripts/verify_windows_batch.ps1` archives `HEAD`, so it cannot validate
+  uncommitted local changes. Resolve that mismatch before claiming LOCAL-SOURCE-FIRST regression
+  coverage; an old committed snapshot is not evidence for current local edits.
+- FORBIDDEN_NEXT_ACTIONS: choose/create/copy/replace a profile, clear storage, close an unrelated
+  browser, paid generation, unknown-job retry, extension deletion, FBR-1, or merge this BLOCKED
+  checkpoint.
+- OWNER_CONFIRM_REQUIRED: canonical Flow profile identification now; checkpoint merge acceptance
+  only after FBR-0 implementation and required live evidence pass. No merge approval requested
+  for this blocked pre-flight.
+
 ## Closeout chuẩn hoá tài liệu — 27/09/2026
 
 **DOC/FBR BASELINE = LOCAL_PASS; FBR-0 = PLANNED; OWNER_CONFIRM_REQUIRED trước khi implement.**
