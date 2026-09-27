@@ -27,6 +27,7 @@ async def test_one_original_one_prompt_for_any_frame_count(tmp_path, monkeypatch
     result = await batch.generate_scene_batch(source, tmp_path / 'batch', expected_count=count)
     assert len(calls) == 1
     assert calls[0][0] == batch.SCENE_BATCH_PROMPT
+    assert 'Yêu cầu bắt buộc: Giữ đúng thứ tự ảnh, biểu cảm nhân vật.' in calls[0][0]
     assert calls[0][1]['attachments'] == [source]
     assert 'conversation' not in calls[0][1]
     assert len(result['images']) == count
