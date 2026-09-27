@@ -28,3 +28,6 @@ extension/_metadata/
 
 # Local Python virtual environments
 .venv*/
+
+# Local validation output, never source or deployment input.
+/local-test-data/
