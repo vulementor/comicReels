@@ -1,5 +1,26 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## Closeout chuẩn hoá tài liệu — 27/09/2026
+
+**DOC/FBR BASELINE = LOCAL_PASS; FBR-0 = PLANNED; OWNER_CONFIRM_REQUIRED trước khi implement.**
+
+Đã chuẩn hoá và commit authority set cho browser-first Flow refactor:
+
+- `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`: kiến trúc, ownership boundaries, persistent-profile/session continuity, paid-effect semantics, extension retirement policy và FlowKit creative preservation matrix.
+- `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md`: FBR-0 → FBR-6 với entry criteria, allowed/forbidden scope, regression/live evidence, rollback, stop conditions và OWNER_CONFIRM_REQUIRED giữa từng checkpoint.
+- `setup.py`: nguồn sinh `AGENTS.md` đã encode Browser-First Flow Refactor Contract; không sửa generated artifact bằng tay.
+- `AGENTS.md`: regenerated từ source và verified idempotent trên VULE-PC.
+- `CLAUDE.md`: liên kết authority docs và ghi rõ extension vẫn là fallback trước FBR-5.
+
+Điều khoản bảo toàn FlowKit đã được đóng thành invariant: không bỏ `fk-create-project`, scene ROOT/CONTINUATION, transition prompts, `fk-creative-mix`, `fk-pipeline`, `fk-gen-videos`, review/regen, Gallery/Logs/Guide/Settings, TTS/concat/branding/SEO/YouTube chỉ vì đổi transport.
+
+**Evidence trên VULE-PC:** source `5f1b229f6433a0fba5bd44bb766dde67c8f17ae6`; `python -m py_compile setup.py` PASS; regenerate `AGENTS.md` bằng `setup.py --tool codex` cho `AGENTS_ZERO_DIFF=True`; full `verify_windows_batch.ps1` PASS (`unit_and_frontend`), SDK pin vẫn `19414dd270d5d55aed48cda3cf8b259049d688c4`.
+
+**Session continuity policy đã thành repository authority:** một persistent signed-in Flow profile + explicit lease/lock; không clear cookie/storage, không logout, không silent profile replacement, không commit token/cookie/profile content. Mỗi cuối phiên phải ghi source commit, KBS pin, backend kind, profile logical name, lease/session health, paid-job uncertainty và exact next allowed action.
+
+**Next allowed action:** chỉ bắt đầu **FBR-0 — Profile/session bootstrap** sau owner confirmation. Chưa được paid generation bằng browser backend mới.
+
+
 ## Chỉ đạo kiến trúc mới — 27/09/2026: Flow browser-first refactor
 
 **OWNER APPROVED — FBR-0 PLANNED.** Refactor phần transport/runtime làm việc với Google Flow theo hướng mở `https://flow.google.com/` bằng một persistent browser profile đã đăng nhập, sau đó dùng `kabin_browser_semantic` (KBS) cho browser semantics, resolver, network observation, body capture, authenticated replay và settle.
