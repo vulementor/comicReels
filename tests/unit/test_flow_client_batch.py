@@ -125,7 +125,7 @@ class TestGenerateImages:
         attempts = 0
         sleeps = []
 
-        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300):
+        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300, project_id=None):
             nonlocal attempts
             attempts += 1
             if attempts == 1:
@@ -149,7 +149,7 @@ class TestGenerateImages:
         attempts = 0
         sleeps = []
 
-        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300):
+        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300, project_id=None):
             nonlocal attempts
             attempts += 1
             raise fb.RpcError(fb.RPC_GEN_IMAGE, [5])
@@ -171,7 +171,7 @@ class TestGenerateImages:
         async def fake_sleep(_delay):
             return None
 
-        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300):
+        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300, project_id=None):
             item = json.loads(json.loads(freq)[0][0][1])[1][0]
             if item[3] == 100 + 9973:
                 raise fb.RpcError(fb.RPC_GEN_IMAGE, [5])
