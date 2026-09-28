@@ -169,7 +169,7 @@ def build_snapshot(settings: Settings) -> dict:
         try:
             with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=0.2) as db:
                 db.row_factory = sqlite3.Row
-                jobs = [dict(r) for r in db.execute('SELECT * FROM jobs ORDER BY created_at DESC')]
+                jobs = [dict(r) for r in db.execute('SELECT * FROM jobs ORDER BY updated_at DESC')]
                 try:
                     attempts = {r['job_id']: dict(r) for r in db.execute(
                         'SELECT * FROM production_attempts ORDER BY started_at,job_id')}
