@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 from .config import Settings, atomic_json, change_settings
@@ -80,6 +81,14 @@ def tick(settings: Settings, clock: str | None = None) -> dict:
 
 
 def main(argv=None) -> int:
+    # Windows launchers may inherit a legacy console code page. A successful
+    # UTF-8 operation must not be reported as failed only because diagnostics
+    # contain Vietnamese characters.
+    if hasattr(sys.stdout, 'reconfigure'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8', errors='backslashreplace')
+        except (AttributeError, ValueError, OSError):
+            pass
     parser = argparse.ArgumentParser(description='Thỏ Remix — FlowKit + KRP stable controller')
     parser.add_argument('--root', type=Path, default=Path(os.environ.get('THOREMIX_ROOT', 'D:/StableApp/ThoRemix')))
     commands = parser.add_subparsers(dest='command', required=True)
