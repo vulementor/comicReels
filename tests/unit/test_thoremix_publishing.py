@@ -52,20 +52,28 @@ class OfflineAdapter:
         self.uploads.append(request)
         if self.publish_state == "raise":
             raise RuntimeError("secret cookie=DO_NOT_LEAK")
-        return self.Result(state=self.publish_state, permalink=f"https://www.{self.name}.com/video/123",
+        return self.Result(state=self.publish_state,
+                           permalink=(f"https://www.{self.name}.com/video/123"
+                                      if self.publish_state == "confirmed" else None),
                            evidence={"cookies": "DO_NOT_LEAK"})
 
     def comment(self, request, operation_id):
         self.comments.append(request)
-        return self.Result(state=self.comment_state, permalink=request.url + "?comment_id=456")
+        return self.Result(state=self.comment_state,
+                           permalink=(request.url + "?comment_id=456"
+                                      if self.comment_state == "confirmed" else None))
 
     def reconcile_publish(self, request, operation_id):
         self.reconciles.append(operation_id)
-        return self.Result(state=self.reconcile_state, permalink=f"https://www.{self.name}.com/video/123")
+        return self.Result(state=self.reconcile_state,
+                           permalink=(f"https://www.{self.name}.com/video/123"
+                                      if self.reconcile_state == "confirmed" else None))
 
     def reconcile_comment(self, request, operation_id):
         self.reconciles.append(operation_id)
-        return self.Result(state=self.reconcile_state, permalink=request.url + "?comment_id=456")
+        return self.Result(state=self.reconcile_state,
+                           permalink=(request.url + "?comment_id=456"
+                                      if self.reconcile_state == "confirmed" else None))
 
 
 @pytest.fixture
