@@ -89,9 +89,13 @@ def render(settings, base, directory, spec=None):
         raise ValueError('Xử lý video đã thay đổi kích thước/thời lượng hoặc tệp gốc.')
     if spec['laugh_enabled'] and sha256(Path(spec['laugh_path']))!=spec['laugh_sha256']:
         raise ValueError('File tiếng cười thay đổi trong khi xử lý.')
+    from .audio_guard import verify_native_audio
+    audio_guard=verify_native_audio(settings,base,part,
+        laugh_start_s=laugh.get('start_s') if laugh else None)
     os.replace(part,target)
     data={'base_path':str(base),'base_sha256':base_hash,'options':spec,'media':media,
-          'video_sha256':sha256(target),'render_key':key,'laugh':laugh,'created_at':now_iso()}
+          'video_sha256':sha256(target),'render_key':key,'laugh':laugh,
+          'audio_guard':audio_guard,'created_at':now_iso()}
     atomic_json(receipt,data)
     return target,data
 
