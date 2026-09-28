@@ -13,7 +13,7 @@ from tkinter import filedialog, simpledialog, ttk
 import webbrowser
 
 from .dashboard import (build_snapshot, selected_key, state_text, safe_link,
-                        date_text, mapping, PLATFORMS, NAMES)
+                        date_text, mapping, visible_rows, PLATFORMS, NAMES)
 
 from .config import Settings
 
@@ -21,6 +21,11 @@ from .config import Settings
 def readable_result(command: str, result: dict) -> str:
     """Human copy stays separate from raw command diagnostics."""
     result = mapping(result)
+    if command=='retry-failed':
+        if result.get('state') == 'retry_batch_finished':
+            return (f"Đã xử lý {result.get('processed',0)}/{result.get('requested',0)} video lỗi. "
+                    "Danh sách đã được làm mới; video vẫn lỗi sẽ còn trong bộ lọc Đang lỗi.")
+        return str(result.get('reason') or 'Chưa chạy được thử lại hàng loạt; xem Diagnostics.')
     if command=='retry-production':
         labels={'retry_complete':'Đã hoàn thành clip. Mở video để xem kết quả.',
             'retry_not_needed':'Clip đã hoàn thành hoặc đã bắt đầu đăng; không sản xuất lại.',
@@ -113,6 +118,10 @@ PAGES = {'videos': ('Video', 'Hồ sơ đã lưu · bài đăng và bình luận
          'settings': ('Xử lý video', 'Dải che và âm thanh cuối clip · giữ nguyên khung hình và thời lượng'),
          'activity': ('Hoạt động', 'Kết quả lệnh, dữ liệu cần xử lý và chẩn đoán')}
 
+VIDEO_FILTERS = {'Tất cả': 'all', 'Đã sản xuất': 'produced', 'Đang lỗi': 'failed',
+                 'Đã đăng': 'posted', 'Chờ đăng': 'ready'}
+VIDEO_ORDERS = {'Mới sản xuất trước': 'newest', 'Cũ sản xuất trước': 'oldest'}
+
 
 class DesktopWindow:
     """A passive viewer until the user explicitly invokes a command."""
@@ -131,6 +140,8 @@ class DesktopWindow:
         self.instance = None
         self.production_mode = tk.StringVar(self.window, value=settings.production_mode)
         self.production_limit = tk.StringVar(self.window, value=str(settings.daily_production_limit))
+        self.video_filter = tk.StringVar(self.window, value='Tất cả')
+        self.video_order = tk.StringVar(self.window, value='Mới sản xuất trước')
         self.active = None
         self.review = None
         self.retry_job_id = None
@@ -244,9 +255,19 @@ class DesktopWindow:
             self.show_window()
             self.status.configure(text='System tray không khả dụng. Cửa sổ đã được mở lại.')
 
+    def _video_rows(self):
+        return visible_rows(self.snapshot.get('rows', []),
+                            VIDEO_FILTERS.get(self.video_filter.get(), 'all'),
+                            VIDEO_ORDERS.get(self.video_order.get(), 'newest'))
+
+    def _video_view_changed(self, _event=None):
+        self.selected = selected_key(self._video_rows(), self.selected)
+        self.show_page('videos')
+
     def refresh(self):
         self.snapshot = self.load_snapshot(self.settings)
-        self.selected = selected_key(self.snapshot['rows'], self.selected)
+        rows = self._video_rows() if self.page == 'videos' else self.snapshot['rows']
+        self.selected = selected_key(rows, self.selected)
         self.show_page(self.page)
         if self.review:self.review.sync()
 
@@ -291,11 +312,28 @@ class DesktopWindow:
             return None
 
     def _page_videos(self):
-        self.content.rowconfigure(0, weight=1)
+        self.content.rowconfigure(1, weight=1)
         self.content.columnconfigure(0, weight=1)
+        toolbar = tk.Frame(self.content, bg='white', padx=12, pady=10)
+        toolbar.grid(row=0, column=0, sticky='ew')
+        self.label(toolbar, 'Lọc', size=9, color=MUTED).pack(side='left', padx=(0, 6))
+        filter_box = ttk.Combobox(toolbar, textvariable=self.video_filter,
+                                  values=tuple(VIDEO_FILTERS), state='readonly', width=15)
+        filter_box.pack(side='left', padx=(0, 14))
+        filter_box.bind('<<ComboboxSelected>>', self._video_view_changed)
+        self.label(toolbar, 'Sắp xếp', size=9, color=MUTED).pack(side='left', padx=(0, 6))
+        order_box = ttk.Combobox(toolbar, textvariable=self.video_order,
+                                 values=tuple(VIDEO_ORDERS), state='readonly', width=20)
+        order_box.pack(side='left')
+        order_box.bind('<<ComboboxSelected>>', self._video_view_changed)
+        self.retry_all_button = self.button(toolbar, 'Thử lại tất cả video lỗi',
+                                            self.retry_failed_production)
+        self.retry_all_button.pack(side='right')
+        if self.active is not None:
+            self.retry_all_button.configure(state='disabled')
         self.video_panes = tk.PanedWindow(self.content, orient='horizontal', bg='#e0e5ef',
                                         sashwidth=6, bd=0, sashrelief='flat')
-        self.video_panes.grid(row=0, column=0, sticky='nsew')
+        self.video_panes.grid(row=1, column=0, sticky='nsew')
         table_box = tk.Frame(self.video_panes, bg='white')
         self.video_panes.add(table_box, minsize=440, stretch='always')
         self.table = ttk.Treeview(table_box, columns=('title', *PLATFORMS),
@@ -314,7 +352,7 @@ class DesktopWindow:
         self.table.configure(yscrollcommand=scroll.set, xscrollcommand=horizontal.set)
         self.table.pack(fill='both', expand=True)
         self.row_photos = []
-        for row in self.snapshot['rows']:
+        for row in self._video_rows():
             title = row['title']
             values = [title + '\n' + row['state']]
             for p in PLATFORMS:
@@ -409,6 +447,15 @@ class DesktopWindow:
             self.button(detail, 'Mở thư mục truyện', lambda: self.open_local(row['folder'])).pack(fill='x', pady=4)
         elif row.get('original'):
             self.button(detail, 'Mở ảnh nguồn', lambda: self.open_local(row['original'])).pack(fill='x', pady=4)
+
+    def retry_failed_production(self):
+        if self.active is not None:
+            self.status.configure(text='Một lệnh đang chạy; chờ hoàn tất rồi thử lại các video lỗi.')
+            return
+        if self.launch('retry-failed'):
+            self.status.configure(text='Đang thử lại lần lượt các video lỗi; mỗi lỗi được xử lý tối đa một lần trong lượt này.')
+            if hasattr(self, 'retry_all_button'):
+                self.retry_all_button.configure(state='disabled')
 
     def retry_production(self,row):
         if self.active is not None:
