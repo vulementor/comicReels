@@ -262,7 +262,10 @@ def build_snapshot(settings: Settings) -> dict:
     auth = read_json(settings.data / 'auth-status.json', issues)
     if auth.get('profile') != settings.social_profile:
         auth = {}
-    return {'rows': rows, 'auth': auth, 'affiliate': read_json(settings.data / 'affiliate-selection.json', issues),
+    from .activity_log import build_activity
+    activity = build_activity(settings, jobs, rows)
+    return {'rows': rows, 'activity': activity, 'auth': auth,
+            'affiliate': read_json(settings.data / 'affiliate-selection.json', issues),
             'production': read_json(settings.data / 'production-status.json', issues),
             'chatgpt_pacing': read_json(settings.data / 'chatgpt-pacing.json', issues),
             'production_mode': settings.production_mode, 'daily_production_limit': settings.daily_production_limit,
