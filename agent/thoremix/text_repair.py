@@ -113,7 +113,7 @@ def repair_source_text(settings: Settings, job_id: str, spec: dict, *, font: Pat
         updated['video_sha256']=sha256(output)
         updated['media']=media
         updated['source_text_overlay']={
-            'base_video_sha256':package['video_sha256'],
+            'base_video_sha256':sha256(video),
             'output_sha256':sha256(output),
             'spec':spec,
             'receipt_sha256':sha256(work/'sign-overlay-receipt.json'),
