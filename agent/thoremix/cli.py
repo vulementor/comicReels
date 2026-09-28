@@ -103,6 +103,11 @@ def main(argv=None) -> int:
     retry.add_argument('job_id')
     commands.add_parser('retry-failed')
     commands.add_parser('finish-unpublished')
+    repair_audio=commands.add_parser('repair-audio')
+    repair_audio.add_argument('job_id')
+    repair_audio.add_argument('--force',action='store_true')
+    repair_all=commands.add_parser('repair-audio-all')
+    repair_all.add_argument('--force',action='store_true')
     approval=commands.add_parser('approve')
     approval.add_argument('job_id')
     approval.add_argument('--manifest-sha256',required=True)
@@ -139,6 +144,16 @@ def main(argv=None) -> int:
         if args.command=='retry-failed':
             from .retry import retry_failed
             result=retry_failed(Settings.load(args.root))
+            print(json.dumps(result,ensure_ascii=False))
+            return 0
+        if args.command=='repair-audio':
+            from .audio_repair import repair_audio
+            result=repair_audio(Settings.load(args.root),args.job_id,force=args.force)
+            print(json.dumps(result,ensure_ascii=False))
+            return 0
+        if args.command=='repair-audio-all':
+            from .audio_repair import repair_all_finished
+            result=repair_all_finished(Settings.load(args.root),force=args.force)
             print(json.dumps(result,ensure_ascii=False))
             return 0
         if args.command=='approve':
