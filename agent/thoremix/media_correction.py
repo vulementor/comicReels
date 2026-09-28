@@ -213,6 +213,7 @@ def prepare_media_correction(settings: Settings, job_id: str) -> dict:
         campaign = Campaign(settings)
         (job, old_dir, package_path, old_package_sha, old, publication_path,
          publication) = _current_package(settings, campaign, job_id)
+        publication_file_sha = sha256(publication_path)
         repair_path, repair, candidate = _repair(settings, job_id, old, old_package_sha)
         publication_sha = publication.get('package_sha256')
         if not re.fullmatch(r'[0-9a-f]{64}', str(publication_sha or '')):
@@ -318,7 +319,7 @@ def prepare_media_correction(settings: Settings, job_id: str) -> dict:
                                                  'original_name':source.name,'slot':job['slot']})
                 atomic_json(stage/'correction.json',correction)
                 if (sha256(package_path) != old_package_sha
-                        or sha256(publication_path) != sha256(old_dir/'publication.json')
+                        or sha256(publication_path) != publication_file_sha
                         or sha256(repair_path) != correction['audio_repair_receipt_sha256']):
                     raise ValueError('CORRECTION_EVIDENCE_CHANGED')
                 os.rename(stage,target)
@@ -328,6 +329,7 @@ def prepare_media_correction(settings: Settings, job_id: str) -> dict:
         if (current['state'] != 'publishing'
                 or Path(current['package_dir']).resolve() != old_dir
                 or sha256(package_path) != old_package_sha
+                or sha256(publication_path) != publication_file_sha
                 or sha256(repair_path) != correction['audio_repair_receipt_sha256']):
             raise ValueError('CORRECTION_JOB_OR_EVIDENCE_CHANGED')
         for platform in TARGETS:
