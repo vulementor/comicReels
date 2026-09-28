@@ -438,3 +438,18 @@ def test_login_navigation_error_keeps_window_until_close_and_projects_only_error
     assert "DO_NOT_LEAK" not in receipt_text
     receipt = json.loads(receipt_text)
     assert receipt["state"] == "closed" and receipt["error_type"] == "TimeoutError"
+
+
+def test_old_krp_without_pre_submit_recovery_is_rejected_before_effects(package, rig):
+    mod, adapters, _, home, _ = rig
+
+    class LegacyClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    def legacy_factory(**kwargs):
+        return LegacyClient(**kwargs)
+
+    with pytest.raises(RuntimeError, match="durable pre-submit recovery"):
+        mod.publish_package(package, krp_home=home, client_factory=legacy_factory)
+    assert all(not adapter.uploads and not adapter.comments for adapter in adapters.values())
