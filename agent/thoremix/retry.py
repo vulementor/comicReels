@@ -19,6 +19,7 @@ REASONS={
     'STORY_DIALOGUE_TOO_LONG':'Lời thoại vượt thời lượng 10 giây. Thử lại sẽ kiểm tra phân tích đã lưu; không tự cắt lời thoại.',
     'STORY_REFERENCE_CAPACITY_OR_ORDER':'Truyện vượt giới hạn 4 ảnh tham chiếu hoặc thứ tự cảnh chưa hợp lệ.',
     'UNCERTAIN_SOURCE_PANEL':'Chưa xác định rõ một cảnh trong ảnh nguồn.',
+    'UNCERTAIN_SOURCE_TEXT':'Có chữ nguồn chưa phân loại/đọc chắc; giữ nguyên và yêu cầu đối chiếu thay vì xóa.',
     'INVALID_SOURCE_DIALOGUE':'Chưa đọc đủ lời thoại hoặc người nói trong ảnh nguồn.',
     'DIALOGUE_PANEL_UNKNOWN':'Chưa ghép được lời thoại với đúng cảnh.',
     'SOURCE_NOT_SUPPORTED_OR_UNCERTAIN':'Chưa xác minh được phân tích ảnh nguồn; cần đối chiếu lại kết quả đã lưu.',
