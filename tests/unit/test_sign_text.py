@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from agent.comicreels.sign_text import normalize_panel_text_regions, validate_overlay, overlay_filters
+from agent.comicreels.sign_text import (missing_font_codepoints, normalize_panel_text_regions,
+    overlay_filters, select_overlay_font, validate_overlay)
 
 
 def spec():
@@ -56,3 +57,15 @@ def test_filters_limit_overlay_to_verified_half_open_frame_interval(tmp_path):
     assert all('expansion=none' in f for f in filters)
     assert [Path(x['textfile']).read_text(encoding='utf-8') for x in layout['lines']] == spec()['text'].splitlines()
     assert all(x['width'] <= 365 for x in layout['lines'])
+
+
+def test_font_selection_skips_windows_fonts_missing_vietnamese_glyphs():
+    comic = Path('C:/Windows/Fonts/comicbd.ttf')
+    arial = Path('C:/Windows/Fonts/arialbd.ttf')
+    if not comic.is_file() or not arial.is_file():
+        pytest.skip('Windows font fixtures not installed')
+    text = spec()['text']
+    assert 0x1EE8 in missing_font_codepoints(comic, text)
+    assert 0x1EA0 in missing_font_codepoints(comic, text)
+    assert missing_font_codepoints(arial, text) == []
+    assert select_overlay_font(text, [comic, arial]) == arial.resolve()
