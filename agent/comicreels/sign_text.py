@@ -79,11 +79,41 @@ def validate_overlay(spec: dict) -> dict:
     return dict(spec, box=dict(box), fps=fps)
 
 
+def missing_font_codepoints(font_path: Path, text: str, *, size: int = 48) -> list[int]:
+    """Detect glyphs rendered as the font's .notdef box without extra dependencies."""
+    font = ImageFont.truetype(str(Path(font_path).resolve(strict=True)), size)
+    missing_mask = font.getmask('\u0378')
+    missing_signature = (missing_mask.size, bytes(missing_mask))
+    missing = []
+    for char in sorted(set(text)):
+        if char.isspace():
+            continue
+        mask = font.getmask(char)
+        if (mask.size, bytes(mask)) == missing_signature:
+            missing.append(ord(char))
+    return missing
+
+
+def select_overlay_font(text: str, candidates: list[Path] | None = None) -> Path:
+    candidates = candidates or [
+        Path('C:/Windows/Fonts/arialbd.ttf'),
+        Path('C:/Windows/Fonts/segoeui.ttf'),
+        Path('C:/Windows/Fonts/arial.ttf'),
+    ]
+    for candidate in candidates:
+        if candidate.is_file() and not missing_font_codepoints(candidate, text):
+            return candidate.resolve()
+    raise ValueError('SIGN_OVERLAY_FONT_MISSING_GLYPH')
+
+
 def overlay_filters(spec: dict, directory: Path, font_path: Path) -> tuple[list[str], dict]:
     """FFmpeg reads UTF-8 files with expansion disabled; source text is never code."""
     spec = validate_overlay(spec)
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
+    font_path = Path(font_path).resolve(strict=True)
+    if missing_font_codepoints(font_path, spec['text']):
+        raise ValueError('SIGN_OVERLAY_FONT_MISSING_GLYPH')
     font_copy = directory / 'sign-font.ttf'
     shutil.copyfile(font_path, font_copy)
     box, lines = spec['box'], spec['text'].split('\n')
