@@ -50,7 +50,7 @@ def test_activity_timeline_combines_production_repair_and_platform_effects(tmp_p
     assert any(e['category']=='repair' and e['action']=='Sửa âm thanh'
                and e['status']=='Đã sửa · chờ duyệt' for e in events)
     qa=next(e for e in events if e['action']=='QA video')
-    assert qa['status']=='Đã xác minh'
+    assert qa['status']=='Cần xử lý' and qa['level']=='attention'
     assert qa['detail']=='Sai cảnh ở đoạn cuối.'
     job=next(e for e in events if e['action']=='Trạng thái công việc')
     assert job['status']=='Chờ duyệt'
