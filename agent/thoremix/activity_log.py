@@ -91,6 +91,7 @@ def _state_text(state: str | None) -> str:
         'promoted_awaiting_approval': 'Đã sửa · chờ duyệt',
         'source_text_already_repaired': 'Chữ nguồn đã sửa',
         'native_audio_already_preserved': 'Âm gốc đã giữ',
+        'correction_ready': 'Revision sạch sẵn sàng',
     }
     return labels.get(lower, value or 'Chưa rõ')
 
@@ -181,10 +182,11 @@ def build_activity(settings, jobs: list[dict], rows: list[dict]) -> list[dict]:
                 job_id=job_id, clip=clip, category='production', action=label,
                 state=_stage_state(data), detail=_result_detail(data), source=str(path)))
 
-        for kind, label in (('audio-repairs', 'Sửa âm thanh'),
-                            ('source-text-repairs', 'Phục hồi chữ nguồn'),
-                            ('media-corrections', 'Chuẩn bị correction revision')):
-            path = settings.data / kind / str(job_id) / 'repair.json'
+        for kind, label, filename in (
+                ('audio-repairs', 'Sửa âm thanh', 'repair.json'),
+                ('source-text-repairs', 'Phục hồi chữ nguồn', 'repair.json'),
+                ('media-corrections', 'Chuẩn bị correction revision', 'revision.json')):
+            path = settings.data / kind / str(job_id) / filename
             if not path.is_file():
                 continue
             data = _json(path)
