@@ -122,6 +122,10 @@ def _stage_state(data: dict) -> str | None:
     state = data.get('state')
     result = data.get('result')
     result = result if isinstance(result, dict) else {}
+    payload = result.get('data')
+    payload = payload if isinstance(payload, dict) else {}
+    if payload.get('accepted') is False:
+        return 'needs_input'
     if str(state).upper() == 'COMPLETED':
         nested = result.get('state')
         return nested if isinstance(nested, str) else 'completed'
@@ -139,14 +143,18 @@ def _job_clip(job: dict) -> str:
 def build_activity(settings, jobs: list[dict], rows: list[dict]) -> list[dict]:
     events: list[dict] = []
     source_to_clip: dict[str, tuple[str | None, str]] = {}
+    job_to_row: dict[str, dict] = {}
     for row in rows:
+        if isinstance(row.get('job_id'), str):
+            job_to_row[row['job_id']] = row
         source_hash = (row.get('manifest') or {}).get('source_sha256')
         if isinstance(source_hash, str):
             source_to_clip[source_hash] = (row.get('job_id'), row.get('title') or row['folder'].name)
 
     for job in jobs:
         job_id = job.get('id')
-        clip = _job_clip(job)
+        row = job_to_row.get(str(job_id), {})
+        clip = row.get('title') or _job_clip(job)
         state = job.get('state')
         detail = ''
         try:
@@ -155,6 +163,8 @@ def build_activity(settings, jobs: list[dict], rows: list[dict]) -> list[dict]:
                 detail = detail_data.get('reason') or detail_data.get('error') or detail_data.get('production_stage') or ''
         except (ValueError, TypeError):
             pass
+        if state == 'production_failed' and row.get('failure_message'):
+            detail = row['failure_message']
         events.append(_event(
             key=f'job:{job_id}:{job.get("updated_at")}', timestamp=job.get('updated_at') or job.get('created_at'),
             job_id=job_id, clip=clip, category='production', action='Trạng thái công việc',
