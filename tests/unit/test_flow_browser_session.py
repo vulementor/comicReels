@@ -125,6 +125,21 @@ def test_login_helper_marker_is_not_reclaimed(config):
     assert marker.read_text() == 'unknown legacy owner'
 
 
+def test_stale_windows_parent_lock_is_quarantined_before_browser_open(config):
+    if implementation().os.name != 'nt':
+        pytest.skip('Firefox parent.lock reconciliation is Windows-only')
+    lock=config.user_data_dir/'parent.lock'
+    lock.touch()
+    contexts=[]
+    provider=implementation().FlowBrowserSessionProvider(
+        config,context_factory=factory(config,contexts),auth_probe=signed_in)
+    with provider:
+        assert provider.session is not None
+    assert not lock.exists()
+    reconciled=list(config.user_data_dir.glob('.parent.lock.reconciled-*'))
+    assert len(reconciled)==1
+
+
 def test_provider_wraps_existing_page_and_reopens_same_profile(config):
     m = implementation()
     contexts = []
