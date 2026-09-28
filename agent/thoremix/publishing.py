@@ -216,7 +216,22 @@ def _effect(client, journal, *, key: str, platform: str, action: str, kwargs: di
     try:
         if record:
             record = client.inspect(record.operation_id)
-            if record.state not in {"confirmed", "failed"}:
+            if record.state == "needs_input":
+                # First reconcile read-only: a manually repaired/completed effect must
+                # win over any retry. Only durable KRP pre-submit proof may re-enable
+                # the same idempotent request, and at most once per invocation.
+                client.reconcile(record.operation_id)
+                record = client.inspect(record.operation_id)
+                if record.state == "needs_input":
+                    recover = getattr(client, "recover_pre_submit", None)
+                    if recover is not None:
+                        recover(record.operation_id)
+                        getattr(client, action)(
+                            platform=platform,
+                            idempotency_key=key,
+                            **kwargs,
+                        )
+            elif record.state not in {"confirmed", "failed"}:
                 client.reconcile(record.operation_id)
         else:
             getattr(client, action)(platform=platform, idempotency_key=key, **kwargs)
