@@ -72,46 +72,56 @@ async def run_ws_server():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    client = get_flow_client()
     await init_db()
-
-    # Load custom materials from DB into in-memory registry
-    from agent.db.crud import list_materials as db_list_materials
-    from agent.materials import register_material, _BUILTIN_IDS
+    tasks = []
+    controller = None
     try:
-        custom_materials = await db_list_materials()
-        for m in custom_materials:
-            if m["id"] not in _BUILTIN_IDS:
-                register_material(m)
-                logger.info("Loaded custom material from DB: %s", m["id"])
-    except Exception as e:
-        logger.warning("Failed to load custom materials: %s", e)
+        # Load custom materials from DB into in-memory registry.
+        from agent.db.crud import list_materials as db_list_materials
+        from agent.materials import register_material, _BUILTIN_IDS
+        try:
+            custom_materials = await db_list_materials()
+            for m in custom_materials:
+                if m["id"] not in _BUILTIN_IDS:
+                    register_material(m)
+                    logger.info("Loaded custom material from DB: %s", m["id"])
+        except Exception as e:
+            logger.warning("Failed to load custom materials: %s", e)
 
-    ops = init_sdk(get_flow_client())
-    logger.info("SDK initialized (OperationService ready)")
-    logger.info("Flow Kit starting on %s:%d", API_HOST, API_PORT)
+        await client.start_backend()
+        init_sdk(client)
+        logger.info("Flow Kit starting on %s:%d (backend=%s)", API_HOST, API_PORT, client.backend_kind)
 
-    controller = get_worker_controller()
+        if client.backend_kind == "extension":
+            controller = get_worker_controller()
+            # SIGTERM handler for graceful shutdown (Unix only).
+            try:
+                loop = asyncio.get_running_loop()
+                loop.add_signal_handler(signal.SIGTERM, controller.request_shutdown)
+            except (NotImplementedError, AttributeError):
+                pass
+            tasks.append(asyncio.create_task(run_ws_server()))
+            tasks.append(asyncio.create_task(controller.start()))
+            logger.info("WS server + worker started")
 
-    # SIGTERM handler for graceful shutdown (Unix only)
-    try:
-        loop = asyncio.get_event_loop()
-        loop.add_signal_handler(signal.SIGTERM, controller.request_shutdown)
-    except (NotImplementedError, AttributeError):
-        pass
-
-    # Start background tasks
-    ws_task = asyncio.create_task(run_ws_server())
-    worker_task = asyncio.create_task(controller.start())
-    logger.info("WS server + worker started")
-
-    yield
-
-    controller.request_shutdown()
-    await controller.drain()
-    ws_task.cancel()
-    worker_task.cancel()
-    await close_db()
-    logger.info("Flow Kit stopped")
+        yield
+    finally:
+        try:
+            if controller is not None:
+                controller.request_shutdown()
+                await controller.drain()
+        finally:
+            try:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                try:
+                    await client.close_backend()
+                finally:
+                    await close_db()
+                    logger.info("Flow Kit stopped")
 
 
 app = FastAPI(title="Flow Kit", version="1.3.1", lifespan=lifespan)
@@ -199,7 +209,10 @@ async def health():
     return {
         "status": "ok",
         "version": app.version,
-        "extension_connected": client.connected,
+        "extension_connected": client.extension_connected,
+        "backend_kind": client.backend_kind,
+        "backend_ready": client.connected,
+        "paid_dispatch_enabled": client.paid_dispatch_enabled,
         "ws": client.ws_stats,
     }
 
@@ -230,7 +243,10 @@ async def dashboard_ws(websocket: WebSocket):
             "type": "snapshot",
             "health": {
                 "status": "ok",
-                "extension_connected": client.connected,
+                "extension_connected": client.extension_connected,
+                "backend_kind": client.backend_kind,
+                "backend_ready": client.connected,
+                "paid_dispatch_enabled": client.paid_dispatch_enabled,
             },
             "requests": pending_requests + processing_requests,
             "worker": {

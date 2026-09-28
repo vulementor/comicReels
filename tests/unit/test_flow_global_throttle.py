@@ -81,6 +81,9 @@ async def test_non_generation_rpc_bypasses_generation_guard(monkeypatch):
 async def test_flow_status_exposes_extension_version(monkeypatch):
     class FakeClient:
         connected = True
+        extension_connected = True
+        backend_kind = "extension"
+        paid_dispatch_enabled = True
         _flow_key = None
         generation_guard_status = {
             "cooldown_active": False,

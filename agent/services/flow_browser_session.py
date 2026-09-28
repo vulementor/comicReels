@@ -175,8 +175,9 @@ class FlowBrowserSessionProvider:
     """
 
     def __init__(self, config: FlowProfileConfig, *, context_factory: Callable | None = None,
-                 auth_probe: Callable | None = None):
+                 auth_probe: Callable | None = None, visible: bool = True):
         self.config = config
+        self._visible = visible
         self._factory = context_factory or _camoufox_context
         self._auth_probe = auth_probe or (lambda _: AuthObservation())
         self._lease = FlowProfileLease(config)
@@ -208,7 +209,7 @@ class FlowBrowserSessionProvider:
         try:
             from kabin_browser_semantic import BrowserSession
             self._manager = self._factory(persistent_context=True,
-                user_data_dir=str(self.config.user_data_dir), headless=False, locale='vi-VN',
+                user_data_dir=str(self.config.user_data_dir), headless=not self._visible, locale='vi-VN',
                 main_world_eval=True)
             self._context = self._manager.__enter__()
             page = self._context.pages[0] if self._context.pages else self._context.new_page()

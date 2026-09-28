@@ -12,8 +12,15 @@ from agent.comicreels.images import sha256_file
 
 SCENE_BATCH_PROMPT = (
     'Tự đếm các khung trong ảnh truyện này. Mỗi khung tạo một ảnh bối cảnh 9:16 riêng, '
-    'đúng thứ tự; xóa chữ và bong bóng, giữ nguyên nhân vật, tư thế, biểu cảm, '
-    'bối cảnh và nét vẽ. Không ghép các khung thành một ảnh.\n\n'
+    'đúng thứ tự; xóa bong bóng thoại và phụ đề lời nói, giữ nguyên nhân vật, tư thế, biểu cảm, '
+    'bối cảnh và nét vẽ. Không ghép các khung thành một ảnh. '
+    'GIỮ NGUYÊN chữ nguồn trên biển báo, bảng thông báo, nhãn/đạo cụ và chữ kể chuyện mang ý nghĩa; '
+    'giữ đúng từng chữ và vị trí, không xóa thành bảng trắng. Đây không phải lời thoại. '
+    'Không thêm nhân vật, đạo cụ, đồ nội thất hay phần cơ thể bị cắt trong khung gốc. '
+    'Giữ nguyên phạm vi hình gốc ở giữa khung 9:16; phần thừa chỉ dùng nền màu phẳng '
+    'đồng nhất với nền có sẵn, không sáng tạo thêm chi tiết.\n\n'
+    'Đây là tách khung và xóa bong bóng thoại, không phải vẽ lại hoặc làm đẹp: không thêm gradient, '
+    'ánh sáng, texture hay bóng mới; giữ nét viền và các mảng màu phẳng như bản gốc.\n\n'
     'Yêu cầu bắt buộc: Giữ đúng thứ tự ảnh, biểu cảm nhân vật.'
 )
 

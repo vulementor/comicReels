@@ -84,6 +84,17 @@ def test_missing_profile_is_not_created(tmp_path):
     assert not (tmp_path / 'missing').exists()
 
 
+def test_background_provider_keeps_profile_but_launches_headless(config):
+    seen=[]
+    def create(**kwargs):
+        seen.append(kwargs)
+        return Context()
+    with implementation().FlowBrowserSessionProvider(config,context_factory=create,visible=False) as provider:
+        assert provider.session is not None
+    assert seen[0]['headless'] is True
+    assert seen[0]['user_data_dir']==str(config.user_data_dir)
+
+
 def test_profile_config_repr_does_not_expose_local_path(config):
     assert str(config.user_data_dir) not in repr(config)
 

@@ -1,6 +1,11 @@
 import pytest
 
-from agent.comicreels.prompts import build_shots, reference_video_prompt, split_for_model
+from agent.comicreels.prompts import (
+    build_shots,
+    reference_video_prompt,
+    split_for_model,
+    video_prompt,
+)
 
 
 def test_uneven_word_lengths_never_exceed_the_ten_second_dialogue_budget():
@@ -50,6 +55,18 @@ def test_reference_video_prompt_locks_three_images_and_character_design():
     assert "Không redesign" in prompt
     assert "Lời thoại phải được tạo trực tiếp trong video" in prompt
     assert "BASE SCRIPT WITH DIALOGUE" in prompt
+
+
+def test_speech_bubbles_are_removed_even_when_present_in_references():
+    prompts = [
+        video_prompt(speaker_id="CHAR_A", text="Giữ nguyên thoại.", duration_s=10, panel_order=0),
+        reference_video_prompt('CHAR_A says "Giữ nguyên thoại."', 3),
+    ]
+    for prompt in prompts:
+        assert "Loại bỏ toàn bộ bong bóng thoại" in prompt
+        assert "kể cả bong bóng có sẵn trong ảnh tham chiếu" in prompt
+        assert "Giữ nguyên thoại." in prompt
+        assert "chỉ phát bằng âm thanh" in prompt
 
 
 @pytest.mark.parametrize("count", [0, 4])

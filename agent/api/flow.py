@@ -165,6 +165,10 @@ async def extension_status():
     client = get_flow_client()
     return {
         "connected": client.connected,
+        "extension_connected": client.extension_connected,
+        "backend_kind": client.backend_kind,
+        "backend_ready": client.connected,
+        "paid_dispatch_enabled": client.paid_dispatch_enabled,
         # One transport now. The key stays so the documented pre-flight check
         # (CLAUDE.md) keeps reading {"transport": "batch", ...}.
         "transport": "batch",
