@@ -116,11 +116,13 @@ PAGES = {'videos': ('Video', 'Hồ sơ đã lưu · bài đăng và bình luận
          'affiliate': ('Affiliate', 'Sản phẩm và nội dung bình luận đã lưu'),
          'schedule': ('Sản xuất & lịch', 'Một ảnh nguồn = một truyện ngắn = một clip riêng'),
          'settings': ('Xử lý video', 'Dải che và âm thanh cuối clip · giữ nguyên khung hình và thời lượng'),
-         'activity': ('Hoạt động', 'Kết quả lệnh, dữ liệu cần xử lý và chẩn đoán')}
+         'activity': ('Nhật ký & Trạng thái', 'Sản xuất · sửa video · đăng từng kênh · lỗi và bước cần xử lý')}
 
 VIDEO_FILTERS = {'Tất cả': 'all', 'Đã sản xuất': 'produced', 'Đang lỗi': 'failed',
                  'Đã đăng': 'posted', 'Chờ đăng': 'ready'}
 VIDEO_ORDERS = {'Mới sản xuất trước': 'newest', 'Cũ sản xuất trước': 'oldest'}
+ACTIVITY_FILTERS = {'Tất cả': 'all', 'Lỗi & cần xử lý': 'attention',
+                    'Sản xuất': 'production', 'Sửa video': 'repair', 'Đăng kênh': 'publishing'}
 
 
 class DesktopWindow:
@@ -142,6 +144,7 @@ class DesktopWindow:
         self.production_limit = tk.StringVar(self.window, value=str(settings.daily_production_limit))
         self.video_filter = tk.StringVar(self.window, value='Tất cả')
         self.video_order = tk.StringVar(self.window, value='Mới sản xuất trước')
+        self.activity_filter = tk.StringVar(self.window, value='Tất cả')
         self.active = None
         self.review = None
         self.retry_job_id = None
@@ -178,6 +181,10 @@ class DesktopWindow:
                         foreground=MUTED, padding=(10, 10), relief='flat', borderwidth=0)
         style.map('Treeview', background=[('selected', '#ece7fb')], foreground=[('selected', INK)])
         style.configure('Horizontal.TProgressbar', background=ACCENT, troughcolor=BG, borderwidth=0)
+        style.configure('Activity.Treeview', font=('Segoe UI', 9), rowheight=34, background='white',
+                        fieldbackground='white', foreground=INK, borderwidth=0)
+        style.configure('Activity.Treeview.Heading', font=('Segoe UI', 9, 'bold'),
+                        background='#edf0f6', foreground=MUTED, padding=(8, 8), relief='flat')
 
     def label(self, parent, text='', *, size=10, bold=False, color=INK, **kw):
         return tk.Label(parent, text=text, font=('Segoe UI', size, 'bold' if bold else 'normal'),
@@ -689,18 +696,122 @@ class DesktopWindow:
         else:
             self.status.configure(text='Chưa có báo cáo sản xuất. Báo cáo được tạo khi chạy lượt đầu tiên.')
 
+    def _activity_rows(self):
+        rows = list(self.snapshot.get('activity') or [])
+        selected = ACTIVITY_FILTERS.get(self.activity_filter.get(), 'all')
+        if selected == 'attention':
+            rows = [row for row in rows if row.get('level') in {'error', 'attention'}]
+        elif selected != 'all':
+            rows = [row for row in rows if row.get('category') == selected]
+        return rows
+
+    def _activity_filter_changed(self, _event=None):
+        self.show_page('activity')
+
     def _page_activity(self):
         frame = self._padded()
         notebook = ttk.Notebook(frame)
         notebook.pack(fill='both', expand=True)
-        human, diagnostics = tk.Frame(notebook, bg='white', padx=12, pady=12), tk.Frame(notebook, bg='white', padx=12, pady=12)
-        notebook.add(human, text='Kết quả & cần xử lý')
+        timeline = tk.Frame(notebook, bg='white', padx=12, pady=12)
+        human = tk.Frame(notebook, bg='white', padx=12, pady=12)
+        diagnostics = tk.Frame(notebook, bg='white', padx=12, pady=12)
+        notebook.add(timeline, text='Nhật ký & trạng thái')
+        notebook.add(human, text='Kết quả lệnh gần nhất')
         notebook.add(diagnostics, text='Diagnostics')
+
+        toolbar = tk.Frame(timeline, bg='white')
+        toolbar.pack(fill='x', pady=(0, 10))
+        self.label(toolbar, 'Hiển thị', size=9, color=MUTED).pack(side='left', padx=(0, 6))
+        box = ttk.Combobox(toolbar, textvariable=self.activity_filter,
+                           values=tuple(ACTIVITY_FILTERS), state='readonly', width=19)
+        box.pack(side='left')
+        box.bind('<<ComboboxSelected>>', self._activity_filter_changed)
+
+        all_events = list(self.snapshot.get('activity') or [])
+        errors = sum(row.get('level') == 'error' for row in all_events)
+        attention = sum(row.get('level') == 'attention' for row in all_events)
+        waiting = sum(row.get('level') == 'waiting' for row in all_events)
+        ok = sum(row.get('level') == 'ok' for row in all_events)
+        self.label(toolbar, f'Lỗi {errors}   ·   Cần xử lý {attention}   ·   Đang/chờ {waiting}   ·   OK {ok}',
+                   size=9, bold=True, color=ACCENT).pack(side='right')
+
+        table_frame = tk.Frame(timeline, bg='white')
+        table_frame.pack(fill='both', expand=True)
+        columns = ('time', 'clip', 'action', 'channel', 'status')
+        tree = ttk.Treeview(table_frame, columns=columns, show='headings',
+                            style='Activity.Treeview', selectmode='browse', height=11)
+        headings = {'time': 'Thời gian', 'clip': 'Clip / nguồn', 'action': 'Hành động',
+                    'channel': 'Kênh', 'status': 'Trạng thái'}
+        widths = {'time': 150, 'clip': 245, 'action': 180, 'channel': 90, 'status': 140}
+        for column in columns:
+            tree.heading(column, text=headings[column])
+            tree.column(column, width=widths[column], anchor='w', stretch=column in {'clip', 'action'})
+        scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side='right', fill='y')
+        tree.pack(fill='both', expand=True)
+        tree.tag_configure('error', background='#fff0f0')
+        tree.tag_configure('attention', background='#fff8e8')
+        tree.tag_configure('ok', background='#eef9f1')
+        tree.tag_configure('waiting', background='white')
+
+        events = self._activity_rows()
+        by_iid = {}
+        for index, event in enumerate(events):
+            iid = f'event-{index}'
+            by_iid[iid] = event
+            tree.insert('', 'end', iid=iid, tags=(event.get('level') or 'waiting',), values=(
+                date_text(event.get('timestamp')),
+                str(event.get('clip') or ''),
+                str(event.get('action') or ''),
+                str(event.get('channel') or '—'),
+                str(event.get('status') or ''),
+            ))
+
+        detail = tk.Text(timeline, height=7, wrap='word', bg='#f7f8fb', fg=INK,
+                         font=('Segoe UI', 9), relief='flat', bd=0, padx=10, pady=8,
+                         highlightthickness=0)
+        detail.pack(fill='x', pady=(10, 0))
+
+        def show_detail(_event=None):
+            selected = tree.selection()
+            event = by_iid.get(selected[0]) if selected else None
+            if not event:
+                text = 'Chọn một dòng để xem chi tiết hành động và nguồn biên nhận.'
+            else:
+                parts = [
+                    'Clip: ' + str(event.get('clip') or '—'),
+                    'Thời gian: ' + date_text(event.get('timestamp')),
+                    'Nhóm: ' + {'production':'Sản xuất','repair':'Sửa video','publishing':'Đăng kênh'}.get(
+                        event.get('category'), str(event.get('category') or '—')),
+                    'Hành động: ' + str(event.get('action') or '—'),
+                    'Kênh: ' + str(event.get('channel') or '—'),
+                    'Trạng thái: ' + str(event.get('status') or '—'),
+                ]
+                if event.get('detail'):
+                    parts += ['', 'Chi tiết: ' + str(event['detail'])]
+                if event.get('source'):
+                    parts += ['', 'Nguồn biên nhận: ' + str(event['source'])]
+                text = '\n'.join(parts)
+            detail.configure(state='normal')
+            detail.delete('1.0', 'end')
+            detail.insert('1.0', text)
+            detail.configure(state='disabled')
+
+        tree.bind('<<TreeviewSelect>>', show_detail)
+        if events:
+            tree.selection_set('event-0')
+            tree.focus('event-0')
+        show_detail()
+        self.activity_tree = tree
+
         issues = '\n'.join(self.snapshot.get('issues', []))
         last = mapping(self.snapshot.get('last'))
         saved = readable_result(str(last.get('command')), mapping(last.get('result'))) if last else 'Chưa có kết quả lệnh đã lưu.'
-        self.text_panel(human, (issues + '\n\n' if issues else '') + self.activity + '\n\nKẾT QUẢ ĐÃ LƯU\n' + saved)
-        self.text_panel(diagnostics, self.diagnostics or json.dumps(last, ensure_ascii=False, indent=2), diagnostic=True)
+        self.text_panel(human, (issues + '\n\n' if issues else '') + self.activity +
+                        '\n\nKẾT QUẢ ĐÃ LƯU\n' + saved)
+        self.text_panel(diagnostics, self.diagnostics or json.dumps(last, ensure_ascii=False, indent=2),
+                        diagnostic=True)
 
     def open_local(self, path):
         if Path(path).exists():
