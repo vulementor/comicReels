@@ -253,7 +253,7 @@ def test_comment_failure_never_repeats_upload(package, rig):
 
 
 @pytest.mark.parametrize("effect,state_field", [("publication", "publish_state"), ("comment", "comment_state")])
-def test_needs_input_reconciles_original_operation_without_resubmission(package, rig, effect, state_field):
+def test_needs_input_retries_only_after_readonly_reconcile_and_presubmit_proof(package, rig, effect, state_field):
     fb = rig[1]["facebook"]
     setattr(fb, state_field, "needs_input")
     first = run(package, rig)
@@ -262,25 +262,28 @@ def test_needs_input_reconciles_original_operation_without_resubmission(package,
     original_id, original_key = original["operation_id"], original["idempotency_key"]
     assert original_id and not first["complete"]
 
-    # A still-blocked read must retain the receipt and never retry either effect.
+    # No exact external match: KRP preserves needs_input from durable pre-submit
+    # evidence, then the same idempotent effect may be attempted once this run.
     fb.reconcile_state = "needs_input"
     pending = run(package, rig)
     assert pending["platforms"]["facebook"][effect]["state"] == "needs_input"
     assert pending["platforms"]["facebook"][effect]["operation_id"] == original_id
     assert not pending["complete"]
     assert fb.reconciles == [original_id]
-    assert len(fb.uploads) == 1
-    assert len(fb.comments) == (1 if effect == "comment" else 0)
+    assert len(fb.uploads) == (2 if effect == "publication" else 1)
+    assert len(fb.comments) == (2 if effect == "comment" else 0)
 
-    # After login/actor repair or a manually completed effect, reconcile confirms
-    # the same record. A publication may now receive its first affiliate comment.
+    # If read-only reconciliation later proves the same effect already exists,
+    # it wins immediately and no additional submit is attempted.
+    upload_count, comment_count = len(fb.uploads), len(fb.comments)
     fb.reconcile_state = "confirmed"
     repaired = run(package, rig)
     assert repaired["complete"]
     assert repaired["platforms"]["facebook"][effect]["operation_id"] == original_id
     assert repaired["platforms"]["facebook"][effect]["idempotency_key"] == original_key
     assert fb.reconciles == [original_id, original_id]
-    assert all(len(adapter.uploads) == len(adapter.comments) == 1 for adapter in rig[1].values())
+    assert len(fb.uploads) == upload_count
+    assert len(fb.comments) == comment_count + (1 if effect == "publication" else 0)
     journal = rig[4][-1]["journal"]
     assert journal.get_by_key(original_key).operation_id == original_id
     with journal.connect() as connection:
