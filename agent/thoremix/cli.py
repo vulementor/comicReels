@@ -108,6 +108,9 @@ def main(argv=None) -> int:
     repair_audio.add_argument('--force',action='store_true')
     repair_all=commands.add_parser('repair-audio-all')
     repair_all.add_argument('--force',action='store_true')
+    repair_text=commands.add_parser('repair-source-text')
+    repair_text.add_argument('job_id')
+    repair_text.add_argument('--spec',type=Path,required=True)
     approval=commands.add_parser('approve')
     approval.add_argument('job_id')
     approval.add_argument('--manifest-sha256',required=True)
@@ -154,6 +157,11 @@ def main(argv=None) -> int:
         if args.command=='repair-audio-all':
             from .audio_repair import repair_all_finished
             result=repair_all_finished(Settings.load(args.root),force=args.force)
+            print(json.dumps(result,ensure_ascii=False))
+            return 0
+        if args.command=='repair-source-text':
+            from .text_repair import repair_source_text_from_file
+            result=repair_source_text_from_file(Settings.load(args.root),args.job_id,args.spec)
             print(json.dumps(result,ensure_ascii=False))
             return 0
         if args.command=='approve':
