@@ -182,7 +182,8 @@ def build_activity(settings, jobs: list[dict], rows: list[dict]) -> list[dict]:
                 state=_stage_state(data), detail=_result_detail(data), source=str(path)))
 
         for kind, label in (('audio-repairs', 'Sửa âm thanh'),
-                            ('source-text-repairs', 'Phục hồi chữ nguồn')):
+                            ('source-text-repairs', 'Phục hồi chữ nguồn'),
+                            ('media-corrections', 'Chuẩn bị correction revision')):
             path = settings.data / kind / str(job_id) / 'repair.json'
             if not path.is_file():
                 continue
