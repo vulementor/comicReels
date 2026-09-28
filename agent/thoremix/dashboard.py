@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
@@ -104,6 +104,40 @@ def selected_key(rows: list[dict], previous: str | None) -> str | None:
     return previous if previous in keys else (keys[0] if keys else None)
 
 
+def _timestamp(value) -> float | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def visible_rows(rows: list[dict], filter_name: str = 'all', order: str = 'newest') -> list[dict]:
+    """Filter the video list and sort by production time, never approval/update time."""
+    filters = {
+        'all': lambda row: True,
+        'produced': lambda row: bool(row.get('video')),
+        'failed': lambda row: row.get('job_state') == 'production_failed',
+        'posted': lambda row: int(row.get('posted_count') or 0) > 0,
+        'ready': lambda row: (bool(row.get('video')) and int(row.get('posted_count') or 0) == 0
+                              and row.get('job_state') in {'video_ready', 'awaiting_approval'}),
+    }
+    predicate = filters.get(filter_name, filters['all'])
+    selected = [row for row in rows if predicate(row)]
+    reverse = order != 'oldest'
+    produced = [(stamp, row) for row in selected
+                if (stamp := _timestamp(row.get('produced_at'))) is not None]
+    pending = [row for row in selected if _timestamp(row.get('produced_at')) is None]
+    produced.sort(key=lambda item: (item[0], item[1].get('key', '')), reverse=reverse)
+    pending.sort(key=lambda row: (_timestamp(row.get('created_at')) or float('-inf'),
+                                  row.get('key', '')), reverse=reverse)
+    return [row for _, row in produced] + pending
+
+
 def date_text(value) -> str:
     try:
         return datetime.fromisoformat(str(value).replace('Z', '+00:00')).astimezone().strftime('%d/%m/%Y · %H:%M %Z')
@@ -129,12 +163,18 @@ def build_snapshot(settings: Settings) -> dict:
     except (OSError, ValueError, TypeError, KeyError):
         issues.append('Cấu hình không đọc được; đang hiển thị cấu hình của phiên mở cửa sổ.')
     jobs = []
+    attempts = {}
     database = settings.data / 'campaign.sqlite3'
     if database.is_file():
         try:
             with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=0.2) as db:
                 db.row_factory = sqlite3.Row
-                jobs = [dict(r) for r in db.execute('SELECT * FROM jobs ORDER BY updated_at DESC')]
+                jobs = [dict(r) for r in db.execute('SELECT * FROM jobs ORDER BY created_at DESC')]
+                try:
+                    attempts = {r['job_id']: dict(r) for r in db.execute(
+                        'SELECT * FROM production_attempts ORDER BY started_at,job_id')}
+                except sqlite3.Error:
+                    attempts = {}
         except sqlite3.Error:
             issues.append('Chưa đọc được hàng đợi; cơ sở dữ liệu có thể đang bận.')
     folders = {str(Path(j['package_dir']).resolve()): j for j in jobs if j.get('package_dir')}
@@ -200,7 +240,15 @@ def build_snapshot(settings: Settings) -> dict:
             if job.get('state')=='production_failed':retry_label='Thử lại sản xuất'
             elif job.get('state') in {'production_pending','production_quarantined','reserved'}:
                 retry_label='Đối soát & tiếp tục' if saved_stage.get('state') in {'UNKNOWN','SUBMITTING'} else 'Tiếp tục sản xuất'
+        attempt = attempts.get(job.get('id'), {})
+        produced_at = (manifest.get('created_at') if manifest else None)
+        if not produced_at and attempt.get('status') == 'complete':
+            produced_at = attempt.get('completed_at')
+        posted_count = sum(view['channels'][p]['publication'] == 'Đã xác nhận' for p in PLATFORMS)
         rows.append({'key': folder_text, 'folder': folder, 'job_id': job.get('id'),
+                     'created_at': job.get('created_at') or manifest.get('created_at'),
+                     'produced_at': produced_at, 'job_state': job.get('state'),
+                     'posted_count': posted_count,
                      'retry_label':retry_label,'failure_message':failure_message(stage,saved_stage),
                      'title': str(manifest.get('title') or Path(job.get('source') or folder.name).stem),
                      'caption': str(manifest.get('caption') or 'Chưa có nội dung đã chốt.'),
