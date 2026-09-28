@@ -5,6 +5,7 @@ import json
 import math
 import re
 import shutil
+import time
 import uuid
 from pathlib import Path
 
@@ -39,6 +40,27 @@ def failure_message(stage,record):
         return f"Bước {STAGE_NAMES.get(stage,'sản xuất')} chưa hoàn tất. Có thể thử lại từ dữ liệu đã lưu."
     return ''
 
+
+
+def retry_failed(settings,*,now=None,sleep=time.sleep):
+    """Retry the failed-story snapshot once each, respecting the global failure cooldown.
+
+    The snapshot is captured before any retry starts so a story that fails again during
+    this batch is never appended and retried forever.
+    """
+    from .production_queue import ProductionQueue,local_now
+    settings=Settings.load(settings.directory) if settings.path.exists() else settings
+    now=now or (lambda:local_now(settings))
+    queue=ProductionQueue(settings)
+    job_ids=[a['job_id'] for a in queue.attempts() if a['status']=='failed']
+    results=[]
+    for job_id in job_ids:
+        remaining=queue.cooldown_remaining(now())
+        if remaining>0:
+            sleep(remaining)
+        results.append(retry_story(settings,job_id,now=now))
+    return {'state':'retry_batch_finished','requested':len(job_ids),
+            'processed':len(results),'results':results}
 
 def retry_story(settings,job_id,*,producer_factory=None,now=None):
     from .production_queue import ProductionQueue,local_now
