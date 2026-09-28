@@ -10,12 +10,42 @@ import json
 from pathlib import Path
 import shutil
 
-from agent.comicreels.sign_text import render_sign_text, validate_overlay
+from agent.comicreels.sign_text import render_sign_text, select_overlay_font, validate_overlay
 
 from .audio_guard import verify_native_audio
 from .config import Settings, atomic_json
 from .core import Campaign, campaign_operation, media_tool, root_operation, sha256, validate_media
 from .quality import POLICY
+
+
+def _bound_repair_input(settings: Settings, job_id: str, folder: Path, package: dict, expected_sha: str) -> Path:
+    current=Path(package['video_path']).resolve(strict=True)
+    if sha256(current)==expected_sha:
+        return current
+    overlay=package.get('source_text_overlay') if isinstance(package.get('source_text_overlay'),dict) else {}
+    if overlay.get('base_video_sha256')!=expected_sha:
+        raise ValueError('SOURCE_TEXT_REPAIR_SPEC_NOT_BOUND')
+    roots=[
+        folder/'edits',
+        settings.data/'audio-repairs'/job_id,
+        settings.data/'production'/job_id/'finishing',
+    ]
+    matches=[]
+    for root in roots:
+        if not root.exists():
+            continue
+        for candidate in root.rglob('*.mp4'):
+            try:
+                resolved=candidate.resolve(strict=True)
+                if sha256(resolved)==expected_sha:
+                    validate_media(resolved,tool_root=settings.directory)
+                    matches.append(resolved)
+            except (OSError,ValueError):
+                continue
+    unique=list(dict.fromkeys(matches))
+    if not unique:
+        raise ValueError('SOURCE_TEXT_REPAIR_BASE_NOT_FOUND')
+    return unique[0]
 
 
 def repair_source_text(settings: Settings, job_id: str, spec: dict, *, font: Path | None = None) -> dict:
@@ -30,15 +60,16 @@ def repair_source_text(settings: Settings, job_id: str, spec: dict, *, font: Pat
     package=campaign.reconcile_package(job_id)
     before_hash=sha256(package_path)
     source=Path(package['source_path']).resolve(strict=True)
-    video=Path(package['video_path']).resolve(strict=True)
-    if (source.parent!=folder or video.parent!=folder
+    current_video=Path(package['video_path']).resolve(strict=True)
+    if (source.parent!=folder or current_video.parent!=folder
             or sha256(source)!=package['source_sha256']
-            or sha256(video)!=package['video_sha256']):
+            or sha256(current_video)!=package['video_sha256']):
         raise ValueError('SOURCE_TEXT_REPAIR_PACKAGE_CHANGED')
-    if spec['source_sha256']!=package['source_sha256'] or spec['video_sha256']!=package['video_sha256']:
+    if spec['source_sha256']!=package['source_sha256']:
         raise ValueError('SOURCE_TEXT_REPAIR_SPEC_NOT_BOUND')
+    video=_bound_repair_input(settings,job_id,folder,package,spec['video_sha256'])
 
-    font=Path(font or 'C:/Windows/Fonts/comicbd.ttf').resolve(strict=True)
+    font=Path(font).resolve(strict=True) if font else select_overlay_font(spec['text'])
     work=settings.data/'source-text-repairs'/job_id
     work.mkdir(parents=True,exist_ok=True)
     output=work/(package['video_sha256'][:16]+'-source-text.mp4')
