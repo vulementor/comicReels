@@ -67,6 +67,15 @@ def repair_source_text(settings: Settings, job_id: str, spec: dict, *, font: Pat
         raise ValueError('SOURCE_TEXT_REPAIR_PACKAGE_CHANGED')
     if spec['source_sha256']!=package['source_sha256']:
         raise ValueError('SOURCE_TEXT_REPAIR_SPEC_NOT_BOUND')
+    existing=package.get('source_text_overlay') if isinstance(package.get('source_text_overlay'),dict) else {}
+    if (existing.get('spec')==spec
+            and existing.get('output_sha256')==package['video_sha256']):
+        if sha256(current_video)!=existing['output_sha256']:
+            raise ValueError('SOURCE_TEXT_REPAIR_OUTPUT_CHANGED')
+        return {'state':'source_text_already_repaired','job_id':job_id,
+                'video_sha256':package['video_sha256'],
+                'base_video_sha256':existing.get('base_video_sha256'),
+                'source_text_overlay':existing}
     video=_bound_repair_input(settings,job_id,folder,package,spec['video_sha256'])
 
     font=Path(font).resolve(strict=True) if font else select_overlay_font(spec['text'])
