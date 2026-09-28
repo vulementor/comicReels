@@ -28,6 +28,8 @@ def test_activity_timeline_combines_production_repair_and_platform_effects(tmp_p
             'accepted':False,'issues':['Sai cảnh ở đoạn cuối.']}}})
     write_json(settings.data/'audio-repairs'/job_id/'repair.json',{
         'state':'promoted_awaiting_approval'})
+    write_json(settings.data/'media-corrections'/job_id/'revision.json',{
+        'state':'correction_ready'})
     journal=settings.data/'krp'/'state.sqlite3'
     journal.parent.mkdir(parents=True,exist_ok=True)
     with sqlite3.connect(journal) as db:
@@ -49,6 +51,8 @@ def test_activity_timeline_combines_production_repair_and_platform_effects(tmp_p
 
     assert any(e['category']=='repair' and e['action']=='Sửa âm thanh'
                and e['status']=='Đã sửa · chờ duyệt' for e in events)
+    assert any(e['category']=='repair' and e['action']=='Chuẩn bị correction revision'
+               and e['status']=='Revision sạch sẵn sàng' for e in events)
     qa=next(e for e in events if e['action']=='QA video')
     assert qa['status']=='Cần xử lý' and qa['level']=='attention'
     assert qa['detail']=='Sai cảnh ở đoạn cuối.'
