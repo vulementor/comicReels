@@ -48,9 +48,10 @@ def test_overlay_rejects_unbound_or_unverified_geometry(change):
 
 
 def test_filters_limit_overlay_to_verified_half_open_frame_interval(tmp_path):
-    font = Path('C:/Windows/Fonts/comicbd.ttf')
-    if not font.is_file():
-        pytest.skip('Windows font fixture not installed')
+    try:
+        font = select_overlay_font(spec()['text'])
+    except ValueError:
+        pytest.skip('No overlay font with full Vietnamese coverage installed')
     filters, layout = overlay_filters(spec(), tmp_path, font)
     assert len(filters) == 4
     assert all("enable='gte(n,60)*lt(n,120)'" in f for f in filters)
