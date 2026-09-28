@@ -172,7 +172,10 @@ def _client(home: Path, profile: str, visible: bool, factory=None):
 
     config = _config(home, profile, visible)
     journal = EffectJournal(home / "state.sqlite3")
-    return (factory or KRPClient)(profile=profile, actor=ACTOR, config=config, journal=journal), journal
+    client = (factory or KRPClient)(profile=profile, actor=ACTOR, config=config, journal=journal)
+    if not callable(getattr(client, "recover_pre_submit", None)):
+        raise RuntimeError("KRP runtime is too old: durable pre-submit recovery is required")
+    return client, journal
 
 
 def _write_projection(path: Path, projection: dict) -> None:
