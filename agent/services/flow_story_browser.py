@@ -206,6 +206,65 @@ class FlowStoryBrowser:
         finally:
             provider.close()
 
+    def download_existing(self, record, folder, *, highest=True):
+        """Download an already-created Flow derivative without generation/upscale clicks.
+
+        This path is used for repair/recovery.  It performs only the read RPC that
+        resolves the immutable media URL plus an authenticated GET of those bytes;
+        it never presses the generate or upscale controls and works while production
+        automation is paused.
+        """
+        required=('media_id','project_id','workflow_id')
+        if (not isinstance(record,dict) or any(not isinstance(record.get(k),str)
+                or not record[k] for k in required)):
+            raise ValueError('RECOVERY_FLOW_IDENTITY_INVALID')
+        if record['project_id']!=self.runtime.flow_project_id:
+            raise ValueError('RECOVERY_FLOW_PROJECT_MISMATCH')
+        folder=Path(folder)
+        folder.mkdir(parents=True,exist_ok=True)
+        provider=FlowBrowserSessionProvider(FlowProfileConfig.load(Path(self.runtime.flow_profile_config)),
+                                            auth_probe=observe_flow_account,visible=False).open()
+        try:
+            page=provider.session.page
+            page.goto('https://flow.google.com/project/'+record['project_id'],
+                      wait_until='domcontentloaded',timeout=60000)
+            page.get_by_role('button',name='Thông tin về tài khoản',exact=True).wait_for(
+                state='visible',timeout=30000)
+            if observe_flow_account(page).state!='authenticated':
+                raise ValueError('FLOW_AUTH_REQUIRED')
+            stem='highest' if highest else 'original'
+            receipt_path=folder/(stem+'-download.json')
+            final=folder/(stem+'.mp4')
+            if receipt_path.exists():
+                receipt=json.loads(receipt_path.read_text(encoding='utf-8'))
+                if (receipt.get('state')=='COMPLETED'
+                        and all(receipt.get(k)==record[k] for k in required)
+                        and final.is_file() and artifact(final)==receipt.get('artifact')):
+                    validate_media(final,tool_root=self.settings.directory)
+                    return {'path':str(final),'data':receipt['data']}
+            resolution=720 if highest else 360
+            derivative=record['media_id']+('_720p_upsampled' if highest else '')
+            data=self._rpc(page,'as29s',fb.media_request(derivative))
+            url=fb.read_media_urls(data,derivative).video
+            parsed=urlsplit(url or '')
+            if (parsed.scheme!='https' or parsed.hostname!='flow-content.google'
+                    or parsed.path!='/video/'+derivative):
+                raise RuntimeError('RECOVERY_DOWNLOAD_NOT_BOUND')
+            response=page.request.get(url,timeout=120000)
+            if response.status!=200:
+                raise RuntimeError('RECOVERY_DOWNLOAD_FAILED')
+            raw=response.body()
+            if not 1024<len(raw)<128*1024*1024:
+                raise RuntimeError('RECOVERY_DOWNLOAD_BYTES_INVALID')
+            part=folder/(stem+'.part.mp4')
+            with part.open('wb') as stream:
+                stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            selected=f'{resolution}p existing Flow derivative'
+            return self._promote_download(part,final,receipt_path,record,selected,
+                                          [selected],highest)
+        finally:
+            provider.close()
+
     def _download(self,page,record,folder,*,highest):
         stem='highest' if highest else 'original'
         receipt_path=folder/(stem+'-download.json')
