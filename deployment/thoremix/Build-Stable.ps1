@@ -84,6 +84,7 @@ from dataclasses import asdict, replace
 import tkinter, ssl, sqlite3, PIL, httpx, tzdata, pydantic, yaml, camoufox, pystray
 import kabin_reel_poster, kabin_affiliate_toolkit
 import gpt_fullproxy, kabin_browser_semantic, faster_whisper
+from kabin_reel_poster.sdk import KRPClient
 from ffpyplayer.player import MediaPlayer
 from agent.services.flow_story_browser import FlowStoryBrowser
 from agent.thoremix.story_operations import StoryOperations
@@ -92,6 +93,7 @@ from agent.thoremix.config import Settings, atomic_json
 stage = pathlib.Path(os.environ['THOREMIX_BUILD_STAGE'])
 root = pathlib.Path(os.environ['THOREMIX_BUILD_ROOT'])
 assert pathlib.Path(core.__file__).resolve().is_relative_to(stage.resolve())
+assert callable(getattr(KRPClient, 'recover_pre_submit', None)), 'KRP runtime lacks durable pre-submit recovery'
 assert compileall.compile_dir(stage / 'source', quiet=1)
 s = Settings.load(root) if (root / 'config/settings.json').exists() else Settings(root=str(root))
 if os.environ.get('THOREMIX_AFF_PROFILE'):
