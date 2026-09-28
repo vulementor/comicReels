@@ -101,6 +101,7 @@ def main(argv=None) -> int:
     commands.add_parser('resume-quality-stops')
     retry=commands.add_parser('retry-production')
     retry.add_argument('job_id')
+    commands.add_parser('retry-failed')
     commands.add_parser('finish-unpublished')
     approval=commands.add_parser('approve')
     approval.add_argument('job_id')
@@ -133,6 +134,11 @@ def main(argv=None) -> int:
         if args.command=='retry-production':
             from .retry import retry_story
             result=retry_story(Settings.load(args.root),args.job_id)
+            print(json.dumps(result,ensure_ascii=False))
+            return 0
+        if args.command=='retry-failed':
+            from .retry import retry_failed
+            result=retry_failed(Settings.load(args.root))
             print(json.dumps(result,ensure_ascii=False))
             return 0
         if args.command=='approve':
