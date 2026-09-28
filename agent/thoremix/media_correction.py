@@ -354,9 +354,12 @@ def prepare_media_correction(settings: Settings, job_id: str) -> dict:
 
         receipt_dir = settings.data/'media-corrections'/job_id
         receipt_dir.mkdir(parents=True,exist_ok=True)
+        from .publishing import _manifest
+        _, publication_digest = _manifest(target)
         result = {
             'state':'correction_ready','job_id':job_id,'package':str(target/'package.json'),
-            'package_sha256':sha256(target/'package.json'),'video_sha256':candidate_sha,
+            'package_sha256':publication_digest,
+            'package_file_sha256':sha256(target/'package.json'),'video_sha256':candidate_sha,
             'publication_targets':['facebook','tiktok'],
             'idempotency_namespace':f"thoremix:{old['source_sha256']}:revision:{candidate_sha}",
             'retained_publications':retained,'prior_package':str(old_dir),
