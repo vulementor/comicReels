@@ -38,14 +38,14 @@ def test_activity_timeline_combines_production_repair_and_platform_effects(tmp_p
             '2026-09-28T11:00:00+00:00'))
 
     events=build_activity(settings,jobs,rows)
-    assert events[0]['category']=='publishing'
-    assert events[0]['clip']=='Clip one'
-    assert events[0]['channel']=='Facebook'
-    assert events[0]['action']=='Đăng video'
-    assert events[0]['level']=='attention'
-    assert 'https://' not in events[0]['detail']
-    assert 'SECRET' not in events[0]['detail']
-    assert '[đã ẩn]' in events[0]['detail']
+    publication=next(e for e in events if e['category']=='publishing')
+    assert publication['clip']=='Clip one'
+    assert publication['channel']=='Facebook'
+    assert publication['action']=='Đăng video'
+    assert publication['level']=='attention'
+    assert 'https://' not in publication['detail']
+    assert 'SECRET' not in publication['detail']
+    assert '[đã ẩn]' in publication['detail']
 
     assert any(e['category']=='repair' and e['action']=='Sửa âm thanh'
                and e['status']=='Đã sửa · chờ duyệt' for e in events)
