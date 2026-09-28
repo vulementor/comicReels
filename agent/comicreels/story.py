@@ -7,6 +7,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
 import os
 import re
 import tempfile
@@ -114,10 +122,8 @@ class StoryReceipt:
                     or any(package['flow'][key] != record[key]
                            for key in ('media_id', 'workflow_id', 'project_id'))):
                 raise ValueError
-            with video.open('rb') as stream:
-                video_hash = hashlib.file_digest(stream, 'sha256').hexdigest()
-            with original.open('rb') as stream:
-                source_hash = hashlib.file_digest(stream, 'sha256').hexdigest()
+            video_hash = _file_sha256(video)
+            source_hash = _file_sha256(original)
             if video_hash != package['video_sha256'] or source_hash != package['source_sha256']:
                 raise ValueError
             artifact = {'package_path': str(path), 'package_sha256': hashlib.sha256(raw).hexdigest(),
