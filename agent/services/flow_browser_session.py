@@ -197,6 +197,26 @@ class FlowBrowserSessionProvider:
         if self._thread is not None and self._thread != threading.get_ident():
             raise FlowBrowserError('WRONG_OWNER_THREAD')
 
+    def _reconcile_windows_parent_lock(self):
+        """Quarantine a stale Firefox parent.lock only while our OS lease is held.
+
+        A live Windows Firefox/Camoufox process normally keeps this file open
+        without delete sharing, so rename fails closed.  The canonical profile
+        is never edited beyond moving the zero-byte stale lock to an auditable
+        reconciled name.
+        """
+        if os.name!='nt':
+            return
+        lock=self.config.user_data_dir/'parent.lock'
+        if not lock.exists():
+            return
+        target=self.config.user_data_dir/(
+            f'.parent.lock.reconciled-{os.getpid()}-{datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")}')
+        try:
+            lock.rename(target)
+        except OSError:
+            raise FlowBrowserError('PROFILE_NATIVE_BUSY') from None
+
     def open(self):
         self._check_thread()
         if self._state == 'close_uncertain':
@@ -207,6 +227,7 @@ class FlowBrowserSessionProvider:
         self._thread = threading.get_ident()
         self._auth, self._count, self._error, self._observed_at = 'unknown', 0, None, None
         try:
+            self._reconcile_windows_parent_lock()
             from kabin_browser_semantic import BrowserSession
             self._manager = self._factory(persistent_context=True,
                 user_data_dir=str(self.config.user_data_dir), headless=not self._visible, locale='vi-VN',
