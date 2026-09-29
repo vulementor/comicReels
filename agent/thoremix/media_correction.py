@@ -22,6 +22,26 @@ ACTOR = 'thoremix'
 TARGETS = ('facebook', 'tiktok')
 
 
+def correction_approval_valid(settings: Settings, job_id: str, package: dict) -> bool:
+    """Return True only for an explicit approval bound to this exact correction manifest."""
+    if not isinstance(package.get('correction'), dict):
+        return True
+    path = settings.data/'media-corrections'/job_id/'approval.json'
+    if not path.is_file() or path.is_symlink():
+        return False
+    try:
+        approval = _json(path)
+        from .quality import manifest_digest
+        return (
+            approval.get('state') == 'approved'
+            and approval.get('job_id') == job_id
+            and approval.get('video_sha256') == package.get('video_sha256')
+            and approval.get('manifest_sha256') == manifest_digest(package)
+        )
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def _json(path: Path) -> dict:
     value = json.loads(Path(path).read_text(encoding='utf-8'))
     if not isinstance(value, dict):
@@ -252,6 +272,7 @@ def prepare_media_correction(settings: Settings, job_id: str) -> dict:
         retained = {'youtube': youtube}
         correction = {
             'kind': 'clean_native_audio',
+            'approval_required': True,
             'audio_repair_receipt_sha256': sha256(repair_path),
             'prior_package_sha256': old_package_sha,
             'prior_publication_package_sha256': publication_sha,
@@ -347,7 +368,7 @@ def prepare_media_correction(settings: Settings, job_id: str) -> dict:
             changed = db.execute(
                 'UPDATE jobs SET package_dir=?,state=?,detail=?,updated_at=? '
                 'WHERE id=? AND state=? AND package_dir=? AND source_sha256=?',
-                (str(target),'video_ready',json.dumps(detail,ensure_ascii=False),now_iso(),
+                (str(target),'awaiting_approval',json.dumps(detail,ensure_ascii=False),now_iso(),
                  job_id,'publishing',str(old_dir),old['source_sha256']))
             if changed.rowcount != 1:
                 raise ValueError('CORRECTION_JOB_CHANGED_BEFORE_PROMOTION')
@@ -357,7 +378,7 @@ def prepare_media_correction(settings: Settings, job_id: str) -> dict:
         from .publishing import _manifest
         _, publication_digest = _manifest(target)
         result = {
-            'state':'correction_ready','job_id':job_id,'package':str(target/'package.json'),
+            'state':'correction_ready_awaiting_approval','job_id':job_id,'package':str(target/'package.json'),
             'package_sha256':publication_digest,
             'package_file_sha256':sha256(target/'package.json'),'video_sha256':candidate_sha,
             'publication_targets':['facebook','tiktok'],
