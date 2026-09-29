@@ -120,7 +120,7 @@ def test_prepare_clean_media_correction_preserves_old_and_retains_youtube(correc
 
     result=mod.prepare_media_correction(settings,job['id'])
 
-    assert result['state']=='correction_ready'
+    assert result['state']=='correction_ready_awaiting_approval'
     assert result['video_sha256']==candidate_sha
     assert result['publication_targets']==['facebook','tiktok']
     assert result['idempotency_namespace'].endswith(':revision:'+candidate_sha)
@@ -129,7 +129,7 @@ def test_prepare_clean_media_correction_preserves_old_and_retains_youtube(correc
     assert journal.read_bytes()==before_journal
 
     current=campaign.get(job['id'])
-    assert current['state']=='video_ready'
+    assert current['state']=='awaiting_approval'
     target=Path(current['package_dir'])
     assert target!=old_dir and target.name.endswith('-correction-'+candidate_sha[:12])
     assert not (target/'publication.json').exists()
@@ -179,3 +179,26 @@ def test_revision_package_is_publishable_but_uses_only_new_targets(correction_ca
     assert manifest['publication_revision']==result['video_sha256']
     assert manifest['owner_correction']
     assert digest==result['package_sha256']
+
+
+def test_scheduler_cannot_publish_unapproved_correction_even_if_job_is_misclassified(correction_case):
+    from dataclasses import replace
+    from agent.thoremix.production_queue import run_slot
+
+    mod,settings,campaign,job,*_=correction_case
+    result=mod.prepare_media_correction(settings,job['id'])
+    assert result['state']=='correction_ready_awaiting_approval'
+
+    # Simulate a stale/incorrect DB state. The defensive scheduler gate must
+    # downgrade it back to awaiting_approval before any publisher can run.
+    campaign.update(job['id'],'video_ready',test_misclassification=True)
+    enabled=replace(settings,enabled=True)
+    enabled.save()
+    called=[]
+    outcome=run_slot(enabled,'11:00',
+        publisher=lambda *args,**kwargs: called.append((args,kwargs)) or {'complete':True},
+        now=lambda: __import__('datetime').datetime.fromisoformat('2026-09-29T11:00:00+07:00'))
+
+    assert outcome['state']=='awaiting_correction_approval'
+    assert called==[]
+    assert Campaign(enabled).get(job['id'])['state']=='awaiting_approval'
