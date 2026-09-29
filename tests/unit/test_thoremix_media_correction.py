@@ -288,3 +288,53 @@ def test_correction_approval_blocks_uncertain_revision_effect(correction_case):
     with pytest.raises(ValueError,match='EXTERNAL_EFFECT_UNCERTAIN'):
         mod.approve_media_correction(settings,job['id'],manifest_digest(package))
     assert campaign.get(job['id'])['state']=='awaiting_approval'
+
+
+def _make_legacy_correction_binding(mod,settings,job_id,result):
+    folder=Path(result['package']).parent
+    package_path=folder/'package.json'
+    package=json.loads(package_path.read_text(encoding='utf-8'))
+    package['correction'].pop('approval_required',None)
+    atomic_json(package_path,package)
+    from agent.thoremix.quality import manifest_digest
+    revision_path=settings.data/'media-corrections'/job_id/'revision.json'
+    revision=json.loads(revision_path.read_text(encoding='utf-8'))
+    revision.update(
+        state='correction_ready',
+        package_sha256=manifest_digest(package),
+        package_file_sha256=sha256(package_path),
+        video_sha256=package['video_sha256'],
+        publication_targets=['facebook','tiktok'],
+        idempotency_namespace=f"thoremix:{package['source_sha256']}:revision:{package['video_sha256']}",
+        prior_package_sha256=package['supersedes_package_sha256'],
+        prior_publication_package_sha256=package['prior_publication_package_sha256'],
+        audio_repair_receipt_sha256=package['audio_repair_receipt_sha256'],
+        retained_publications=package['retained_publications'],
+    )
+    atomic_json(revision_path,revision)
+    return package,manifest_digest(package),revision_path
+
+
+def test_receipt_bound_legacy_correction_can_use_new_approval_gate(correction_case):
+    mod,settings,campaign,job,*_=correction_case
+    result=mod.prepare_media_correction(settings,job['id'])
+    package,digest,_=_make_legacy_correction_binding(mod,settings,job['id'],result)
+
+    approved=mod.approve_media_correction(settings,job['id'],digest)
+
+    assert approved['state']=='correction_approved'
+    assert approved['video_sha256']==package['video_sha256']
+    assert campaign.get(job['id'])['state']=='video_ready'
+
+
+def test_legacy_correction_with_tampered_revision_binding_is_rejected(correction_case):
+    mod,settings,campaign,job,*_=correction_case
+    result=mod.prepare_media_correction(settings,job['id'])
+    package,digest,revision_path=_make_legacy_correction_binding(mod,settings,job['id'],result)
+    revision=json.loads(revision_path.read_text(encoding='utf-8'))
+    revision['package_file_sha256']='0'*64
+    atomic_json(revision_path,revision)
+
+    with pytest.raises(ValueError,match='PACKAGE_INVALID'):
+        mod.approve_media_correction(settings,job['id'],digest)
+    assert campaign.get(job['id'])['state']=='awaiting_approval'
