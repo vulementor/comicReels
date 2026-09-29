@@ -135,8 +135,12 @@ def cleanup_tiktok_stale_editor(settings: Settings, current_job_id: str,
         stale_job,stale_dir,stale_pkg,stale_pub,stale_digest=_package(
             campaign,stale_job_id)
 
-        if current_job['state']!='publishing':
-            raise ValueError('SOCIAL_CLEANUP_CURRENT_JOB_NOT_PUBLISHING')
+        if current_job['state'] not in {'video_ready','publishing'}:
+            raise ValueError('SOCIAL_CLEANUP_CURRENT_JOB_NOT_READY')
+        from .media_correction import correction_approval_valid
+        if (not isinstance(current_pkg.get('correction'),dict)
+                or not correction_approval_valid(settings,current_job_id,current_pkg)):
+            raise ValueError('SOCIAL_CLEANUP_CURRENT_CORRECTION_NOT_APPROVED')
         if stale_job['state']!='published' or stale_pub.get('complete') is not True:
             raise ValueError('SOCIAL_CLEANUP_STALE_JOB_NOT_FULLY_PUBLISHED')
         if 'tiktok' not in (current_pkg.get('publication_targets') or []):
