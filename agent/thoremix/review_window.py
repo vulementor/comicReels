@@ -23,6 +23,7 @@ class ReviewWindow:
     def __init__(self, app, row):
         from .quality import manifest_digest
         self.app=app;self.row=row;self.player=None;self.timer=None;self.alive=True
+        self.is_correction=isinstance(row.get('manifest',{}).get('correction'),dict)
         self.reviewed_digest=manifest_digest(row['manifest']);self.invalidated=False
         self.first_frame=True;self.preview_target=0.;self.playing=False;self.ended=False;self.muted=False
         self.position=0.;self.duration=float(row['manifest'].get('media',{}).get('duration_s',10))
@@ -35,9 +36,13 @@ class ReviewWindow:
         app.label(header,row['title'],bold=True,size=17,wraplength=970).pack(anchor='w',pady=(6,0))
         self.state=app.label(header,row['state'],color=MUTED,size=10);self.state.pack(anchor='w',pady=(5,0))
         footer=tk.Frame(self.window,bg='white',padx=24,pady=14);footer.pack(side='bottom',fill='x')
-        self.feedback=app.label(footer,'Xem clip và nhận xét trước khi duyệt.',color=MUTED,wraplength=520)
+        self.feedback=app.label(footer,
+            'Xem kỹ correction sạch trước khi duyệt Facebook + TikTok.' if self.is_correction
+            else 'Xem clip và nhận xét trước khi duyệt.',color=MUTED,wraplength=520)
         self.feedback.pack(side='left',fill='x',expand=True)
-        self.approve=app.button(footer,'Duyệt clip để đăng',self.request_approval,primary=True)
+        self.approve=app.button(footer,
+            'Duyệt correction để đăng' if self.is_correction else 'Duyệt clip để đăng',
+            self.request_approval,primary=True)
         self.approve.pack(side='right',padx=(12,0))
         app.button(footer,'Đóng',self.close).pack(side='right')
         body=tk.Frame(self.window,bg=BG);body.pack(fill='both',expand=True,padx=24,pady=(0,18))
@@ -159,14 +164,30 @@ class ReviewWindow:
     def request_approval(self):
         if self.invalidated:return
         self.approval_requested=True;self.approve.configure(text='Đang gửi…',state='disabled')
-        self.feedback.configure(text='Đang lưu yêu cầu duyệt clip này…')
-        queued=self.app.launch('approve',self.row['job_id'],'--manifest-sha256',self.reviewed_digest)
+        self.feedback.configure(text='Đang lưu duyệt correction sạch…' if self.is_correction
+                                else 'Đang lưu yêu cầu duyệt clip này…')
+        command='approve-correction' if self.is_correction else 'approve'
+        queued=self.app.launch(command,self.row['job_id'],'--manifest-sha256',self.reviewed_digest)
         if queued is False:
             self.approval_requested=False;self._approval_state(self.row)
-            self.feedback.configure(text='Chưa lưu được yêu cầu duyệt. Anh có thể bấm thử lại.')
+            self.feedback.configure(text='Chưa lưu được duyệt correction.' if self.is_correction
+                                    else 'Chưa lưu được yêu cầu duyệt. Anh có thể bấm thử lại.')
         self.window.after(250,self.sync)
 
     def _approval_state(self,row):
+        if self.is_correction:
+            from .media_correction import correction_approval_valid
+            approved=correction_approval_valid(self.app.settings,row['job_id'],row['manifest'])
+            if approved:
+                self.approve.configure(text='Đã duyệt correction',state='disabled')
+                if self.approval_requested:
+                    self.feedback.configure(text='Đã duyệt correction sạch. Clip chỉ được đưa vào hàng chờ Facebook + TikTok.')
+                self.approval_requested=False
+            else:
+                self.approve.configure(text='Đã gửi · chờ áp dụng' if self.approval_requested
+                    else 'Duyệt correction để đăng',
+                    state='disabled' if self.approval_requested else 'normal')
+            return
         status=row['manifest'].get('review',{}).get('status')
         if status=='pending':
             self.approve.configure(text='Đã gửi · chờ áp dụng' if self.approval_requested else 'Duyệt clip để đăng',
@@ -183,17 +204,20 @@ class ReviewWindow:
             review=row['manifest'].get('review',{})
             expected_approval=(review.get('status')=='approved'
                 and review.get('approved_manifest_sha256')==self.reviewed_digest)
-            if (manifest_digest(row['manifest'])!=self.reviewed_digest and not expected_approval) or self.invalidated:
+            if manifest_digest(row['manifest'])!=self.reviewed_digest or self.invalidated:
                 self.invalidated=True
                 self._stop_player();self.approve.configure(state='disabled',text='Mở lại bản mới')
                 self.feedback.configure(text='Hồ sơ đã thay đổi. Đóng và mở lại để xem đúng bản mới.');return
             self.row=row;self.state.configure(text=row['state']);self._approval_state(row)
-        request=self.app.settings.data/'review-requests'/(str(self.row['job_id'])+'.json')
-        if (self.approval_requested and not request.is_file() and self.app.active!='approve'
-                and self.row['manifest'].get('review',{}).get('status')=='pending'):
+        request=(self.app.settings.data/'media-corrections'/str(self.row['job_id'])/'approval.json'
+                 if self.is_correction else
+                 self.app.settings.data/'review-requests'/(str(self.row['job_id'])+'.json'))
+        active_command='approve-correction' if self.is_correction else 'approve'
+        if self.approval_requested and not request.is_file() and self.app.active!=active_command:
             self.approval_requested=False;self._approval_state(self.row)
-            self.feedback.configure(text='Chưa lưu được yêu cầu duyệt. Anh có thể bấm thử lại.')
-        if self.approval_requested and request.is_file():
+            self.feedback.configure(text='Chưa lưu được duyệt correction.' if self.is_correction
+                                    else 'Chưa lưu được yêu cầu duyệt. Anh có thể bấm thử lại.')
+        if self.approval_requested and request.is_file() and not self.is_correction:
             try:saved=json.loads(request.read_text(encoding='utf-8'))
             except (OSError,ValueError):return
             if saved.get('state')=='rejected':
