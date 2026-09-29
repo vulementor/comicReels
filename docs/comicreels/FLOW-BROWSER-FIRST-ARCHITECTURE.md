@@ -1,7 +1,7 @@
 # Flow Browser-First Refactor Architecture
 
-Status: **OWNER APPROVED — DESIGN BASELINE**  
-Date: 2026-09-27  
+Status: **OWNER APPROVED — DESIGN BASELINE**
+Date: 2026-09-27
 Scope: ComicReels / FlowKit transport refactor only.
 
 ## 1. Goal
