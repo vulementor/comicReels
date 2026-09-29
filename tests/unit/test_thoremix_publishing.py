@@ -461,3 +461,38 @@ def test_old_krp_without_pre_submit_recovery_is_rejected_before_effects(package,
     with pytest.raises(RuntimeError, match="durable pre-submit recovery"):
         mod.publish_package(package, krp_home=home, client_factory=legacy_factory)
     assert all(not adapter.uploads and not adapter.comments for adapter in adapters.values())
+
+
+def test_single_platform_stop_after_publication_preserves_other_projection_and_skips_comment(package, rig):
+    manifest=json.loads((package/'package.json').read_text(encoding='utf-8'))
+    revision=manifest['video_sha256']
+    manifest.update(
+        publication_revision=revision,
+        supersedes_package_sha256='b'*64,
+        owner_correction='Correction only for Facebook and TikTok.',
+        publication_targets=['facebook','tiktok'])
+    (package/'package.json').write_text(json.dumps(manifest),encoding='utf-8')
+    _,digest=rig[0]._manifest(package)
+    prior={
+        'schema_version':1,'package_sha256':digest,'source_sha256':manifest['source_sha256'],
+        'complete':False,'platforms':{
+            'facebook':{'status':'needs_input','target':dict(rig[0].TARGETS['facebook'])},
+            'tiktok':{'status':'needs_input','target':dict(rig[0].TARGETS['tiktok']),
+                      'publication':{'state':'needs_input','operation_id':'old-tiktok',
+                                     'idempotency_key':'old-key','permalink':None}}
+        }}
+    (package/'publication.json').write_text(json.dumps(prior),encoding='utf-8')
+
+    result=rig[0].publish_package(
+        package,krp_home=rig[3],client_factory=rig[2],
+        only_platforms=['facebook'],stop_after_publication=True)
+
+    assert result['complete'] is False
+    assert result['platforms']['facebook']['status']=='confirmed'
+    assert result['platforms']['facebook']['publication']['state']=='confirmed'
+    assert result['platforms']['facebook']['publication']['permalink']=='https://www.facebook.com/video/123'
+    assert 'comment' not in result['platforms']['facebook']
+    assert len(rig[1]['facebook'].uploads)==1
+    assert len(rig[1]['facebook'].comments)==0
+    assert len(rig[1]['tiktok'].uploads)==len(rig[1]['tiktok'].comments)==0
+    assert result['platforms']['tiktok']==prior['platforms']['tiktok']
