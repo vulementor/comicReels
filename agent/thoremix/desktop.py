@@ -39,6 +39,10 @@ def readable_result(command: str, result: dict) -> str:
             'retry_cooldown':f"Chờ thêm {result.get('seconds',60)} giây sau lượt lỗi rồi thử lại."}
         text=labels.get(result.get('state'),'Chưa chạy được yêu cầu; xem chi tiết trong Hoạt động.')
         return text+(' '+result['message'] if result.get('message') else '')
+    if command=='approve-correction':
+        if result.get('state')=='correction_approved':
+            return 'Đã duyệt correction; clip sạch được đưa vào hàng chờ đăng Facebook và TikTok.'
+        return str(result.get('reason') or 'Chưa duyệt được correction; làm mới và xem lại đúng bản hiện tại.')
     if command=='approve':
         if result.get('state')=='approval_rejected':
             return 'Chưa áp dụng duyệt vì hồ sơ đã thay đổi. Làm mới và xem lại video hiện tại.'
@@ -445,7 +449,17 @@ class DesktopWindow:
             self.label(cell, f'Cảnh {i + 1}', size=8, color=MUTED).pack()
         if row.get('qa_issues'):
             self.label(detail, 'QA tham khảo · mở clip để xem nhận xét',color=MUTED,size=9,wraplength=270).pack(fill='x',pady=8)
-        if row['manifest'] and row['manifest'].get('review',{}).get('status')!='pending':
+        correction=isinstance(row.get('manifest',{}).get('correction'),dict)
+        correction_approved=True
+        if correction:
+            from .media_correction import correction_approval_valid
+            correction_approved=correction_approval_valid(self.settings,row['job_id'],row['manifest'])
+            self.label(detail,
+                'Correction đã duyệt · chỉ Facebook + TikTok' if correction_approved else
+                'Correction sạch đang chờ duyệt riêng trước khi đăng',
+                color=ACCENT if correction_approved else MUTED,size=9,wraplength=270).pack(fill='x',pady=(2,8))
+        review_ready=(row['manifest'] and row['manifest'].get('review',{}).get('status')!='pending')
+        if review_ready and correction_approved:
             self.button(detail, 'Đăng / đối soát hồ sơ', lambda: self.launch('publish', str(row['folder']))).pack(fill='x', pady=4)
         for link in row['links']:
             self.button(detail, link['label'] + ' ↗', lambda u=link['url']: webbrowser.open(u)).pack(fill='x', pady=3)
