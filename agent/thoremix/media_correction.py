@@ -42,6 +42,36 @@ def correction_approval_valid(settings: Settings, job_id: str, package: dict) ->
         return False
 
 
+def _legacy_revision_bind_valid(settings: Settings, job_id: str, folder: Path,
+                                package_path: Path, package: dict, digest: str) -> bool:
+    """Accept only pre-gate corrections whose durable revision receipt binds every decisive hash."""
+    path = settings.data/'media-corrections'/job_id/'revision.json'
+    if not path.is_file() or path.is_symlink():
+        return False
+    try:
+        revision = _json(path)
+        namespace = f"thoremix:{package['source_sha256']}:revision:{package['video_sha256']}"
+        return (
+            revision.get('state') in {'correction_ready','correction_ready_awaiting_approval'}
+            and revision.get('job_id') == job_id
+            and Path(revision.get('package','')).resolve() == package_path.resolve()
+            and revision.get('package_sha256') == digest
+            and revision.get('package_file_sha256') == sha256(package_path)
+            and revision.get('video_sha256') == package.get('video_sha256')
+            and revision.get('publication_targets') == ['facebook','tiktok']
+            and package.get('publication_targets') == ['facebook','tiktok']
+            and revision.get('idempotency_namespace') == namespace
+            and revision.get('prior_package_sha256') == package.get('supersedes_package_sha256')
+            and revision.get('prior_publication_package_sha256')
+                == package.get('prior_publication_package_sha256')
+            and revision.get('audio_repair_receipt_sha256')
+                == package.get('audio_repair_receipt_sha256')
+            and revision.get('retained_publications') == package.get('retained_publications')
+        )
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+
+
 def _current_correction(settings: Settings, job_id: str, expected_digest: str | None = None):
     from .quality import manifest_digest
     campaign = Campaign(settings)
@@ -51,12 +81,16 @@ def _current_correction(settings: Settings, job_id: str, expected_digest: str | 
         raise ValueError('CORRECTION_APPROVAL_PACKAGE_OUTSIDE_OUTPUT')
     package_path = folder/'package.json'
     package = _json(package_path)
+    correction = package.get('correction')
     if (package.get('job_id') != job_id
             or package.get('source_sha256') != job.get('source_sha256')
-            or not isinstance(package.get('correction'), dict)
-            or package['correction'].get('approval_required') is not True):
+            or not isinstance(correction, dict)
+            or correction.get('kind') != 'clean_native_audio'):
         raise ValueError('CORRECTION_APPROVAL_PACKAGE_INVALID')
     digest = manifest_digest(package)
+    if (correction.get('approval_required') is not True
+            and not _legacy_revision_bind_valid(settings, job_id, folder, package_path, package, digest)):
+        raise ValueError('CORRECTION_APPROVAL_PACKAGE_INVALID')
     if expected_digest is not None and digest != expected_digest:
         raise ValueError('CORRECTION_APPROVAL_MANIFEST_CHANGED')
     if package.get('publication_revision') != package.get('video_sha256'):
