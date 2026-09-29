@@ -1,7 +1,7 @@
 # Flow Browser-First Refactor Execution Plan
 
-Status: **OWNER APPROVED — CHECKPOINTED EXECUTION**  
-Date: 2026-09-27  
+Status: **OWNER APPROVED — CHECKPOINTED EXECUTION**
+Date: 2026-09-27
 Architecture authority: `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`
 
 ## Global execution rules
