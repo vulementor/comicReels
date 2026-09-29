@@ -35,8 +35,8 @@ Until FBR-5 is explicitly accepted, the current extension transport remains a su
 the extension pre-flight above remains valid when that backend is selected. Do not delete the
 extension/WebSocket path early.
 
-Architecture: `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`  
-Execution checkpoints: `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md`  
+Architecture: `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`
+Execution checkpoints: `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md`
 Current state: `docs/comicreels/CHECKPOINTS.md`
 
 ## How to work
