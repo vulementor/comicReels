@@ -261,20 +261,39 @@ def _auth(client, platform: str) -> dict:
 
 
 def publish_package(package_dir: Path, *, krp_home: Path, profile: str = "thoremix-social",
-                    visible: bool = False, client_factory=None, tool_root: Path | None = None) -> dict:
+                    visible: bool = False, client_factory=None, tool_root: Path | None = None,
+                    only_platforms: list[str] | tuple[str, ...] | None = None,
+                    stop_after_publication: bool = False) -> dict:
     """Publish each destination independently and project only journal-confirmed effects."""
     package_dir = Path(package_dir).resolve()
     manifest, digest = _manifest(package_dir)
     receipt_path = package_dir / "publication.json"
+    prior = None
     if receipt_path.exists():
         prior = json.loads(receipt_path.read_text(encoding="utf-8"))
         if prior.get("package_sha256") != digest:
             raise ValueError("frozen package changed after publication intent")
     _validate_media(Path(manifest["video_path"]), tool_root=tool_root)
-    projection = {"schema_version": 1, "package_sha256": digest,
-                  "source_sha256": manifest["source_sha256"], "complete": False, "platforms": {}}
+    projection = (json.loads(json.dumps(prior, ensure_ascii=False)) if isinstance(prior, dict) else
+                  {"schema_version": 1, "package_sha256": digest,
+                   "source_sha256": manifest["source_sha256"], "complete": False, "platforms": {}})
+    projection["complete"] = False
+    projection.setdefault("platforms", {})
     affiliate = manifest["affiliate"]
     active_platforms = manifest.get('publication_targets', list(TARGETS))
+    if only_platforms is None:
+        selected_platforms = list(active_platforms)
+    else:
+        if (not isinstance(only_platforms, (list, tuple)) or not only_platforms
+                or len(set(only_platforms)) != len(only_platforms)
+                or any(p not in active_platforms for p in only_platforms)):
+            raise ValueError('single-platform publish scope must be a nonempty unique subset of package targets')
+        selected_platforms = list(only_platforms)
+    if stop_after_publication and len(selected_platforms) != 1:
+        raise ValueError('stop-after-publication requires exactly one selected platform')
+    for platform in active_platforms:
+        projection["platforms"].setdefault(
+            platform, {"status": "pending", "target": dict(TARGETS[platform])})
     caption = manifest["caption"]
     description = manifest["description"]
     comment_lines = affiliate['comment'].strip().splitlines()
@@ -321,7 +340,7 @@ def publish_package(package_dir: Path, *, krp_home: Path, profile: str = "thorem
                                  or existing.actor != ACTOR or existing.profile != profile):
                     raise ValueError("frozen package or social profile conflicts with existing journal effect")
         _write_projection(receipt_path, projection)
-        for platform in active_platforms:
+        for platform in selected_platforms:
             item = projection["platforms"][platform] = {"status": "pending", "target": dict(TARGETS[platform])}
             publish_key = keys[platform]["publish"]
             # Confirmed and uncertain journal entries take precedence over login
@@ -348,6 +367,10 @@ def publish_package(package_dir: Path, *, krp_home: Path, profile: str = "thorem
                 if published["state"] == "confirmed":
                     item["status"] = "needs_input"
                 continue
+            if stop_after_publication:
+                item["status"] = "confirmed"
+                _write_projection(receipt_path, projection)
+                continue
             comment_key = keys[platform]["comment"]
             if journal.get_by_key(comment_key) is None:
                 auth = _auth(client, platform)
@@ -359,7 +382,10 @@ def publish_package(package_dir: Path, *, krp_home: Path, profile: str = "thorem
                 kwargs={"url": published["permalink"], "text": comment, "extra": {"package_sha256": digest}})
             item["status"] = "complete" if item["comment"]["state"] == "confirmed" else item["comment"]["state"]
             _write_projection(receipt_path, projection)
-        projection["complete"] = all(item["status"] == "complete" for item in projection["platforms"].values())
+        projection["complete"] = all(
+            projection["platforms"].get(platform, {}).get("status") == "complete"
+            for platform in active_platforms
+        )
         _write_projection(receipt_path, projection)
     return projection
 
