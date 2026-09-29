@@ -962,4 +962,3 @@ def run_desktop(settings: Settings) -> None:
         if app and app.tray:
             app.tray.stop()
         instance.close()
-
