@@ -47,4 +47,3 @@ Files: cli.py, sdk.py, desktop.py, dashboard.py, Install-Schedule.ps1; core/dash
 - [x] Verify installed real-provider readiness block consumes no source/paid effect and does not
   alter paused state. Clearly report the still-unfinished actual video producer.
 - [x] Update current-truth documentation and ledger. No unrelated commits/merges.
-
