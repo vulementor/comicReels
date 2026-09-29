@@ -1,12 +1,12 @@
 """
-Flow Client — communicates with Google Flow via the Chrome extension bridge.
+Flow Client — business API over an explicitly selected Flow backend.
 
-Agent runs a WS server. Extension connects as client. Agent sends requests,
-extension executes them in browser context (residential IP, cookies, reCAPTCHA).
+The default extension backend uses the existing WS bridge. The optional browser
+backend owns a persistent signed-in session and is limited to non-paid work.
 
 One transport: Flow's ``batchexecute`` endpoint on flow.google.com, whose calls
-only a signed-in page can sign — the agent builds the envelope, the extension
-runs it in the tab (see :mod:`agent.services.flow_batch`).
+only a signed-in page can sign — the agent builds the envelope, the selected
+backend runs it in the tab (see :mod:`agent.services.flow_batch`).
 
 The REST path against ``aisandbox-pa.googleapis.com`` that preceded it is gone.
 It needed a ``Bearer ya29.…`` that Flow stopped minting in the September 2026
@@ -20,6 +20,7 @@ shape and never learns where it came from.
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Optional
@@ -33,6 +34,7 @@ from agent.config import (
 )
 from agent import config as _config
 from agent.services import flow_batch as fb
+from agent.services.flow_backend import ExtensionFlowBackend, FlowBackend
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +53,9 @@ IMAGE_TRANSIENT_MAX_ATTEMPTS = 2
 
 
 class FlowClient:
-    """Sends commands to Chrome extension via WebSocket."""
+    """Flow business API using one explicitly selected backend."""
 
-    def __init__(self):
+    def __init__(self, backend: FlowBackend | None = None):
         self._extension_ws = None  # Active authenticated extension connection
         self._extensions: dict[object, dict] = {}
         self._pending: dict[str, asyncio.Future] = {}
@@ -77,6 +79,9 @@ class FlowClient:
         self._ws_disconnect_count = 0
         self._ws_connected_at: Optional[float] = None
         self._ws_last_disconnect_at: Optional[float] = None
+        self._backend = backend if backend is not None else ExtensionFlowBackend(
+            self._send_extension, lambda: self.extension_connected,
+        )
 
     def set_extension(self, ws):
         """Called when extension connects via WS."""
@@ -202,7 +207,39 @@ class FlowClient:
 
     @property
     def connected(self) -> bool:
+        return self._backend.ready
+
+    @property
+    def extension_connected(self) -> bool:
         return bool(self._extensions)
+
+    @property
+    def backend(self) -> FlowBackend:
+        return self._backend
+
+    @property
+    def backend_kind(self) -> str:
+        return self._backend.kind
+
+    @property
+    def paid_dispatch_enabled(self) -> bool:
+        return self._backend.paid_dispatch_enabled
+
+    @property
+    def session_owner_key(self) -> str:
+        return self._backend.session_owner_key
+
+    async def start_backend(self) -> None:
+        await self._backend.start()
+
+    async def close_backend(self) -> None:
+        await self._backend.close()
+
+    async def backend_readiness(self) -> dict:
+        return await self._backend.check_readiness()
+
+    async def open_project(self, project_id: str) -> dict:
+        return await self._backend.open_project(project_id)
 
     @property
     def generation_guard_status(self) -> dict:
@@ -217,7 +254,7 @@ class FlowClient:
     @property
     def ws_stats(self) -> dict:
         uptime = None
-        if self._ws_connected_at and self.connected:
+        if self._ws_connected_at and self.extension_connected:
             uptime = int(time.time() - self._ws_connected_at)
         versions = sorted({
             str(session["extension_version"])
@@ -230,7 +267,7 @@ class FlowClient:
             if session.get("flow_url_supported") is not None
         ]
         return {
-            "connected": self.connected,
+            "connected": self.extension_connected,
             "active_connections": len(self._extensions),
             "authenticated_connections": sum(
                 1 for session in self._extensions.values()
@@ -435,13 +472,17 @@ class FlowClient:
         return {"refreshed": refreshed, "found": len(targets)}
 
     async def _send(self, method: str, params: dict, timeout: float = 300) -> dict:
+        """Dispatch through the selected backend; retain the business API seam."""
+        return await self._backend.execute(method, params, timeout)
+
+    async def _send_extension(self, method: str, params: dict, timeout: float = 300) -> dict:
         """Send request to extension and wait for response.
 
         Always returns a dict. On error, returns {"error": "<reason>"} — callers
         must check result.get("error") or use _is_ws_error() before reading data.
         Never raises; exceptions are caught and returned as error dicts.
         """
-        if not self.connected:
+        if not self.extension_connected:
             return {"error": "Extension not connected"}
 
         # No profile needs a bearer any more: batchexecute authenticates in the
@@ -505,7 +546,8 @@ class FlowClient:
     async def batch_rpc(self, rpcid: str, freq: str,
                         captcha_action: str | None = None,
                         match: str | None = None,
-                        timeout: float = 300) -> dict:
+                        timeout: float = 300,
+                        project_id: str | None = None) -> dict:
         """Run one batchexecute RPC in the Flow page. Returns the raw body.
 
         CAPTCHA-bearing image/video submits pass through one process-wide guard
@@ -513,6 +555,8 @@ class FlowClient:
         Non-generation RPCs (polling/media/project metadata) remain unthrottled.
         """
         params: dict = {"rpcid": rpcid, "freq": freq}
+        if project_id:
+            params["projectId"] = project_id
         if captcha_action:
             params["captchaAction"] = captcha_action
         if match:
@@ -575,9 +619,12 @@ class FlowClient:
 
     async def _batch_payload(self, rpcid: str, freq: str,
                              captcha_action: str | None = None,
-                             timeout: float = 300):
+                             timeout: float = 300,
+                             project_id: str | None = None):
         """One RPC, unwrapped to its inner payload. Raises on anything else."""
-        result = await self.batch_rpc(rpcid, freq, captcha_action, timeout=timeout)
+        result = await self.batch_rpc(
+            rpcid, freq, captcha_action, timeout=timeout, project_id=project_id
+        )
         if result.get("error"):
             raise fb.FlowBatchError(f"{rpcid}: {result['error']}")
         return fb.first_payload(result.get("data") or "", rpcid)
@@ -683,7 +730,7 @@ class FlowClient:
                     model=model, ref_media_ids=refs, base_media_id=base_media_id,
                 )
                 payload = await self._batch_payload(
-                    fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE
+                    fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE, project_id=pid
                 )
                 generated = fb.read_images(payload)
                 if not generated:
@@ -793,6 +840,7 @@ class FlowClient:
                 freq,
                 fb.CAPTCHA_IMAGE,
                 timeout=150,
+                project_id=pid,
             )
             encoded = fb.read_upscaled_image(payload)
         except Exception as e:
@@ -834,7 +882,8 @@ class FlowClient:
                 model=self._batch_video_model(user_paygate_tier, gen_type, aspect_ratio),
             )
             payload = await self._batch_payload(
-                fb.RPC_GEN_VIDEO, freq, fb.CAPTCHA_VIDEO, timeout=120)
+                fb.RPC_GEN_VIDEO, freq, fb.CAPTCHA_VIDEO, timeout=120,
+                project_id=pid)
             operation = fb.read_operation(payload)
         except Exception as e:
             return _batch_error(e)
@@ -1044,7 +1093,7 @@ class FlowClient:
             payload = await self._batch_payload(
                 fb.RPC_UPLOAD_IMAGE,
                 fb.upload_request(image_base64, pid, mime_type, file_name),
-                fb.CAPTCHA_IMAGE, timeout=120,
+                fb.CAPTCHA_IMAGE, timeout=120, project_id=pid,
             )
             media_id = fb.read_uploaded_media_id(payload)
         except Exception as e:
@@ -1106,5 +1155,12 @@ _client: Optional[FlowClient] = None
 def get_flow_client() -> FlowClient:
     global _client
     if _client is None:
-        _client = FlowClient()
+        kind = os.environ.get("COMICREELS_FLOW_BACKEND", "extension")
+        if kind == "extension":
+            _client = FlowClient()
+        elif kind == "browser":
+            from agent.services.flow_browser_backend import BrowserFlowBackend
+            _client = FlowClient(backend=BrowserFlowBackend())
+        else:
+            raise ValueError("COMICREELS_FLOW_BACKEND must be 'extension' or 'browser'")
     return _client

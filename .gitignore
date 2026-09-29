@@ -25,3 +25,9 @@ extension/_metadata/
 
 # oh-my-claudecode session state (plans, hud, logs) — tooling, not project content
 .omc/
+
+# Local Python virtual environments
+.venv*/
+
+# Local validation output, never source or deployment input.
+/local-test-data/

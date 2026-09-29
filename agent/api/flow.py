@@ -143,6 +143,18 @@ async def _resolve_direct_project(client, project_id: str) -> str:
     return pid
 
 
+@router.post("/session-project/rotate")
+async def rotate_session_project():
+    """Create and pin a fresh Flow session project without submitting generation."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    try:
+        return await ensure_session_project(client, force_new=True)
+    except Exception as exc:
+        raise HTTPException(502, f"Could not rotate Flow session project: {exc}") from exc
+
+
 @router.get("/status")
 async def extension_status():
     """Extension health.
@@ -153,12 +165,17 @@ async def extension_status():
     client = get_flow_client()
     return {
         "connected": client.connected,
+        "extension_connected": client.extension_connected,
+        "backend_kind": client.backend_kind,
+        "backend_ready": client.connected,
+        "paid_dispatch_enabled": client.paid_dispatch_enabled,
         # One transport now. The key stays so the documented pre-flight check
         # (CLAUDE.md) keeps reading {"transport": "batch", ...}.
         "transport": "batch",
         "flow_project_id": FLOW_PROJECT_ID or None,
         "allow_degraded": FLOW_ALLOW_DEGRADED,
         "flow_key_present": client._flow_key is not None,
+        "extension_session": client.ws_stats,
         "generation_throttle": {
             "min_interval_s": FLOW_GENERATION_MIN_INTERVAL_S,
             "max_concurrent": FLOW_GENERATION_MAX_CONCURRENT,
@@ -503,4 +520,4 @@ async def upload_image(body: UploadImageRequest):
     if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
     media_id = result.get("_mediaId")
-    return {"media_id": media_id, "raw": result.get("data", result)}
+    return {"media_id": media_id, "project_id": project_id, "raw": result.get("data", result)}
