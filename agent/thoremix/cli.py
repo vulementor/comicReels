@@ -42,7 +42,8 @@ def publish(settings: Settings, package: Path) -> dict:
         return _publish(settings, package)
 
 
-def _publish(settings: Settings, package: Path) -> dict:
+def _publish(settings: Settings, package: Path, *, only_platforms=None,
+             stop_after_publication: bool = False) -> dict:
     from .publishing import publish_package
 
     if not settings.publication_authorized:
@@ -72,8 +73,10 @@ def _publish(settings: Settings, package: Path) -> dict:
         raise ValueError('Clip có cảnh báo QA đang chờ anh duyệt trước khi đăng.')
     complete_story_receipt(settings,job['id'],package/'package.json')
     campaign.update(job['id'], 'publishing')
-    report = publish_package(package, krp_home=settings.data / 'krp', profile=settings.social_profile,
-                             tool_root=settings.directory)
+    report = publish_package(
+        package, krp_home=settings.data / 'krp', profile=settings.social_profile,
+        tool_root=settings.directory, only_platforms=only_platforms,
+        stop_after_publication=stop_after_publication)
     campaign.update(job['id'], 'published' if report.get('complete') is True else 'publishing', publication=report)
     return report
 
@@ -146,6 +149,10 @@ def main(argv=None) -> int:
     rec.add_argument('job_id')
     pub = commands.add_parser('publish')
     pub.add_argument('package', type=Path)
+    single_pub = commands.add_parser('publish-platform')
+    single_pub.add_argument('package', type=Path)
+    single_pub.add_argument('--platform', required=True, choices=('facebook','tiktok','youtube'))
+    single_pub.add_argument('--stop-after-publication', action='store_true')
     final = commands.add_parser('finalize')
     final.add_argument('job_id')
     final.add_argument('--video', type=Path, required=True)
@@ -287,6 +294,10 @@ def main(argv=None) -> int:
                     atomic_json(settings.data / 'affiliate-selection.json', result)
                 elif args.command == 'publish':
                     result = publish(settings, args.package)
+                elif args.command == 'publish-platform':
+                    result = _publish(
+                        settings, args.package, only_platforms=[args.platform],
+                        stop_after_publication=args.stop_after_publication)
                 elif args.command == 'import-source':
                     campaign = Campaign(settings)
                     job = campaign.reserve(args.slot)
