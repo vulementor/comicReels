@@ -33,4 +33,3 @@ class StoryRuntime:
         from gpt_fullproxy import GPTFullProxy
         return GPTFullProxy(profile=self.chat_profile, profile_dir=Path(self.chat_profile_dir),
                             home=Path(self.chat_home), visible=False)
-
