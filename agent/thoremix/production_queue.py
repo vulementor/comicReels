@@ -450,6 +450,21 @@ def run_slot(settings, clock=None, *, producer_factory=FlowKitProducer, publishe
             if clock:
                 _slot_requests(settings, remove=slot)
             return result
+        if job['state'] in {'video_ready','awaiting_approval'}:
+            package = queue.campaign.reconcile_package(job['id'])
+            from .media_correction import correction_approval_valid
+            if isinstance(package.get('correction'), dict) and not correction_approval_valid(
+                    settings, job['id'], package):
+                if job['state'] != 'awaiting_approval':
+                    queue.campaign.update(job['id'], 'awaiting_approval',
+                                          correction_approval_required=True)
+                    job = queue.campaign.get(job['id'])
+                result={'state':'awaiting_correction_approval','slot':slot,'job_id':job['id']}
+                with queue.campaign.connect() as db:
+                    db.execute('INSERT OR REPLACE INTO publication_slots VALUES(?,?,?,?)',
+                               (slot,None,'empty',json.dumps(result)))
+                if clock:_slot_requests(settings,remove=slot)
+                return result
         if job['state']=='awaiting_approval':
             result={'state':'awaiting_approval','slot':slot,'job_id':job['id']}
             with queue.campaign.connect() as db:
