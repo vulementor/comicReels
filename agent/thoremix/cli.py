@@ -128,6 +128,9 @@ def main(argv=None) -> int:
     correction_approval=commands.add_parser('approve-correction')
     correction_approval.add_argument('job_id')
     correction_approval.add_argument('--manifest-sha256',required=True)
+    cleanup_tiktok=commands.add_parser('cleanup-tiktok-stale-editor')
+    cleanup_tiktok.add_argument('current_job_id')
+    cleanup_tiktok.add_argument('stale_job_id')
     approval=commands.add_parser('approve')
     approval.add_argument('job_id')
     approval.add_argument('--manifest-sha256',required=True)
@@ -189,6 +192,12 @@ def main(argv=None) -> int:
         if args.command=='approve-correction':
             from .media_correction import approve_media_correction
             result=approve_media_correction(Settings.load(args.root),args.job_id,args.manifest_sha256)
+            print(json.dumps(result,ensure_ascii=False))
+            return 0
+        if args.command=='cleanup-tiktok-stale-editor':
+            from .social_cleanup import cleanup_tiktok_stale_editor
+            result=cleanup_tiktok_stale_editor(
+                Settings.load(args.root),args.current_job_id,args.stale_job_id)
             print(json.dumps(result,ensure_ascii=False))
             return 0
         if args.command=='approve':
