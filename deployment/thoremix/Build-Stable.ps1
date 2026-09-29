@@ -38,6 +38,20 @@ function Move-UpgradePart {
     }
     throw "Upgrade move failed for ${Label}: $($lastError.GetType().Name)"
 }
+
+function Copy-UpgradeMirror {
+    param(
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    & robocopy $Source $Destination /MIR /COPY:DAT /DCOPY:DAT /R:3 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    $code = $LASTEXITCODE
+    if ($code -gt 7) {
+        throw "Upgrade mirror failed for ${Label}: robocopy exit $code"
+    }
+}
 # Same byte and file as Python msvcrt.locking; retained for the whole transaction.
 $dataDirectory = Join-Path $destination 'data'
 New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
@@ -164,8 +178,29 @@ for name in ('ffmpeg.exe', 'ffprobe.exe'):
             }
             New-Item -ItemType Directory -Path (Split-Path -Parent $live) -Force | Out-Null
             New-Item -ItemType Directory -Path (Split-Path -Parent $old) -Force | Out-Null
-            $entry = @{live=$live; incoming=$incoming; old=$old; hadOld=(Test-Path -LiteralPath $live); installed=$false}
-            if ($entry.hadOld) { Move-UpgradePart -Source $live -Destination $old -Label "$part live->backup" }
+            $entry = @{live=$live; incoming=$incoming; old=$old; hadOld=(Test-Path -LiteralPath $live); installed=$false; mode='move'}
+            if ($entry.hadOld) {
+                try {
+                    Move-UpgradePart -Source $live -Destination $old -Label "$part live->backup"
+                } catch {
+                    if ($part -ne 'runtime') { throw }
+                    # Windows can hold read handles without delete sharing (for example a diagnostics
+                    # reader). The app and runner are already stopped/locked, so preserve a complete
+                    # byte-for-byte backup and mirror the validated staged runtime in place instead
+                    # of weakening the validation or killing an unrelated diagnostics process.
+                    $entry.mode = 'mirror'
+                    Copy-UpgradeMirror -Source $live -Destination $old -Label 'runtime live->backup'
+                    try {
+                        Copy-UpgradeMirror -Source $incoming -Destination $live -Label 'runtime stage->live'
+                    } catch {
+                        Copy-UpgradeMirror -Source $old -Destination $live -Label 'runtime failed-install rollback'
+                        throw
+                    }
+                    $entry.installed = $true
+                    $promoted.Add($entry)
+                    continue
+                }
+            }
             $promoted.Add($entry)
             Move-UpgradePart -Source $incoming -Destination $live -Label "$part stage->live"
             $entry.installed = $true
@@ -173,8 +208,14 @@ for name in ('ffmpeg.exe', 'ffprobe.exe'):
     } catch {
         for ($index = $promoted.Count - 1; $index -ge 0; $index--) {
             $entry = $promoted[$index]
-            if ($entry.installed) { Move-UpgradePart -Source $entry.live -Destination $entry.incoming -Label "rollback live->stage" }
-            if ($entry.hadOld) { Move-UpgradePart -Source $entry.old -Destination $entry.live -Label "rollback backup->live" }
+            if ($entry.mode -eq 'mirror') {
+                if ($entry.hadOld) {
+                    Copy-UpgradeMirror -Source $entry.old -Destination $entry.live -Label 'rollback runtime backup->live'
+                }
+            } else {
+                if ($entry.installed) { Move-UpgradePart -Source $entry.live -Destination $entry.incoming -Label "rollback live->stage" }
+                if ($entry.hadOld) { Move-UpgradePart -Source $entry.old -Destination $entry.live -Label "rollback backup->live" }
+            }
         }
         throw
     }
