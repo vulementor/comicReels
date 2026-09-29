@@ -61,6 +61,9 @@ def _publish(settings: Settings, package: Path) -> dict:
         raise ValueError('Hồ sơ không khớp công việc và ảnh nguồn đã giữ chỗ.')
     if job['state'] == 'wrong_media_blocked':
         raise ValueError('Clip này đã bị loại vì chọn sai bản; cần hoàn tất hồ sơ AI thay thế.')
+    from .media_correction import correction_approval_valid
+    if isinstance(manifest.get('correction'), dict) and not correction_approval_valid(settings, job['id'], manifest):
+        raise ValueError('Correction revision đang chờ anh duyệt trước khi được phép đăng.')
     from .finishing import recover_pending,complete_story_receipt
     recover_pending(campaign,job['id'])
     manifest=json.loads((package/'package.json').read_text(encoding='utf-8'))
