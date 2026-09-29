@@ -70,10 +70,10 @@ def ahead(settings, limit=5):
 def test_production_defaults_and_legacy_config_migration(settings):
     assert settings.production_mode == 'scheduled'
     assert settings.daily_production_limit == 5
-    raw = json.loads(settings.path.read_text())
+    raw = json.loads(settings.path.read_text(encoding='utf-8'))
     raw.pop('production_mode', None)
     raw.pop('daily_production_limit', None)
-    settings.path.write_text(json.dumps(raw))
+    settings.path.write_text(json.dumps(raw), encoding='utf-8')
     assert Settings.load(settings.root).daily_production_limit == 5
 
 
