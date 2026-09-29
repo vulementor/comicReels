@@ -1,0 +1,12 @@
+# Standalone toolkit/controller dependencies. AI runs only through FlowKit's gpt_fullproxy adapter.
+httpx==0.28.1
+Pillow==12.3.0
+tzdata==2026.4
+pydantic==2.13.5
+PyYAML==6.0.3
+camoufox==0.5.6
+pystray==0.19.5
+faster-whisper==1.2.1
+aiosqlite==0.22.1
+ffpyplayer==4.5.3
+# Build-Stable.ps1 additionally packages local KRP and KAT wheel snapshots.

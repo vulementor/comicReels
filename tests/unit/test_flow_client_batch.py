@@ -39,9 +39,12 @@ def client(monkeypatch):
     c.responses = {}
     c.calls = []
 
-    async def fake_batch_rpc(rpcid, freq, captcha_action=None, match=None, timeout=300):
+    async def fake_batch_rpc(
+        rpcid, freq, captcha_action=None, match=None, timeout=300, project_id=None
+    ):
         c.calls.append({"rpcid": rpcid, "freq": freq,
-                        "captcha": captcha_action, "match": match})
+                        "captcha": captcha_action, "match": match,
+                        "project_id": project_id})
         canned = c.responses.get(rpcid, {"data": ""})
         return canned(match) if callable(canned) else canned
 
@@ -62,6 +65,12 @@ class TestGenerateImages:
         client.responses[fb.RPC_GEN_IMAGE] = {"data": envelope(fb.RPC_GEN_IMAGE, [[IMAGE_URL]])}
         await client.generate_images("a cat", PROJECT)
         assert client.calls[0]["captcha"] == fb.CAPTCHA_IMAGE
+
+    async def test_generation_carries_target_project_to_browser(self, client):
+        client.responses[fb.RPC_GEN_IMAGE] = {"data": envelope(fb.RPC_GEN_IMAGE, [[IMAGE_URL]])}
+        await client.generate_images("a cat", PROJECT)
+        assert client.calls[0]["project_id"] == PROJECT
+
 
     async def test_character_refs_ride_in_the_reference_slot(self, client):
         client.responses[fb.RPC_GEN_IMAGE] = {"data": envelope(fb.RPC_GEN_IMAGE, [[IMAGE_URL]])}
@@ -116,7 +125,7 @@ class TestGenerateImages:
         attempts = 0
         sleeps = []
 
-        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300):
+        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300, project_id=None):
             nonlocal attempts
             attempts += 1
             if attempts == 1:
@@ -140,7 +149,7 @@ class TestGenerateImages:
         attempts = 0
         sleeps = []
 
-        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300):
+        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300, project_id=None):
             nonlocal attempts
             attempts += 1
             raise fb.RpcError(fb.RPC_GEN_IMAGE, [5])
@@ -162,7 +171,7 @@ class TestGenerateImages:
         async def fake_sleep(_delay):
             return None
 
-        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300):
+        async def fake_payload(rpcid, freq, captcha_action=None, timeout=300, project_id=None):
             item = json.loads(json.loads(freq)[0][0][1])[1][0]
             if item[3] == 100 + 9973:
                 raise fb.RpcError(fb.RPC_GEN_IMAGE, [5])
@@ -301,8 +310,8 @@ class TestGenerateVideo:
 
 
 class TestCheckVideoStatus:
-    def _poll(self, status=None, complaint=None):
-        detail = None
+    def _poll(self, status=None, complaint=None, outcome=None):
+        detail = [None] * 8 + [[outcome]] if outcome is not None else None
         if complaint:
             detail = [None] * 8 + [[fb.OUTCOME_COMPLAINT, [None, complaint]]]
         record = [OPERATION, PROJECT, "scene", status, None, detail]
@@ -317,7 +326,7 @@ class TestCheckVideoStatus:
         return result["data"]["operations"][0]
 
     async def test_successful_once_a_video_url_exists(self, client):
-        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE")
+        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE", outcome=fb.OUTCOME_OK)
         client.responses[fb.RPC_PROJECT_MEDIA] = self._listing()
         client.responses[fb.RPC_MEDIA] = {"data": envelope(fb.RPC_MEDIA, [VIDEO_URL])}
 
@@ -328,7 +337,7 @@ class TestCheckVideoStatus:
 
     async def test_a_media_id_with_only_a_poster_is_still_pending(self, client):
         """Downloading on the id alone would save a still picture."""
-        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE")
+        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE", outcome=fb.OUTCOME_OK)
         client.responses[fb.RPC_PROJECT_MEDIA] = self._listing()
         client.responses[fb.RPC_MEDIA] = {"data": envelope(fb.RPC_MEDIA, [IMAGE_URL])}
 
@@ -355,7 +364,7 @@ class TestCheckVideoStatus:
         assert (await self._status(client))["status"] == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
 
     async def test_the_listing_is_asked_for_a_window_not_the_whole_thing(self, client):
-        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE")
+        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE", outcome=fb.OUTCOME_OK)
         client.responses[fb.RPC_PROJECT_MEDIA] = self._listing(found=False)
 
         await self._status(client)
@@ -384,7 +393,7 @@ class TestCheckVideoStatus:
 
     async def test_a_known_media_id_is_not_looked_up_again(self, client):
         """Once the listing has answered, later rounds go straight to the media."""
-        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE")
+        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE", outcome=fb.OUTCOME_OK)
         client.responses[fb.RPC_PROJECT_MEDIA] = self._listing()
         client.responses[fb.RPC_MEDIA] = {"data": envelope(fb.RPC_MEDIA, [IMAGE_URL])}
 
@@ -396,7 +405,7 @@ class TestCheckVideoStatus:
 
     async def test_a_finished_operation_stays_finished_when_re_polled(self, client):
         """A batch re-polls its finished operations alongside its pending ones."""
-        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE")
+        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE", outcome=fb.OUTCOME_OK)
         client.responses[fb.RPC_PROJECT_MEDIA] = self._listing()
         client.responses[fb.RPC_MEDIA] = {"data": envelope(fb.RPC_MEDIA, [VIDEO_URL])}
 

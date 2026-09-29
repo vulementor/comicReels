@@ -330,12 +330,11 @@ async function requestCaptchaFromTab(tabId, requestId, pageAction) {
       msg.includes('Could not establish connection');
     if (!shouldInject) throw error;
 
-    // Inject content script and retry
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['content.js'],
-    });
-    await sleep(200);
+    // MAIN-world captcha scripts are manifest content scripts. Reloading the
+    // Flow page re-runs the complete bootstrap; injecting content.js alone
+    // would restore only the isolated-world relay and leave grecaptcha absent.
+    await chrome.tabs.reload(tabId);
+    await sleep(3000);
     return await chrome.tabs.sendMessage(tabId, {
       type: 'GET_CAPTCHA',
       requestId,
@@ -464,30 +463,61 @@ async function handleSolveCaptcha(msg) {
 const CAPTCHA_SLOT = '__CAPTCHA__';
 const MAX_RPC_TEXT = 32000000; // the project listing alone is past 17 MB
 
-async function runBatchRpc(cmd) {
+function projectFlowUrl(projectId) {
+  return projectId
+    ? `https://flow.google.com/project/${encodeURIComponent(projectId)}`
+    : FLOW_TAB_URL;
+}
+
+async function ensureBatchTab(projectId) {
+  const targetUrl = projectFlowUrl(projectId);
   const tabs = await chrome.tabs.query({ url: flowUrls });
-  let candidate = tabs.find((t) => !t.discarded) || tabs[0];
-  if (!candidate) {
-    // No Flow tab — open one and give the app a moment to boot, otherwise
-    // WIZ_global_data is not on the page yet and `at` comes back empty. Keep
-    // the exact created tab id so redirects/stale tabs cannot hijack recovery.
-    let opened;
+  let candidate = projectId
+    ? tabs.find((tab) => String(tab.url || '').startsWith(targetUrl))
+    : null;
+  candidate = candidate || tabs.find((tab) => !tab.discarded) || tabs[0];
+
+  // Generation pages load the enterprise reCAPTCHA runtime lazily. When a
+  // project is known, keep both CAPTCHA minting and batchexecute on that exact
+  // /project/<id> route instead of borrowing a root-grid tab.
+  if (projectId && (!candidate || !String(candidate.url || '').startsWith(targetUrl))) {
     try {
-      opened = await chrome.tabs.create({ url: FLOW_TAB_URL, active: false });
+      candidate = await chrome.tabs.create({ url: targetUrl, active: false });
       await sleep(5000);
-      candidate = opened?.id ? await chrome.tabs.get(opened.id).catch(() => null) : null;
+      candidate = candidate?.id
+        ? await chrome.tabs.get(candidate.id).catch(() => null)
+        : null;
+    } catch (e) {
+      return { error: e?.message || 'NO_FLOW_PROJECT_TAB' };
+    }
+  } else if (!candidate) {
+    try {
+      candidate = await chrome.tabs.create({ url: targetUrl, active: false });
+      await sleep(5000);
+      candidate = candidate?.id
+        ? await chrome.tabs.get(candidate.id).catch(() => null)
+        : null;
     } catch (e) {
       return { error: e?.message || 'NO_FLOW_TAB' };
     }
-    if (!candidate) return { error: 'NO_FLOW_TAB' };
   }
-  // Chrome discards backgrounded tabs; executeScript throws on a dead one.
+  if (!candidate) return { error: 'NO_FLOW_TAB' };
   const tab = await reviveTabIfNeeded(candidate);
-  if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
+  return tab || { error: 'FLOW_TAB_DISCARDED' };
+}
+
+async function runBatchRpc(cmd) {
+  const tab = await ensureBatchTab(cmd.projectId);
+  if (tab?.error) return tab;
 
   let freq = cmd.freq;
   if (cmd.captchaAction) {
-    const solved = await solveCaptcha(cmd.id, cmd.captchaAction);
+    let solved;
+    try {
+      solved = await captchaFromTab(tab.id, cmd.id, cmd.captchaAction);
+    } catch (e) {
+      return { error: `CAPTCHA_FAILED: ${e?.message || 'no token'}` };
+    }
     if (!solved?.token) return { error: `CAPTCHA_FAILED: ${solved?.error || 'no token'}` };
     freq = freq.split(CAPTCHA_SLOT).join(solved.token);
   }
@@ -542,7 +572,7 @@ async function runBatchRpc(cmd) {
 
 async function handleBatchRpc(msg) {
   const { id, params } = msg;
-  const { rpcid, freq, captchaAction, match } = params || {};
+  const { rpcid, freq, captchaAction, match, projectId } = params || {};
   if (!rpcid || !freq) {
     sendToAgent({ id, status: 400, error: 'INVALID_BATCH_RPC' });
     return;
@@ -563,7 +593,7 @@ async function handleBatchRpc(msg) {
   }
 
   try {
-    const out = await runBatchRpc({ id, rpcid, freq, captchaAction, match });
+    const out = await runBatchRpc({ id, rpcid, freq, captchaAction, match, projectId });
     if (out.error) {
       if (hasCaptcha) { metrics.failedCount++; metrics.lastError = out.error; }
       if (visible) updateRequestLog(id, { status: 'failed', error: out.error });

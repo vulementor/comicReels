@@ -70,6 +70,9 @@ class WorkerController:
 
     async def start(self):
         """Start the worker loop."""
+        if not get_flow_client().paid_dispatch_enabled:
+            logger.info("Worker disabled: selected Flow backend does not allow paid dispatch")
+            return
         await self._cleanup_stale_processing()
         await self._run_loop()
 

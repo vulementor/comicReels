@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { BrowserRouter, NavLink, Routes, Route, useLocation, useParams, useSearchParams } from 'react-router-dom'
+import { BrowserRouter, NavLink, Routes, Route, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { LayoutDashboard, FolderOpen, Film, ScrollText, BookOpen, SlidersHorizontal } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { WebSocketProvider } from './api/WebSocketContext'
@@ -16,6 +16,7 @@ import LogsPage from './pages/LogsPage'
 import GalleryPage from './pages/GalleryPage'
 import GuidePage from './pages/GuidePage'
 import SettingsPage from './pages/SettingsPage'
+import ComicStudioPage from './pages/ComicStudioPage'
 
 const NAV: { to: string; icon: typeof LayoutDashboard; labelKey: TranslationKey; exact: boolean }[] = [
   { to: '/', icon: LayoutDashboard, labelKey: 'nav.dashboard', exact: true },
@@ -55,7 +56,8 @@ function useBreadcrumbs() {
   }, [id])
 
   const crumbs: string[] = []
-  if (loc.pathname === '/') crumbs.push(t('app.breadcrumb.dashboard'))
+  if (loc.pathname === '/' || loc.pathname.startsWith('/flowkit')) crumbs.push(t('app.breadcrumb.dashboard'))
+  else if (loc.pathname.startsWith('/comicreels')) crumbs.push('ComicReels Studio')
   else if (loc.pathname.startsWith('/projects')) {
     crumbs.push(t('app.breadcrumb.projects'))
     if (id) {
@@ -124,6 +126,22 @@ function Sidebar() {
             {t(labelKey)}
           </NavLink>
         ))}
+
+        <div className="mt-3 px-2.5 pb-1 pt-2 text-[9px] font-semibold tracking-[0.18em]" style={{ color: 'var(--muted)' }}>
+          FEATURES
+        </div>
+        <NavLink
+          to="/comicreels"
+          className="flex items-center gap-2.5 px-2.5 py-2 rounded text-xs transition-colors hover:opacity-90"
+          style={({ isActive }) => ({
+            background: isActive ? 'var(--card)' : 'transparent',
+            color: isActive ? 'var(--text)' : 'var(--muted)',
+            borderLeft: `2px solid ${isActive ? 'var(--accent)' : 'transparent'}`,
+          })}
+        >
+          <Film size={13} />
+          ComicReels
+        </NavLink>
       </nav>
 
       <div className="mt-auto px-4 py-3.5 border-t flex flex-col gap-2.5" style={{ borderColor: 'var(--border)' }}>
@@ -185,6 +203,8 @@ function Layout() {
         <main className="flex-1 overflow-auto p-5">
           <Routes>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/flowkit" element={<Navigate to="/" replace />} />
+            <Route path="/comicreels" element={<ComicStudioPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectsPage />} />
             <Route path="/gallery" element={<GalleryPage />} />

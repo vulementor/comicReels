@@ -264,7 +264,22 @@ class TestReaders:
 
     def test_operation_reads_the_id_and_status(self):
         op = fb.read_operation([None, 50, [[self.OP, "proj", "scene", "CAE"]]])
-        assert (op.operation_id, op.status, op.done) == (self.OP, "CAE", True)
+        assert (op.operation_id, op.status, op.done) == (self.OP, "CAE", False)
+
+    @pytest.mark.parametrize("status,outcome,done", [
+        ("CAE", 6, False), ("CAE", 2, False), ("CAE", 3, True),
+        ("CAI", 3, True), ("CAE", 4, False), ("CAE", 99, False),
+        ("CAE", None, False),
+    ])
+    def test_completion_uses_outcome_not_the_opaque_status(self, status, outcome, done):
+        detail = [None] * 8 + [[outcome]]
+        op = fb.read_operation([None, None, [[self.OP, "p", "w", status, None, detail]]])
+        assert op.done is done
+
+    def test_workflow_metadata_is_not_an_operation_status(self):
+        workflow = ["workflow", None, None, ["title", None, None, None, self.MID], "p"]
+        with pytest.raises(fb.FlowBatchError, match="not an operation"):
+            fb.read_operation([None, None, [workflow]])
 
     def test_the_third_uuid_is_the_scene_and_is_never_taken_as_media(self):
         """Feeding it to the media rpc answers NOT_FOUND forever."""
@@ -282,6 +297,7 @@ class TestReaders:
         detail = [None] * 8 + [[fb.OUTCOME_OK]]
         op = fb.read_operation([None, 50, [[self.OP, "p", "s", "CAE", None, detail]]])
         assert op.error is None
+        assert op.done
 
     def test_an_empty_operation_payload_raises(self):
         with pytest.raises(fb.FlowBatchError):
