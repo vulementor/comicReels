@@ -6,6 +6,8 @@ captured envelopes — rpc id, model key and slot order — because a payload th
 submits but is shaped wrong buys a render and returns the wrong clip.
 """
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +23,81 @@ from agent.services.omni_flash import (
     generate_omni_flash_text_video,
     generate_omni_flash_video,
 )
+
+
+@pytest.fixture
+def native_reference_submit():
+    # MZZa6b observed 2026-09-27: workflow metadata in slot 2, media in slot 3.
+    # Credentials, balance, prompt and account identifiers are excluded.
+    path = Path(__file__).parents[1] / "fixtures" / "flow_native_reference_submit.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.asyncio
+async def test_native_reference_receipt_survives_restart_and_polls_media(native_reference_submit):
+    pid = native_reference_submit[3][0][1]
+    media_id = native_reference_submit[3][0][0]
+    workflow_id = native_reference_submit[3][0][2]
+    submitter = MagicMock()
+    submitter._batch_project_id.return_value = pid
+    submitter._batch_payload = AsyncMock(return_value=native_reference_submit)
+    with patch("agent.services.omni_flash.get_flow_client", return_value=submitter):
+        result = await generate_omni_flash_video(
+            reference_media_ids=["ref-1", "ref-2", "ref-3"],
+            prompt="One clip containing three scenes", project_id=pid,
+            duration_s=10, resolution="360p",
+        )
+    assert result["status"] == 200
+    descriptor = json.loads(json.dumps(result["data"]["flowkitPolling"]))
+    assert descriptor == {
+        "mode": "batch_media", "project_id": pid,
+        "workflows": [{"name": workflow_id, "primary_media_id": media_id, "project_id": pid}],
+    }
+    assert result["data"]["media"] == [{"name": media_id}]
+    assert extract_omni_workflows(result) == descriptor["workflows"]
+    submitter._batch_payload.assert_awaited_once()
+    submitter._remember_operation.assert_not_called()
+
+    # A new client has no in-memory operation -> project map.
+    poller = MagicMock()
+    poller.get_media = AsyncMock(side_effect=[
+        {"status": 200, "data": {"image": {"fifeUrl": f"https://flow-content.google/image/{media_id}"}}},
+        {"status": 200, "data": {"video": {"fifeUrl": f"https://flow-content.google/video/{media_id}"}}},
+    ])
+    with patch("agent.services.omni_flash.get_flow_client", return_value=poller):
+        pending = await check_omni_flash_status(descriptor["workflows"], project_id=pid)
+        complete = await check_omni_flash_status(descriptor["workflows"], project_id=pid)
+    assert pending["done"] is False
+    assert complete["done"] is True
+    assert complete["workflows"][0]["primary_media_id"] == media_id
+    assert [call.args for call in poller.get_media.await_args_list] == [(media_id,), (media_id,)]
+
+
+@pytest.mark.asyncio
+async def test_malformed_native_receipt_never_falls_back_to_workflow_or_resubmits(native_reference_submit):
+    native_reference_submit[3] = []
+    client = MagicMock()
+    client._batch_project_id.return_value = "11111111-2222-3333-4444-555555555555"
+    client._batch_payload = AsyncMock(return_value=native_reference_submit)
+    with patch("agent.services.omni_flash.get_flow_client", return_value=client):
+        result = await generate_omni_flash_video(["ref-1"], "clip", "project", duration_s=10)
+    assert result["status"] == 502
+    client._batch_payload.assert_awaited_once()
+    client._remember_operation.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("broken_slot,value", [(1, None), (2, None), (0, "CAMS-not-a-uuid")])
+async def test_native_receipt_requires_all_three_identifiers(native_reference_submit, broken_slot, value):
+    native_reference_submit[3][0][broken_slot] = value
+    client = MagicMock()
+    client._batch_project_id.return_value = "11111111-2222-3333-4444-555555555555"
+    client._batch_payload = AsyncMock(return_value=native_reference_submit)
+    with patch("agent.services.omni_flash.get_flow_client", return_value=client):
+        result = await generate_omni_flash_video(["ref-1"], "clip", "project", duration_s=10)
+    assert result["status"] == 502
+    client._batch_payload.assert_awaited_once()
+    client._remember_operation.assert_not_called()
 
 
 @pytest.mark.parametrize(

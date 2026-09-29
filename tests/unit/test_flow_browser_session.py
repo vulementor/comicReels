@@ -84,6 +84,17 @@ def test_missing_profile_is_not_created(tmp_path):
     assert not (tmp_path / 'missing').exists()
 
 
+def test_background_provider_keeps_profile_but_launches_headless(config):
+    seen=[]
+    def create(**kwargs):
+        seen.append(kwargs)
+        return Context()
+    with implementation().FlowBrowserSessionProvider(config,context_factory=create,visible=False) as provider:
+        assert provider.session is not None
+    assert seen[0]['headless'] is True
+    assert seen[0]['user_data_dir']==str(config.user_data_dir)
+
+
 def test_profile_config_repr_does_not_expose_local_path(config):
     assert str(config.user_data_dir) not in repr(config)
 
@@ -112,6 +123,21 @@ def test_login_helper_marker_is_not_reclaimed(config):
           implementation().FlowProfileLease(config)):
         pass
     assert marker.read_text() == 'unknown legacy owner'
+
+
+def test_stale_windows_parent_lock_is_quarantined_before_browser_open(config):
+    if implementation().os.name != 'nt':
+        pytest.skip('Firefox parent.lock reconciliation is Windows-only')
+    lock=config.user_data_dir/'parent.lock'
+    lock.touch()
+    contexts=[]
+    provider=implementation().FlowBrowserSessionProvider(
+        config,context_factory=factory(config,contexts),auth_probe=signed_in)
+    with provider:
+        assert provider.session is not None
+    assert not lock.exists()
+    reconciled=list(config.user_data_dir.glob('.parent.lock.reconciled-*'))
+    assert len(reconciled)==1
 
 
 def test_provider_wraps_existing_page_and_reopens_same_profile(config):

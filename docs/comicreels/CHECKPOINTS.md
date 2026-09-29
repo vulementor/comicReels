@@ -1,5 +1,262 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## Thỏ Remix finishing, direct review and resumed production — 2026-09-28 10:31 +07:00
+
+Owner's advisory-QA policy is installed. c367,69e2,333a and now e9cc are completed automatic
+packages; warning clips await an explicit owner review click. e9cc reused all3 child images,
+generated exactly one native Flow clip (mediaa5149b7e-1001-41c6-94a4-2304106a5031,
+workflow6385efed-88e3-46ab-8a43-41026caa414f), and downloaded the highest observed720p.
+An attachment-preparation timeout was reconciled against the existing upload IDs; a later
+download timeout resumed the same completed media. No paid generation was repeated.
+The finished MP4 at video/130082819_4028505177160096_8127565652977946726_n is720x1280/10s,
+fully decoded, SHA256db2b02403da63102bf4c21d801bcdc6fe9005f2abbd40e8cd667654f439299cf.
+Today's completed quota is4/5; pending review still counts as completed production.
+
+Default black bands cover top11% and bottom12%, with original resolution preserved. Settings
+allow disable/percent adjustment; optional laugh path/volume is configured to the supplied MP3,
+copied into stable assets, mixed80% at6.839208–10s without extending the video. Four previously
+produced, never-posted packages were revised. Originals and manifests are hash-archived; any
+publication intent excludes edits. Paid receipts remain immutable with a separate finishing
+binding. A completed finishing stage freezes settings/input/output across partial finalization.
+
+New embedded review window plays audio/video, pauses/seeks, separates QA/caption/source tabs,
+keeps approval/status visible and invalidates an old view when its manifest changes. Approval
+requests have pending/failure/success feedback and remain bound to the exact displayed manifest.
+Live installed review advanced29 frames and sought8s without any approval. Pixel checks verified
+both black bands on all4 revisions; all video/original hashes and full decodes passed.
+
+Fixed a real Windows launcher failure: FFprobe's UTF-8 Vietnamese pathname output was decoded
+with cp1252. Explicit UTF-8 now passes a subprocess regression with Python UTF-8 mode disabled.
+ComicReels consumer suite1059 passed against current KBS source; final UI feedback subset40
+passed. Independent finishing review reported no remaining important finding. Evidence:
+D:/StableApp/ThoRemix/data/verification/finishing-* and resumed-story-final.json.
+
+Fresh canonical sync: ComicReels4ddd23f equals its upstream with local changes preserved;
+KBS main87e14ae equals origin/main. This is consumer integration, not KBS phase acceptance.
+Four earlier sources still exceed the10s dialogue budget or observed4-reference capacity;
+cached-analysis evidence is source-failure-diagnosis.json. Quarantined5a6ca remains isolated
+with unknown image effect. Neither unsupported content nor unknown effects are silently retried.
+No FBR2 merge, checkpoint approval or default backend cutover is implied by this deployment.
+
+Final installed bundle verified10:33: all80 KBS Python files match canonical87e14ae, app source
+hashes match build manifest. Repeat finishing changed0 packages; embedded review of e9cc and
+native tray lifecycle passed. EXE reopened, enabled/ahead5 retained, headless dispatch started
+to continue the daily quota. No warning clip was approved on behalf of the owner.
+
+## Thỏ Remix reliability and headless run — 2026-09-27 23:50 +07:00
+
+Owner requested 60 seconds after each failed source and headless browsers for background
+production. Durable cooldown now survives restart; completed/day quota still excludes errors.
+GPT FullProxy spaces starts by90 seconds, rests30 seconds after responses, and retains longer
+provider backoff. Source-named draft folders now contain originals and ordered frames before
+video completion;12 existing frames from4 stories were migrated with hash verification.
+Desktop list and resizable, independently scrolling inspector show these assets together.
+
+Recovered exact raw assistant JSON when ChatGPT rendering consumed escape characters.
+Job c3673d43804f408d959e1a90246a97fb reused all three existing images and passed reassessed
+image QA. Job5a6ca80d52c243efbe9760f2575e7913 remains quarantined with UNKNOWN image effect,
+its reservation/audit intact and no automatic replay. Quarantine is protected by the full
+campaign lease; only verified pre-Flow quarantine stops blocking unrelated sources.
+
+Real headless native Flow submit completed once: media7ea36ff9-387d-434a-859e-24918ec5f34c,
+workflow10f7a6eb-510a-4721-a55f-cc5321373a21, exact3 refs, portrait10s. Original MP4 fully
+decoded360x640/10.005s, SHA2565c996a4e8cec7ef39f85170f310f9ec3f11864ad6645ec670dbd433800f07709.
+Read-only resume fixed dropdown icon text, multiline download labels and opaque gallery CDN
+thumbnails: download now opens the exact observed editor route bound to the workflow receipt.
+The720p highest option was observed; this candidate did not advance to upscale/publication.
+
+Headless GPTFP visual QA rejected merged first/second scenes and changed hand poses. This
+is a real content rejection and remains failed; no regeneration or publication occurred.
+Future prompts require timed hard cuts, fixed poses and only blinking/speaking mouth motion.
+Literal line-break notation is whitespace for spoken prompts, timing and ASR comparison;
+stored source text remains intact. No automatic package has passed every stage yet.
+
+Existing manual native package7edf50707f5746c0b3f8b6f2b69af913 remains separate. This work
+does not advance FBR2, merge a checkpoint or change the default extension backend.
+Final deployment/start verification is recorded in the automatic-story execution ledger.
+
+## Thỏ Remix installed automatic producer — 2026-09-27 22:30 +07:00
+
+**Implementation and deployment complete; first automatic package acceptance still running.**
+The stable EXE now contains the finite GPT FullProxy analysis/image/QA pipeline and native
+Camoufox Flow story adapter. Owner settings are enabled, ahead mode, 5 completed clips/day.
+One original image remains one story and one native 10-second video; unrelated stories are
+never concatenated. App tray and Windows 11:00/18:30 plus 5-minute dispatcher are installed.
+
+Live automatic processing has verified source analysis, ordered multi-image generation,
+complete image downloads and independent image QA. Two image sets were rejected before
+Flow payment for invented props or changed shading. Other unsupported sources were skipped,
+not counted as successes. The 4-reference native composer capacity is enforced without
+discarding extra panels. No automatic MP4 has passed every stage at this timestamp.
+
+Fixed equal-scene timing that falsely rejected a 20-word, four-panel source. The shared
+timeline allocates dialogue at the existing 2.6 words/s cap, breathing space and at least
+0.75s per scene, keeping exactly 10 seconds. Job69e2dad5cab84937864a578f60b311f3 is resuming
+its cached analysis after an audited local validation repair; no analysis was resubmitted.
+QA failures for changed image content remain failures. Original sources remain intact.
+
+Validation: ComicReels1008 passed; GPTFP563 passed/49 skipped before the final URL-parser
+repair, then17 affected tests passed. Independent review cleared timing and the repaired
+project-route conversation checkpoint. Source-built bundle promoted transactionally with
+backup `.upgrade-backup-ad6e7f11910b41dcaab406e35704e192`.
+
+These controls supersede disabled/stub statements in historical entries below. They do not
+claim a completed automatic story, FBR2 merge or default-backend cutover. Current receipts,
+attempts, errors and daily count are under `D:\StableApp\ThoRemix\data`.
+
+## Thỏ Remix live whole-story run — 2026-09-27
+
+**ONE_STORY_LIVE_PASS; automatic producer integration remains unfinished.** One original
+four-panel source produced one native Flow10s video, with all four references verified in order.
+Highest available720p download reached full bytes and full decode. Forty visual samples
+preserve the story's key actions with no visible speech balloons. The source has no dialogue;
+generated sound was muted, with the native H.264 video stream unchanged.
+
+Job `7edf50707f5746c0b3f8b6f2b69af913` is `video_ready`; its original source, four images,
+MP4 and GPT FullProxy publication copy are archived under
+`D:\Thỏ Remix\video\119732036_3788849114459038_6754165596934606518_n`.
+No new social post occurred. This supersedes the prior zero-production statement only for
+this bounded operator run, not for the installed automatic producer.
+
+Source gained whole-story prompts/receipts, bounded browser upload and four-reference checks.
+Independent review findings were fixed with regressions: full suite977 passed, final affected
+suite43 passed, actual-JavaScript4 passed. No FBR2 merge/cutover or new stable deployment.
+Campaign remains disabled. Details, exact evidence and continuation boundary:
+[THOREMIX-STORY-LIVE-2026-09-27.md](THOREMIX-STORY-LIVE-2026-09-27.md).
+
+## Thỏ Remix production modes — 2026-09-27 19:52 +07:00
+
+Installed UI has scheduled and advance production, with 1–1000 successfully completed
+clips per Vietnam day (default 5). Known failures retain original sources and safe error
+receipts, then select another unused source. Completed packages wait FIFO; one posting slot
+binds one story. One source image, including all panels, is one story and one independent clip.
+
+Durable ledgers handle restart, quota changes, interrupted local promotion and ambiguous
+results. Paid uncertainty requires reconciliation. Pause/settings controls are rechecked after
+provider waits. Due posting requests persist while production owns the runner; crossed slots
+are serviced after the clip finishes. Prior-day generation-only slots release their recovered
+story into the current queue, without posting retroactively.
+
+Validation: 948 tests passed in 72.12s, no warnings in the final run. Independent review found
+3 recovery/control issues; all reproduced RED and repaired GREEN. 107 focused tests passed.
+Installed EXE hashes, native tray and production screen verified. Windows tasks: 11:00,
+18:30, plus ThoRemix-Production every 5 minutes and after logon. Evidence in installed
+data/verification: desktop.json, tray.json and production-modes.json.
+
+**Controller/configuration ready; real automatic story production still blocked.** Installed
+provider returns production_not_ready before reserving a source. The isolated acceptance image
+remained unchanged: zero reservations and zero completed clips. Campaign remains enabled=false,
+default production_mode=scheduled, limit 5. The existing single-story Flow adapter is unfinished.
+No real production, posting, remote push, merge or FBR2 backend cutover occurred in this change.
+
+## Thỏ Remix system tray — 2026-09-27 19:08 +07:00
+
+Installed desktop now owns a purple rabbit notification-area icon. X hides the window;
+the tray menu opens the desktop or schedule page, pauses an enabled idle schedule, or exits
+the desktop without killing an already-started child command. Tray failures restore the
+window instead of leaving an inaccessible hidden controller. Opening the EXE again signals
+the existing desktop through a Windows event; it does not create a duplicate window/icon.
+
+Validation:77 dashboard/core tests passed; native installed verification proves shell icon
+registration, X-hide, tray-click restore, same-process second-launch restore, the actual
+Vietnamese context menu, schedule-page selection, Exit, and restart. Screenshots and receipt:
+D:\StableApp\ThoRemix\data\verification\tray*.png and tray.json. Installed bundle hashes
+match. The current app is hidden in the tray; campaign settings are unchanged (enabled=false).
+No publication, generation, profile or schedule activation was performed for this feature.
+
+## Thỏ Remix AI publication and owner copy correction — 2026-09-27
+
+This supersedes the historical static-video approval and no-publication statements below.
+The assistant incorrectly published the static alternative. Wrong Facebook Reel2292581028166885
+was deleted; the owner subsequently retained YouTube x0fmyfJ-DgA and authorized corrected
+Facebook/TikTok publication only. The correct file is the native AI animation with bubbles removed,
+SHA edcf3d28e9b2f24a10ece2944982ab0097dd2539da7a26da027fda7ae37f1a6d,10s720x1280.
+
+Correct Facebook Reel: https://www.facebook.com/reel/1782565249836475.
+Affiliate comment1383216933925245 is confirmed. Later owner instruction removed the automatically
+inserted affiliate disclosure sentence from BOTH caption and comment. Native edits were saved,
+reloaded and matched to the same Reel/comment IDs; the product link remains. No deletion/repost
+was used for this text correction. TikTok video7690178796233706770 and its product comment
+are confirmed with the corrected copy: https://www.tiktok.com/@thoremixofficial/video/7690178796233706770.
+
+Source implements the redesigned five-page desktop, exact-media package replacement, target-scoped
+completion, and text-only revisions that retain verified existing effects while binding new ones
+to the public text hash. Prior frozen manifests/projections and static package remain preserved.
+No automatic affiliate sentence is appended to future captions/descriptions/comments. GPTFP copy
+run14ecd98e78ca49bba32d0af0b313da9d and the verified Shopee URL are reused.
+
+Validation: 913 unit tests passed/61.39s, with one existing Flow lifespan/aiosqlite worker shutdown
+warning;86 relevant publication/Affiliate tests passed after the final copy change. KRP304 tests
+passed. Final dashboard regression:34 passed, including read-only hiding of superseded packages.
+Full KRP/KAT runtime and current app source are installed. Final visible EXE verification at
+2026-09-27T11:51:57Z proves matching bundle hashes, one current AI package, four confirmed
+Facebook/TikTok effects and both exact Windows schedules. Installed SDK repeat publication
+returned complete with effect-row/attempt counts unchanged at [9,17]; no duplicate submit.
+Evidence: D:\StableApp\ThoRemix\data\verification and data\review\copy-removal.
+Automatic story producer remains unfinished; daily application remains enabled=false.
+FBR2 remains unmerged and no browser-backend cutover has occurred.
+
+## Thỏ Remix controller/publication build — 2026-09-27 17:20
+
+Installed and visibly verified `D:\StableApp\ThoRemix\ThoRemix.exe`, independent runtime,
+SDK/CLI, exact-source reviewed-video import, atomic complete-package archive, native Shopee
+catalog/link acquisition and KRP publication adapter. **852 unit tests passed in 52.75s**;
+scoped and broad independent review findings were repaired and re-reviewed. Bundled source
+hashes and both Windows schedules (11:00,18:30 +07:00) verified through the installed EXE.
+Build source_state is explicitly working-tree at base `4ddd23f`; no FBR-2 merge/cutover.
+
+Owner completed login. Installed KRP verified TikTok and YouTube at 17:17. Facebook first
+returned needs_input, then a bounded read-only `/me` probe resolved to `/ThoRemixOfficial/`
+with exact Thỏ Remix heading; the subsequent KRP Facebook check passed at 17:19. No user
+re-login was required. All three current saved statuses are ok. Preserve this transient
+observation; do not invent its root cause or claim authentication can never expire.
+
+Native Affiliate live pass selected item11074180896/shop579713807,130000VND,sold6000+,
+minimum verified rate17.5%(FacebookReels20%); one link creation and exact destination
+verified. Twenty cards/four details were observed; one incomplete cross-channel offer excluded.
+Shared KDVT commerce profile was released. Social/Flow/commerce profiles remain separate.
+
+**Not complete:** full automatic story production/QA/highest-download adapter; actual publication.
+The two scheduled triggers exist but application enabled=false. No source image has been
+consumed and no post has been submitted. The exact static-frame 10s clip was shown to the
+owner for the remaining spoken-quality decision. Candidate manifest is not release-ready and
+is not reserved: `D:\StableApp\ThoRemix\data\review\first-publication-candidate.json`.
+
+Guide: [THOREMIX-STABLE.md](THOREMIX-STABLE.md). Live files under installed data:
+`auth-status.json`, `facebook-auth-readiness-observation.json`, `task-7-live-acquisition.json`,
+`flow-credit-observation.json` (972 credits displayed at 16:51), `verification/desktop.json`.
+Review/test reports remain in `.superpowers/sdd/2026-09-27-thoremix-stable/` for continuation.
+
+## Native Flow clip + FBR-2 work in progress — 2026-09-27
+
+The owner's later explicit instruction authorized manual Camoufox video generation using
+the existing three uploaded images, followed by source fixes based on live observations.
+Required output: **one 10-second clip, scenes 1 → 2 → 3, no speech balloons, spoken dialogue,
+strict frame fidelity, highest available download**. This supersedes the historical paid
+startup wait and per-panel 10-second interpretation below.
+
+Two full-story native generations completed and were downloaded at the observed maximum
+720p. A cleaned animated file and an exact static-frame alternative now exist locally;
+**animated frame fidelity remains rejected**, especially the scene 3 facing-away pose.
+Neither file is falsely marked as an approved per-shot result in the application database.
+Full decode and unchanged audio hashes pass; ASR found no repeated utterance, but does not
+certify exact pronunciation. See [manual Flow report](FLOW-MANUAL-VIDEO-2026-09-27.md).
+
+The canonical source now includes native MZZa6b workflow/media receipt separation,
+outcome-based completion, source-balloon removal instructions, and reusable ordered-image,
+composer-text and highest-resolution UI checks. Independent review findings were repaired.
+**699 unit tests PASS** on the working tree with pinned KBS source and UTF-8 enabled;
+178 targeted tests PASS; new semantic module Ruff and critical-error lint PASS.
+Browser lease closed cleanly with no pending paid operation or download.
+
+FBR-2 is **not complete or merged**: its concrete browser driver and live nonpaid integration
+remain unfinished; semantic helpers are not yet production-wired. The running application
+has not been changed to the optional browser backend. Current working branch is
+`codex/fbr-2-nonpaid-backend`, based on `4ddd23f3906ba28011bd0c7e8c93db691f9aae29`.
+Remote fetch confirms that base matches the integration branch and includes the remote
+default tip. KBS canonical `main` remains clean and equal to remote at
+`b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+
 ## FBR-1 — ACCEPTED / CLOSED (2026-09-27)
 
 Owner explicitly instructed: "Merge FBR-1, tiếp tục FBR-2". PR #4 was merged and the canonical

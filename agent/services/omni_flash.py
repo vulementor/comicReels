@@ -7,8 +7,9 @@ Migrated ``flow.google.com`` batch surfaces live-verified on 2026-09-14:
 * first + last frame -> video: ``nprQif`` + ``omni_flash_i2v_<duration>s_first_last``
 * Ingredients/references -> video: ``MZZa6b`` + ``abra_r2v_<duration>s``
 
-Reference-conditioned modes return normal batch operation receipts and use the
-same operation/media poller as migrated Veo.
+Native Ingredients receipts observed 2026-09-27 carry separate workflow and
+media records. Persist both IDs and poll the media; older operation receipts
+remain supported for compatibility.
 
 Duration-specific model keys live in ``agent/models.json`` so a rollout that
 rotates a wire key does not need a code release.
@@ -76,6 +77,28 @@ def _batch_operation_result(operation, project_id: str, model: str, duration_s: 
                 "mode": "batch_operation",
                 "project_id": project_id,
                 "operations": [pending],
+            },
+        },
+    }
+
+
+def _batch_media_result(submitted: dict, project_id: str, model: str,
+                        duration_s: int, resolution: str) -> dict:
+    if submitted.get("project_id") not in (None, project_id):
+        raise fb.FlowBatchError("submitted media belongs to a different project")
+    media_id = submitted["media_id"]
+    workflow = {
+        "name": submitted.get("workflow_id") or media_id,
+        "primary_media_id": media_id,
+        "project_id": project_id,
+    }
+    return {
+        "status": 200,
+        "data": {
+            "media": [{"name": media_id}], "workflows": [workflow],
+            "model": model, "duration_s": duration_s, "resolution": resolution,
+            "flowkitPolling": {
+                "mode": "batch_media", "project_id": project_id, "workflows": [workflow],
             },
         },
     }
@@ -198,30 +221,9 @@ async def generate_omni_flash_text_video(
             fb.RPC_GEN_VIDEO_TEXT, freq, fb.CAPTCHA_VIDEO, timeout=120,
             project_id=pid)
         submitted = fb.read_text_video_submit(payload)
+        return _batch_media_result(submitted, pid, model_key, duration_s, resolution)
     except Exception as exc:
         return {"status": 502, "error": f"{type(exc).__name__}: {exc}"}
-
-    media_id = submitted["media_id"]
-    workflow = {
-        "name": submitted.get("workflow_id") or media_id,
-        "primary_media_id": media_id,
-        "project_id": pid,
-    }
-    return {
-        "status": 200,
-        "data": {
-            "media": [{"name": media_id}],
-            "workflows": [workflow],
-            "model": model_key,
-            "duration_s": duration_s,
-            "resolution": resolution,
-            "flowkitPolling": {
-                "mode": "batch_media",
-                "project_id": pid,
-                "workflows": [workflow],
-            },
-        },
-    }
 
 
 async def _submit_omni_frame_video(
@@ -342,7 +344,8 @@ async def generate_omni_flash_video(
     """Submit Omni Flash Ingredients/reference-to-video generation.
 
     The migrated UI uses RPC ``MZZa6b`` with ``abra_r2v_<duration>s`` (720p)
-    or ``abra_r2v_<duration>s_360p``. Batch jobs use normal operation polling.
+    or ``abra_r2v_<duration>s_360p``. Native receipts use media polling; legacy
+    operation-only receipts keep their existing polling mode.
     """
     refs = _validate_reference_inputs(reference_media_ids, duration_s, aspect_ratio)
     resolution = _validate_resolution(resolution)
@@ -358,11 +361,16 @@ async def generate_omni_flash_video(
             fb.RPC_GEN_VIDEO_REFERENCES, freq, fb.CAPTCHA_VIDEO, timeout=120,
             project_id=pid,
         )
+        batch_model = f"abra_r2v_{duration_s}s" + ("_360p" if resolution == "360p" else "")
+        if isinstance(payload, list) and len(payload) > 3 and payload[3] is not None:
+            # Never parse slot 2's workflow as an operation, or resubmit a paid
+            # request when the native media record is malformed.
+            submitted = fb.read_video_submit(payload, require_workflow=True)
+            return _batch_media_result(submitted, pid, batch_model, duration_s, resolution)
         operation = fb.read_operation(payload)
         client._remember_operation(operation.operation_id, pid)
     except Exception as exc:
         return {"status": 502, "error": f"{type(exc).__name__}: {exc}"}
-    batch_model = f"abra_r2v_{duration_s}s" + ("_360p" if resolution == "360p" else "")
     return _batch_operation_result(operation, pid, batch_model, duration_s, resolution)
 
 async def _check_omni_batch_media(

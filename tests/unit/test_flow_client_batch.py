@@ -310,8 +310,8 @@ class TestGenerateVideo:
 
 
 class TestCheckVideoStatus:
-    def _poll(self, status=None, complaint=None):
-        detail = None
+    def _poll(self, status=None, complaint=None, outcome=None):
+        detail = [None] * 8 + [[outcome]] if outcome is not None else None
         if complaint:
             detail = [None] * 8 + [[fb.OUTCOME_COMPLAINT, [None, complaint]]]
         record = [OPERATION, PROJECT, "scene", status, None, detail]
@@ -326,7 +326,7 @@ class TestCheckVideoStatus:
         return result["data"]["operations"][0]
 
     async def test_successful_once_a_video_url_exists(self, client):
-        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE")
+        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE", outcome=fb.OUTCOME_OK)
         client.responses[fb.RPC_PROJECT_MEDIA] = self._listing()
         client.responses[fb.RPC_MEDIA] = {"data": envelope(fb.RPC_MEDIA, [VIDEO_URL])}
 
@@ -337,7 +337,7 @@ class TestCheckVideoStatus:
 
     async def test_a_media_id_with_only_a_poster_is_still_pending(self, client):
         """Downloading on the id alone would save a still picture."""
-        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE")
+        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE", outcome=fb.OUTCOME_OK)
         client.responses[fb.RPC_PROJECT_MEDIA] = self._listing()
         client.responses[fb.RPC_MEDIA] = {"data": envelope(fb.RPC_MEDIA, [IMAGE_URL])}
 
@@ -364,7 +364,7 @@ class TestCheckVideoStatus:
         assert (await self._status(client))["status"] == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
 
     async def test_the_listing_is_asked_for_a_window_not_the_whole_thing(self, client):
-        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE")
+        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE", outcome=fb.OUTCOME_OK)
         client.responses[fb.RPC_PROJECT_MEDIA] = self._listing(found=False)
 
         await self._status(client)
@@ -393,7 +393,7 @@ class TestCheckVideoStatus:
 
     async def test_a_known_media_id_is_not_looked_up_again(self, client):
         """Once the listing has answered, later rounds go straight to the media."""
-        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE")
+        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE", outcome=fb.OUTCOME_OK)
         client.responses[fb.RPC_PROJECT_MEDIA] = self._listing()
         client.responses[fb.RPC_MEDIA] = {"data": envelope(fb.RPC_MEDIA, [IMAGE_URL])}
 
@@ -405,7 +405,7 @@ class TestCheckVideoStatus:
 
     async def test_a_finished_operation_stays_finished_when_re_polled(self, client):
         """A batch re-polls its finished operations alongside its pending ones."""
-        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE")
+        client.responses[fb.RPC_OPERATION] = self._poll(status="CAE", outcome=fb.OUTCOME_OK)
         client.responses[fb.RPC_PROJECT_MEDIA] = self._listing()
         client.responses[fb.RPC_MEDIA] = {"data": envelope(fb.RPC_MEDIA, [VIDEO_URL])}
 

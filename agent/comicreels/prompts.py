@@ -3,13 +3,20 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Iterable
-
+import math
 
 SUPPORTED_DURATIONS = {
     "omni_flash": (4, 6, 8, 10),
     "veo": (8,),
 }
+
+NO_VISIBLE_DIALOGUE = (
+    "NO VISIBLE DIALOGUE: Loại bỏ toàn bộ bong bóng thoại, kể cả bong bóng có sẵn trong ảnh tham chiếu. "
+    "Giữ nguyên phần hình của nhân vật và bối cảnh. Lời thoại chỉ phát bằng âm thanh; "
+    "không tạo phụ đề lời nói, speech bubble, watermark hoặc caption mới. "
+    "GIỮ NGUYÊN chữ nguồn trên biển báo, bảng thông báo, nhãn/đạo cụ và chữ kể chuyện mang ý nghĩa; "
+    "không xóa thành bảng trắng, không đổi nội dung và không đọc chữ đó thành tiếng."
+)
 
 
 def split_exact(text: str, max_chars: int) -> list[str]:
@@ -74,7 +81,7 @@ ACTION: Chuyển động nhỏ, tự nhiên và đúng cảm xúc của khung; �
 LIP SYNC: Chỉ người đang nói cử động miệng trong thời gian câu thoại; người không nói không chép miệng.
 AUDIO: Tạo luôn lời thoại nói trong chính video theo DIALOGUE LOCK. Không chờ, không yêu cầu và không giả định có file TTS/lồng tiếng tách riêng.
 CAMERA: Giữ bố cục nguồn; chuyển động máy rất nhẹ, không che hoặc cắt nhân vật quan trọng.
-NO TEXT: Không tạo chữ, subtitle, speech bubble, watermark hoặc caption trong video."""
+{NO_VISIBLE_DIALOGUE}"""
     
 
 
@@ -94,9 +101,86 @@ REFERENCE IMAGES: {reference_count} ảnh đính kèm là nguồn hình ảnh b�
 {scene_lock}CHARACTER LOCK: Bám sát tuyệt đối thiết kế nhân vật, khuôn mặt, hình dáng, tỷ lệ cơ thể, trang phục, màu sắc, đạo cụ và nét vẽ trong các ảnh reference. Không redesign, không đổi loài, không đổi màu, không thêm nhân vật không có trong reference.
 REFERENCE CONSISTENCY: Nếu cùng nhân vật xuất hiện ở nhiều ảnh, phải giữ một thiết kế thống nhất xuyên suốt video. Ưu tiên nhận dạng nhân vật và bố cục từ ảnh hơn mọi suy diễn từ văn bản.
 SCRIPT: Thực hiện đúng kịch bản thành phần bên dưới, bao gồm lời thoại. Lời thoại phải được tạo trực tiếp trong video, không dùng bước TTS/lồng tiếng riêng.
+{NO_VISIBLE_DIALOGUE}
 ---
 {base_prompt.strip()}
 """
+
+def spoken_text(text: str) -> str:
+    """Line-break notation is spacing, never a spoken letter or an extra word."""
+    return ' '.join(text.replace('\\r\\n', ' ').replace('\\n', ' ').replace('\\r', ' ').split())
+
+
+def story_timeline(panels: list[dict], *, duration_s: int = 10) -> list[tuple[float, float]]:
+    """Reserve speech time and a readable silent beat before sharing spare time.
+
+    Returns intervals in reading order. Budgeting never edits source dialogue;
+    verification of the words and speaker remains the caller's separate gate.
+    """
+    if duration_s not in SUPPORTED_DURATIONS['omni_flash'] or not 1 <= len(panels) <= 32:
+        raise ValueError('INVALID_STORY_DURATION_OR_PANELS')
+    ordered = sorted(panels, key=lambda p: p['display_order'])
+    if [p['display_order'] for p in ordered] != list(range(len(ordered))):
+        raise ValueError('STORY_PANEL_ORDER_INVALID')
+    minimum = []
+    for panel in ordered:
+        lines = panel.get('dialogues', [])
+        words = sum(len(spoken_text(d['text']).split()) for d in lines)
+        # Keep the established 2.6 words/s cap, with a breath between utterances.
+        minimum.append(max(75, math.ceil((words / 2.6 + .15 * len(lines)) * 100)))
+    spare = duration_s * 100 - sum(minimum)
+    if spare < 0:
+        raise ValueError('STORY_DIALOGUE_TOO_LONG')
+    extra, remainder = divmod(spare, len(ordered))
+    intervals, cursor = [], 0
+    for index, required in enumerate(minimum):
+        end = cursor + required + extra + (index < remainder)
+        intervals.append((cursor / 100, end / 100))
+        cursor = end
+    return intervals
+
+
+def story_video_prompt(panels: list[dict], *, duration_s: int = 10, allow_unverified: bool = False) -> str:
+    """One source story in one native generation, without per-panel splitting.
+
+    Reference capacity is checked separately against the observed Flow composer.
+    No panel can be silently dropped to fit that capacity or the speech budget.
+    """
+    if duration_s not in SUPPORTED_DURATIONS['omni_flash'] or not 1 <= len(panels) <= 32:
+        raise ValueError('INVALID_STORY_DURATION_OR_PANELS')
+    ordered = sorted(panels, key=lambda p: p['display_order'])
+    if [p['display_order'] for p in ordered] != list(range(len(ordered))):
+        raise ValueError('STORY_PANEL_ORDER_INVALID')
+    timeline = story_timeline(ordered, duration_s=duration_s)
+    segments = []
+    for index, panel in enumerate(ordered):
+        start, end = timeline[index]
+        lines = sorted(panel.get('dialogues', []), key=lambda d: d.get('display_order', 0))
+        if any((not allow_unverified and not (type(d.get('verified')) in (bool, int) and d['verified'] == 1))
+               or not str(d.get('speaker_id') or '').strip()
+               or not str(d.get('text') or '').strip() for d in lines):
+            raise ValueError('DIALOGUE_UNVERIFIED')
+        speech = (' '.join(f'{d["speaker_id"]} nói đúng một lần: {spoken_text(d["text"])!r}.' for d in lines)
+                  if lines else 'KHÔNG CÓ LỜI THOẠI; không tự thêm câu nói hoặc lời dẫn.')
+        signs = [r for r in panel.get('text_regions', []) if str(r.get('text') or '').strip()]
+        signage = (' CHỮ NGUỒN TRONG CẢNH (giữ nguyên trên đạo cụ, tuyệt đối không đọc thành tiếng): '
+                   + '; '.join(repr(r['text']) for r in signs) + '.') if signs else ''
+        segments.append(f'{start:g}-{end:g}s · REFERENCE {index + 1}: '
+                        f'Tại đúng {start:g}s, cắt thẳng sang ảnh {index + 1}; giữ riêng cảnh này đến {end:g}s. '
+                        'Giữ nguyên tư thế tay/chân, vị trí từng nhân vật, hướng mặt, bố cục và đạo cụ. '
+                        'Chỉ cho phép chớp mắt nhẹ và cử động miệng của người đang nói; '
+                        f'không vẫy tay, đổi dáng hoặc lặp động tác. {speech}{signage}')
+    return (f'COMICREELS · ONE STORY / ONE VIDEO / {duration_s} seconds\n'
+            f'Tất cả {len(ordered)} ảnh tham chiếu thuộc MỘT câu chuyện. '
+            'Diễn tiến đúng thứ tự ảnh, mỗi cảnh xuất hiện một lần, không diễn lại cảnh hoặc câu thoại. '
+            'Dù hai ảnh có cùng nhân vật và nền, vẫn phải cắt rõ tại mốc cảnh để khớp tư thế của từng ảnh; không hòa chúng thành một cảnh dài. '
+            'Không thêm nhân vật, hành động, lời dẫn, tình tiết hoặc kết thúc mới. '
+            'Giữ nguyên nét vẽ, màu, nhân vật và bối cảnh. Chuyển cảnh gọn, không biến hình giữa các cảnh.\n'
+            + '\n'.join(segments) + '\n'
+            'AUDIO: Chỉ phát đúng lời thoại đã ghi; phân biệt giọng từng người nói. '
+            'Nếu cảnh không có lời thì giữ im lặng, chỉ âm thanh môi trường nhẹ.\n'
+            + NO_VISIBLE_DIALOGUE)
+
 
 def build_shots(
     project_id: str,

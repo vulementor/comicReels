@@ -118,9 +118,6 @@ VIDEO_ASPECT_BY_NAME = {
     "VIDEO_ASPECT_RATIO_LANDSCAPE": VIDEO_ASPECT_LANDSCAPE,
 }
 
-#: `CAE` is the operation's terminal state. Anything else means still working.
-STATUS_DONE = "CAE"
-
 #: Outcome codes seen in the operation's status block. Code 4 carries a
 #: message like "Media not found." — but it is NOT a verdict: jobs that report
 #: it still finish, and the finished media shows up in the project listing
@@ -179,10 +176,13 @@ class Operation:
     project_id: Optional[str]
     status: Optional[str]
     error: Optional[str] = None
+    outcome: int | None = None
 
     @property
     def done(self) -> bool:
-        return self.status == STATUS_DONE
+        # Live jwpduf: CAE appears with queued (6), running (2) and done (3).
+        # Upscaling completes with CAI + 3. The opaque string is not a verdict.
+        return self.outcome == OUTCOME_OK
 
     @property
     def complained(self) -> bool:
@@ -634,24 +634,38 @@ def read_uploaded_media_id(payload: Any) -> str:
     return media_id
 
 
-def read_text_video_submit(payload: Any) -> dict:
-    """Read YhhmEf's submitted media/workflow record."""
+def read_video_submit(payload: Any, *, require_workflow: bool = False) -> dict:
+    """Read YhhmEf/MZZa6b media in slot 3, distinct from workflow slot 2."""
     records = payload[3] if isinstance(payload, list) and len(payload) > 3 else None
     record = records[0] if isinstance(records, list) and records else None
     if not isinstance(record, list) or not record:
-        raise FlowBatchError("text-video submit carried no generation record")
+        raise FlowBatchError("video submit carried no generation record")
     media_id = record[0] if len(record) > 0 else None
     project_id = record[1] if len(record) > 1 else None
     workflow_id = record[2] if len(record) > 2 else None
     status = record[3] if len(record) > 3 else None
     if not isinstance(media_id, str) or not media_id:
-        raise FlowBatchError("text-video submit carried no media id")
+        raise FlowBatchError("video submit carried no media id")
+    if require_workflow:
+        for value in (media_id, project_id, workflow_id):
+            try:
+                valid = isinstance(value, str) and str(uuid.UUID(value)) == value.lower()
+            except ValueError:
+                valid = False
+            if not valid:
+                raise FlowBatchError("native video submit requires media, project and workflow UUIDs")
     return {
         "media_id": media_id,
         "project_id": project_id if isinstance(project_id, str) else None,
         "workflow_id": workflow_id if isinstance(workflow_id, str) else media_id,
         "status": status if isinstance(status, str) else None,
     }
+
+
+def read_text_video_submit(payload: Any) -> dict:
+    """Compatibility name for existing text-video callers."""
+    return read_video_submit(payload)
+
 
 def read_upscaled_image(payload: Any) -> str:
     """Return the base64 image body from FlowService.UpsampleImage."""
@@ -664,19 +678,33 @@ def read_upscaled_image(payload: Any) -> str:
 def read_operation(payload: Any) -> Operation:
     """`[null, 50, [[opId, projectId, sceneId, status, …]]]`.
 
-    Note the third uuid is the **scene**, not the media. Reading it as a media
-    id is what made every `as29s` lookup answer NOT_FOUND.
+    The third UUID is a related scene/workflow, not the media. Native MZZa6b
+    submit receipts have workflow metadata in slot 2 and must instead use
+    read_video_submit; polling jwpduf retains the operation record shape here.
     """
     records = payload[2] if isinstance(payload, list) and len(payload) > 2 else None
     record = records[0] if isinstance(records, list) and records else None
     if not isinstance(record, list) or not record:
         raise FlowBatchError("operation payload carried no record")
+    status = record[3] if len(record) > 3 else None
+    if not isinstance(record[0], str) or not record[0] or (
+        status is not None and not isinstance(status, str)
+    ):
+        raise FlowBatchError("record is not an operation; workflow metadata requires media polling")
     return Operation(
         operation_id=record[0],
         project_id=record[1] if len(record) > 1 else None,
-        status=record[3] if len(record) > 3 else None,
+        status=status,
         error=read_operation_error(record),
+        outcome=read_operation_outcome(record),
     )
+
+
+def read_operation_outcome(record: list) -> int | None:
+    detail = record[5] if len(record) > 5 else None
+    block = detail[8] if isinstance(detail, list) and len(detail) > 8 else None
+    code = block[0] if isinstance(block, list) and block else None
+    return code if type(code) is int else None
 
 
 def read_operation_error(record: list) -> Optional[str]:

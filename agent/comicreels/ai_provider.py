@@ -18,13 +18,14 @@ from typing import Any
 from PIL import Image
 
 from agent.comicreels.images import clamp_box, sha256_file
+from agent.comicreels.sign_text import normalize_panel_text_regions
 
 
 _PROVIDER = "gpt_fullproxy"
 _DIALOGUE_VERIFY_REVISION = "v3"
 _VISUAL_ANCHOR_REVISION = "v1"
 _VISUAL_ANCHOR_VALIDATE_REVISION = "v1"
-_IMAGE_GENERATION_REVISION = "v3-panel-crop-reconcile"
+_IMAGE_GENERATION_REVISION = "v4-preserve-source-signage"
 _PROFILE_NAME = os.environ.get("COMICREELS_GPTFP_PROFILE", "zaloconnect-chatgpt")
 _VISIBLE = os.environ.get("COMICREELS_GPTFP_VISIBLE", "1").strip().lower() not in {
     "0", "false", "no", "off",
@@ -133,8 +134,14 @@ Yêu cầu bắt buộc:
 - Tự nhận toàn bộ panel theo thứ tự đọc.
 - Chép NGUYÊN VĂN mọi lời thoại, giữ nguyên dấu câu, viết hoa và tiếng Việt.
 - Gán speaker_id ổn định theo nhân vật bằng đuôi bong bóng, vị trí và ngữ cảnh.
-- Tự nhận mọi vùng speech bubble, caption, chữ và watermark cần xóa trong từng panel.
+- Phân loại chữ trước khi chọn vùng xóa. speech_regions CHỈ gồm speech_bubble,
+  dialogue_caption (phụ đề lời nói), watermark; đây là các vùng cần xóa.
+- Chữ trên biển báo, bảng thông báo, nhãn/đạo cụ và chữ kể chuyện mang ý nghĩa phải
+  GIỮ NGUYÊN trong cảnh. Chép nguyên văn vào text_regions, kind=signage|prop_text|narrative_caption,
+  giữ dấu câu, viết hoa và xuống dòng; không gán speaker_id, không đưa vào dialogues hoặc đọc thành tiếng.
+- Nếu không đọc chắc chữ, để text="", confidence thấp và ghi warnings; không đoán hoặc xóa chữ đó.
 - speech_regions là bbox TƯƠNG ĐỐI VỚI CROP PANEL.
+- text_regions cũng là bbox TƯƠNG ĐỐI VỚI CROP PANEL; không chồng vùng giữ chữ với vùng xóa.
 - bbox panel là tọa độ pixel trên toàn ảnh nguồn.
 - Với MỖI panel, visual_anchor phải mô tả CHỈ những gì nhìn thấy trong chính panel đó:
   nhân vật nào xuất hiện, vị trí trái/phải/trước/sau, pose, hướng mặt/hướng nhìn,
@@ -151,6 +158,10 @@ Schema:
       "visual_anchor": "mô tả hình học/pose/framing chỉ của panel này",
       "speech_regions": [
         {{"x": 10, "y": 10, "w": 50, "h": 30, "kind": "speech_bubble"}}
+      ],
+      "text_regions": [
+        {{"x": 10, "y": 50, "w": 50, "h": 30, "kind": "signage",
+          "text": "NGUYÊN VĂN CHỮ TRÊN BIỂN", "confidence": 0.99}}
       ]
     }}
   ],
@@ -686,6 +697,7 @@ async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[
 
     normalized: list[dict[str, Any]] = []
     for panel in panels:
+        panel = normalize_panel_text_regions(panel)
         safe = clamp_box(panel, width, height)
         regions: list[dict[str, int]] = []
         for region in panel.get("speech_regions") or []:
@@ -694,6 +706,11 @@ async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[
             except Exception:
                 continue
         safe["mask"] = regions
+        safe["text_regions"] = [
+            dict(region, **clamp_box(region, safe['w'], safe['h']))
+            for region in panel['text_regions']
+        ]
+        safe["text_warnings"] = panel['text_warnings']
         safe["confidence"] = panel.get("confidence")
         safe["visual_anchor"] = str(panel.get("visual_anchor") or "").strip()
         normalized.append(safe)
@@ -862,7 +879,7 @@ def _image_prompt(
 ) -> str:
     region_text = ", ".join(
         f"(x={r['x']},y={r['y']},w={r['w']},h={r['h']})" for r in regions
-    ) or "các speech bubble/text nhìn thấy trong ảnh"
+    ) or "chỉ bong bóng thoại/phụ đề lời nói nhìn thấy trong ảnh, nếu có"
     reference_policy = f"""
 Reference bắt buộc của request này là attachment provider-side "{reference_asset_name}" đã tồn tại
 trong CHÍNH conversation này. Đây là crop của KHUNG {panel_index + 1} từ ảnh nguồn, không phải ảnh
@@ -898,14 +915,16 @@ BẮT BUỘC:
 - Giữ ĐÚNG pose, hướng nhìn, vị trí tương đối, khoảng cách và framing của nhân vật trong bbox panel mục tiêu.
 - TUYỆT ĐỐI KHÔNG mượn pose/composition từ panel khác trong cùng ảnh nguồn.
 - Phần hình ảnh gốc bên trong bbox panel mục tiêu phải được xem là protected visual reference;
-  chỉ được thay đổi nơi có chữ/bubble hoặc phần cần outpaint để mở rộng ra 9:16.
-- Xóa toàn bộ chữ, speech bubble, caption và đuôi bong bóng.
+  chỉ được thay đổi bong bóng thoại/phụ đề lời nói hoặc phần cần outpaint để mở rộng ra 9:16.
+- Xóa bong bóng thoại, đuôi bong bóng và phụ đề lời nói.
+- GIỮ NGUYÊN chữ trên biển báo, bảng thông báo, nhãn/đạo cụ và chữ kể chuyện mang ý nghĩa.
+  Đây là nội dung trong cảnh, không phải lời thoại: giữ đúng từng chữ và vị trí, không xóa thành bảng trắng.
 - Các vùng AI đã nhận cần xóa: {region_text}.
 - Tái tạo tự nhiên phần nền/nhân vật vốn bị bong bóng hoặc chữ che mất.
 - Outpaint phần còn thiếu để thành bố cục dọc 9:16, không dùng khung trắng/padding.
 - Không cắt mất nhân vật hoặc đạo cụ quan trọng.
 - Không thêm nhân vật mới.
-- Không thêm chữ, subtitle, logo, watermark hoặc speech bubble.
+- Không thêm chữ mới, subtitle, logo, watermark hoặc speech bubble; chữ nguồn trên đạo cụ phải được giữ.
 - Giữ đúng khoảnh khắc truyện và quan hệ vị trí giữa các nhân vật.
 - Kết quả phải là MỘT ảnh 9:16 sạch, không phải collage hay before/after.
 
