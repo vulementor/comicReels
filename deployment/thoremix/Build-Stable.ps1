@@ -36,7 +36,7 @@ function Move-UpgradePart {
             Start-Sleep -Milliseconds (250 * $attempt)
         }
     }
-    throw "Upgrade move failed for $Label: $($lastError.GetType().Name)"
+    throw "Upgrade move failed for ${Label}: $($lastError.GetType().Name)"
 }
 # Same byte and file as Python msvcrt.locking; retained for the whole transaction.
 $dataDirectory = Join-Path $destination 'data'
