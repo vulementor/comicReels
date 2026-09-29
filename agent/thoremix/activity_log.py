@@ -195,6 +195,16 @@ def build_activity(settings, jobs: list[dict], rows: list[dict]) -> list[dict]:
                 job_id=job_id, clip=clip, category='repair', action=label,
                 state=data.get('state'), detail=data.get('reason') or '', source=str(path)))
 
+        cleanup_path = settings.data/'social-cleanups'/str(job_id)/'tiktok-stale-editor.json'
+        if cleanup_path.is_file():
+            cleanup = _json(cleanup_path)
+            events.append(_event(
+                key=f'cleanup:{job_id}:tiktok:{_file_time(cleanup_path)}',
+                timestamp=_file_time(cleanup_path), job_id=job_id, clip=clip,
+                category='publishing', action='Dọn TikTok stale editor',
+                platform='tiktok', state=cleanup.get('state'),
+                detail=cleanup.get('reason') or '', source=str(cleanup_path)))
+
     journal = settings.data / 'krp' / 'state.sqlite3'
     if journal.is_file():
         try:
