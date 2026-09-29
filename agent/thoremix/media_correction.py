@@ -42,6 +42,122 @@ def correction_approval_valid(settings: Settings, job_id: str, package: dict) ->
         return False
 
 
+def _current_correction(settings: Settings, job_id: str, expected_digest: str | None = None):
+    from .quality import manifest_digest
+    campaign = Campaign(settings)
+    job = campaign.get(job_id)
+    folder = Path(job['package_dir']).resolve(strict=True)
+    if folder.parent != settings.output.resolve():
+        raise ValueError('CORRECTION_APPROVAL_PACKAGE_OUTSIDE_OUTPUT')
+    package_path = folder/'package.json'
+    package = _json(package_path)
+    if (package.get('job_id') != job_id
+            or package.get('source_sha256') != job.get('source_sha256')
+            or not isinstance(package.get('correction'), dict)
+            or package['correction'].get('approval_required') is not True):
+        raise ValueError('CORRECTION_APPROVAL_PACKAGE_INVALID')
+    digest = manifest_digest(package)
+    if expected_digest is not None and digest != expected_digest:
+        raise ValueError('CORRECTION_APPROVAL_MANIFEST_CHANGED')
+    if package.get('publication_revision') != package.get('video_sha256'):
+        raise ValueError('CORRECTION_APPROVAL_REVISION_MISMATCH')
+    if package.get('publication_targets') != ['facebook','tiktok']:
+        raise ValueError('CORRECTION_APPROVAL_SCOPE_INVALID')
+    if sha256(Path(package['video_path'])) != package['video_sha256']:
+        raise ValueError('CORRECTION_APPROVAL_VIDEO_CHANGED')
+    return campaign, job, folder, package_path, package, digest
+
+
+def _revision_effects_are_pre_submit(settings: Settings, package: dict, folder: Path) -> bool:
+    receipt_path = folder/'publication.json'
+    if not receipt_path.exists():
+        return True
+    try:
+        receipt = _json(receipt_path)
+        if receipt.get('source_sha256') != package.get('source_sha256'):
+            return False
+        platforms = receipt.get('platforms')
+        if not isinstance(platforms, dict) or set(platforms) - set(TARGETS):
+            return False
+        for platform in TARGETS:
+            item = platforms.get(platform)
+            effect = item.get('publication') if isinstance(item, dict) else None
+            if not isinstance(effect, dict):
+                continue
+            operation_id = effect.get('operation_id')
+            if not isinstance(operation_id, str):
+                return False
+            record = _effect(settings, operation_id)
+            if (record.get('platform') != platform or record.get('action') != 'publish_reel'
+                    or record.get('state') != 'needs_input' or record.get('permalink')
+                    or record.get('external_id') or record.get('asset_sha256') != package.get('video_sha256')):
+                return False
+            evidence = _evidence(record)
+            receipts = evidence.get('receipts') if isinstance(evidence, dict) else None
+            path = receipts.get('needs_input') if isinstance(receipts, dict) else None
+            if not isinstance(path, str):
+                return False
+            proof_path = _contained_file(path, settings.data/'krp'/'artifacts'/operation_id)
+            proof = _json(proof_path)
+            if (proof.get('operation_id') != operation_id
+                    or proof.get('platform') != platform
+                    or proof.get('stage') != 'needs_input'
+                    or proof.get('state') != 'needs_input'
+                    or proof.get('submit_may_have_happened') is not False
+                    or proof.get('asset_sha256') != package.get('video_sha256')
+                    or proof.get('permalink') or proof.get('external_id')):
+                return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
+        return False
+
+
+def approve_media_correction(settings: Settings, job_id: str, expected_digest: str) -> dict:
+    """Approve exactly one correction manifest; never performs a social effect."""
+    if not re.fullmatch(r'[0-9a-f]{32}', str(job_id or '')):
+        raise ValueError('CORRECTION_APPROVAL_JOB_INVALID')
+    if not re.fullmatch(r'[0-9a-f]{64}', str(expected_digest or '')):
+        raise ValueError('CORRECTION_APPROVAL_DIGEST_INVALID')
+    settings = Settings.load(settings.directory) if settings.path.exists() else settings
+    with campaign_operation(settings):
+        campaign, job, folder, package_path, package, digest = _current_correction(
+            settings, job_id, expected_digest)
+        if job['state'] not in {'awaiting_approval','video_ready'}:
+            raise ValueError('CORRECTION_APPROVAL_STATE_INVALID')
+        if not _revision_effects_are_pre_submit(settings, package, folder):
+            raise ValueError('CORRECTION_APPROVAL_EXTERNAL_EFFECT_UNCERTAIN')
+        approval_dir = settings.data/'media-corrections'/job_id
+        approval_dir.mkdir(parents=True, exist_ok=True)
+        approval_path = approval_dir/'approval.json'
+        receipt = {
+            'state':'approved','job_id':job_id,'manifest_sha256':digest,
+            'package_file_sha256':sha256(package_path),'video_sha256':package['video_sha256'],
+            'publication_targets':['facebook','tiktok'],
+            'approved_at':now_iso(),
+            'external_effects_before_approval':'none_proven_pre_submit_only',
+        }
+        if approval_path.exists():
+            prior = _json(approval_path)
+            stable = {k:v for k,v in prior.items() if k != 'approved_at'}
+            expected = {k:v for k,v in receipt.items() if k != 'approved_at'}
+            if stable != expected:
+                raise ValueError('CORRECTION_APPROVAL_RECEIPT_CONFLICT')
+            receipt = prior
+        else:
+            atomic_json(approval_path, receipt)
+        if not correction_approval_valid(settings, job_id, package):
+            raise ValueError('CORRECTION_APPROVAL_RECEIPT_INVALID')
+        if campaign.get(job_id)['state'] != 'video_ready':
+            campaign.update(job_id, 'video_ready', correction_approved=True,
+                            correction_manifest_sha256=digest)
+        return {
+            'state':'correction_approved','job_id':job_id,
+            'manifest_sha256':digest,'video_sha256':package['video_sha256'],
+            'publication_targets':['facebook','tiktok'],
+            'approval_receipt':str(approval_path),
+        }
+
+
 def _json(path: Path) -> dict:
     value = json.loads(Path(path).read_text(encoding='utf-8'))
     if not isinstance(value, dict):
