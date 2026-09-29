@@ -82,7 +82,7 @@ LIP SYNC: Chỉ người đang nói cử động miệng trong thời gian câu 
 AUDIO: Tạo luôn lời thoại nói trong chính video theo DIALOGUE LOCK. Không chờ, không yêu cầu và không giả định có file TTS/lồng tiếng tách riêng.
 CAMERA: Giữ bố cục nguồn; chuyển động máy rất nhẹ, không che hoặc cắt nhân vật quan trọng.
 {NO_VISIBLE_DIALOGUE}"""
-    
+
 
 
 def reference_video_prompt(base_prompt: str, reference_count: int, *, source_reference: int | None = None) -> str:
