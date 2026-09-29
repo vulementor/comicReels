@@ -13,6 +13,31 @@ $destination = [IO.Path]::GetFullPath($Root).TrimEnd('\')
 if (-not $LockCheckOnly -and $destination -ne 'D:\StableApp\ThoRemix') {
     throw 'This deployment is scoped to D:\StableApp\ThoRemix.'
 }
+
+function Move-UpgradePart {
+    param(
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 8; $attempt++) {
+        try {
+            Move-Item -LiteralPath $Source -Destination $Destination -ErrorAction Stop
+            return
+        } catch {
+            $lastError = $_.Exception
+            $retryable = ($lastError -is [System.IO.IOException]) -or
+                         ($lastError -is [System.UnauthorizedAccessException])
+            if (-not $retryable -or $attempt -eq 8 -or -not (Test-Path -LiteralPath $Source) -or
+                    (Test-Path -LiteralPath $Destination)) {
+                throw
+            }
+            Start-Sleep -Milliseconds (250 * $attempt)
+        }
+    }
+    throw "Upgrade move failed for $Label: $($lastError.GetType().Name)"
+}
 # Same byte and file as Python msvcrt.locking; retained for the whole transaction.
 $dataDirectory = Join-Path $destination 'data'
 New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
@@ -140,16 +165,16 @@ for name in ('ffmpeg.exe', 'ffprobe.exe'):
             New-Item -ItemType Directory -Path (Split-Path -Parent $live) -Force | Out-Null
             New-Item -ItemType Directory -Path (Split-Path -Parent $old) -Force | Out-Null
             $entry = @{live=$live; incoming=$incoming; old=$old; hadOld=(Test-Path -LiteralPath $live); installed=$false}
-            if ($entry.hadOld) { Move-Item -LiteralPath $live -Destination $old }
+            if ($entry.hadOld) { Move-UpgradePart -Source $live -Destination $old -Label "$part live->backup" }
             $promoted.Add($entry)
-            Move-Item -LiteralPath $incoming -Destination $live
+            Move-UpgradePart -Source $incoming -Destination $live -Label "$part stage->live"
             $entry.installed = $true
         }
     } catch {
         for ($index = $promoted.Count - 1; $index -ge 0; $index--) {
             $entry = $promoted[$index]
-            if ($entry.installed) { Move-Item -LiteralPath $entry.live -Destination $entry.incoming }
-            if ($entry.hadOld) { Move-Item -LiteralPath $entry.old -Destination $entry.live }
+            if ($entry.installed) { Move-UpgradePart -Source $entry.live -Destination $entry.incoming -Label "rollback live->stage" }
+            if ($entry.hadOld) { Move-UpgradePart -Source $entry.old -Destination $entry.live -Label "rollback backup->live" }
         }
         throw
     }
