@@ -202,3 +202,89 @@ def test_scheduler_cannot_publish_unapproved_correction_even_if_job_is_misclassi
     assert outcome['state']=='awaiting_correction_approval'
     assert called==[]
     assert Campaign(enabled).get(job['id'])['state']=='awaiting_approval'
+
+
+def test_explicit_correction_approval_is_hash_bound_and_moves_job_to_ready(correction_case):
+    mod,settings,campaign,job,*_=correction_case
+    result=mod.prepare_media_correction(settings,job['id'])
+    package_path=Path(result['package'])
+    package=json.loads(package_path.read_text(encoding='utf-8'))
+    from agent.thoremix.quality import manifest_digest
+    digest=manifest_digest(package)
+
+    approved=mod.approve_media_correction(settings,job['id'],digest)
+
+    assert approved['state']=='correction_approved'
+    assert approved['manifest_sha256']==digest
+    assert approved['video_sha256']==package['video_sha256']
+    assert approved['publication_targets']==['facebook','tiktok']
+    assert mod.correction_approval_valid(settings,job['id'],package)
+    assert campaign.get(job['id'])['state']=='video_ready'
+    receipt=json.loads((settings.data/'media-corrections'/job['id']/'approval.json').read_text(encoding='utf-8'))
+    assert receipt['external_effects_before_approval']=='none_proven_pre_submit_only'
+
+
+def test_correction_approval_rejects_changed_manifest_digest(correction_case):
+    mod,settings,campaign,job,*_=correction_case
+    result=mod.prepare_media_correction(settings,job['id'])
+    with pytest.raises(ValueError,match='MANIFEST_CHANGED'):
+        mod.approve_media_correction(settings,job['id'],'0'*64)
+    assert campaign.get(job['id'])['state']=='awaiting_approval'
+    assert not (settings.data/'media-corrections'/job['id']/'approval.json').exists()
+
+
+def _install_revision_pre_submit(settings, package_dir, package):
+    from agent.thoremix.publishing import _manifest
+    _,digest=_manifest(package_dir)
+    journal=settings.data/'krp'/'state.sqlite3'
+    with sqlite3.connect(journal) as db:
+        for platform in ('facebook','tiktok'):
+            op='new-'+platform
+            receipt_dir=settings.data/'krp'/'artifacts'/op
+            receipt_dir.mkdir(parents=True,exist_ok=True)
+            proof=receipt_dir/f'{platform}-needs_input.json'
+            atomic_json(proof,{'operation_id':op,'platform':platform,'action':'publish_reel',
+                'actor':'thoremix','profile':settings.social_profile,'payload_sha256':'e'*64,
+                'asset_sha256':package['video_sha256'],'stage':'needs_input','state':'needs_input',
+                'submit_may_have_happened':False,'permalink':None,'external_id':None})
+            payload={'extra':{'package_sha256':digest}}
+            db.execute('INSERT INTO effects VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(
+                op,f"thoremix:{package['source_sha256']}:revision:{package['video_sha256']}:{platform}:publish",
+                'publish_reel',platform,'thoremix',settings.social_profile,package['video_sha256'],
+                'e'*64,json.dumps(payload),'needs_input',None,None,'pre-submit',
+                json.dumps({'receipts':{'needs_input':str(proof)}}),1,
+                '2026-09-29T00:00:00+00:00','2026-09-29T00:00:00+00:00'))
+    atomic_json(package_dir/'publication.json',{'schema_version':1,'package_sha256':digest,
+        'source_sha256':package['source_sha256'],'complete':False,'platforms':{
+            p:{'status':'needs_input','publication':{'state':'needs_input',
+                'operation_id':'new-'+p,
+                'idempotency_key':f"thoremix:{package['source_sha256']}:revision:{package['video_sha256']}:{p}:publish",
+                'permalink':None}}
+            for p in ('facebook','tiktok')}})
+
+
+def test_correction_approval_accepts_only_durable_pre_submit_revision_effects(correction_case):
+    mod,settings,campaign,job,*_=correction_case
+    result=mod.prepare_media_correction(settings,job['id'])
+    folder=Path(result['package']).parent
+    package=json.loads((folder/'package.json').read_text(encoding='utf-8'))
+    _install_revision_pre_submit(settings,folder,package)
+    from agent.thoremix.quality import manifest_digest
+    digest=manifest_digest(package)
+
+    assert mod.approve_media_correction(settings,job['id'],digest)['state']=='correction_approved'
+    assert campaign.get(job['id'])['state']=='video_ready'
+
+
+def test_correction_approval_blocks_uncertain_revision_effect(correction_case):
+    mod,settings,campaign,job,*_=correction_case
+    result=mod.prepare_media_correction(settings,job['id'])
+    folder=Path(result['package']).parent
+    package=json.loads((folder/'package.json').read_text(encoding='utf-8'))
+    _install_revision_pre_submit(settings,folder,package)
+    with sqlite3.connect(settings.data/'krp'/'state.sqlite3') as db:
+        db.execute("UPDATE effects SET state='unknown' WHERE operation_id='new-facebook'")
+    from agent.thoremix.quality import manifest_digest
+    with pytest.raises(ValueError,match='EXTERNAL_EFFECT_UNCERTAIN'):
+        mod.approve_media_correction(settings,job['id'],manifest_digest(package))
+    assert campaign.get(job['id'])['state']=='awaiting_approval'
