@@ -11,7 +11,7 @@ already visible on cards, instead of opening each candidate detail page before s
 ## Development-first execution rule
 
 - Finish this complete plan in GitHub source before any local/runtime validation.
-- Remote Desktop is validation/observation only after development completion and must never edit source.
+- Remote Desktop Commander is not used directly at any stage, including validation/observation.
 - Any later defect is fixed in GitHub source first, then canonical source is updated and validation reruns.
 - Stable/AppData/runtime source is never hotfixed directly.
 
