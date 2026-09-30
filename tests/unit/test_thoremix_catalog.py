@@ -11,7 +11,8 @@ from kabin_affiliate_toolkit.models import ProductRecommendRequest
 from kabin_affiliate_toolkit.providers.shopee import ShopeeProviderConfig
 from agent.thoremix import affiliate
 from agent.thoremix.catalog import (CATALOG_URL, ShopeeCatalogProvider, channel_rates,
-                                   parse_card, parse_observed_sold, parse_price, product_identity)
+                                   parse_card, parse_observed_commission, parse_observed_sold,
+                                   parse_price, product_identity)
 from agent.thoremix.config import Settings
 
 
@@ -40,12 +41,30 @@ def test_unknown_and_ambiguous_sold_are_not_zero():
     assert parse_observed_sold('10 lượt bán 100 lượt bán') is None
 
 
+@pytest.mark.parametrize('raw, expected', [
+    ('Tỉ lệ hoa hồng 12,5%', .125),
+    ('TỈ LỆ HOA HỒNG 17.5%', .175),
+    ('Tỉ lệ hoa hồng 0%', 0.0),
+])
+def test_product_offer_card_commission_is_parsed_as_listing_evidence(raw, expected):
+    parsed = parse_observed_commission(raw)
+    assert parsed['effective_rate'] == expected
+    assert parsed['display_text'] == raw
+
+
+def test_missing_or_ambiguous_card_commission_stays_unknown():
+    assert parse_observed_commission('Không hiển thị hoa hồng') is None
+    assert parse_observed_commission('Tỉ lệ hoa hồng 12,5% / Tỉ lệ hoa hồng 5%') is None
+
+
 def test_live_card_fixture_projects_source_and_lower_bound():
     p = parse_card(DETAIL['selected_card'], observed_at=NOW)
     assert p.product_id == '2931643720' and p.price.current == 120000
     assert p.sold == 10000 and p.metadata['sold_evidence']['is_lower_bound']
     assert p.metadata['sold_evidence']['source'] == CATALOG_URL
-    assert not p.commission.verified  # headline percentage is not channel proof
+    assert p.metadata['catalog_commission']['effective_rate'] == .125
+    assert p.metadata['catalog_commission']['source'] == CATALOG_URL
+    assert not p.commission.verified  # listing rate remains separate from per-placement proof
 
 
 def test_observed_internal_offer_trace_is_validated_then_removed():
