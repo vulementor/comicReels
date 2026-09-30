@@ -44,7 +44,7 @@ jobs:
           } else {
             $root = $configured
           }
-          foreach ($name in @('kabin_affiliate_toolkit','kabin_reel_poster')) {
+          foreach ($name in @('kabin_affiliate_toolkit','kabin_reel_poster','kabin_browser_semantic')) {
             $path = Join-Path $root $name
             if (-not (Test-Path (Join-Path $path '.git'))) {
               throw "Required private sibling checkout is unavailable: $path"
@@ -63,14 +63,14 @@ jobs:
           & $python -m pip install --upgrade pip
           & $python -m pip install -r requirements.txt -r requirements-dev.txt
           if ($LASTEXITCODE -ne 0) { throw 'ComicReels test dependencies failed.' }
-          & $python -m pip install -e (Join-Path $env:KABIN_TOOLKIT_ROOT 'kabin_affiliate_toolkit') -e (Join-Path $env:KABIN_TOOLKIT_ROOT 'kabin_reel_poster')
+          & $python -m pip install -e (Join-Path $env:KABIN_TOOLKIT_ROOT 'kabin_affiliate_toolkit') -e (Join-Path $env:KABIN_TOOLKIT_ROOT 'kabin_reel_poster') -e (Join-Path $env:KABIN_TOOLKIT_ROOT 'kabin_browser_semantic')
           if ($LASTEXITCODE -ne 0) { throw 'Private sibling toolkit installation failed.' }
           "THOREMIX_TEST_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Report imported sibling identities
         shell: powershell
         run: |
-          & $env:THOREMIX_TEST_PYTHON -c "import kabin_affiliate_toolkit,kabin_reel_poster,numpy; print('KAT='+kabin_affiliate_toolkit.__file__); print('KRP='+kabin_reel_poster.__file__); print('numpy='+numpy.__version__)"
+          & $env:THOREMIX_TEST_PYTHON -c "import kabin_affiliate_toolkit,kabin_reel_poster,kabin_browser_semantic,numpy; print('KAT='+kabin_affiliate_toolkit.__file__); print('KRP='+kabin_reel_poster.__file__); print('KBS='+kabin_browser_semantic.__file__); print('numpy='+numpy.__version__)"
 
       - name: Run complete unit suite
         shell: powershell
