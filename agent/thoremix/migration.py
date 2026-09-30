@@ -278,6 +278,15 @@ def snapshot_failed_analysis_resume(source_root, destination_home, job_id, *,
                                    (str(new_source), str(new_package), _json_bytes(new_detail).decode("utf-8"), job_id))
                 target.execute("VACUUM")
             _put(home / "data/krp/state.sqlite3", _file(archive / "original/krp.sqlite3"))
+            expected_job = dict(job, source=str(new_source), package_dir=str(new_package),
+                                detail=_json_bytes(new_detail).decode("utf-8"))
+            with closing(_snapshot(home / "data/campaign.sqlite3", _CAMPAIGN)) as copied_campaign:
+                _require(_rows(copied_campaign, "jobs") == [expected_job]
+                         and _rows(copied_campaign, "production_attempts") == [attempt]
+                         and not _rows(copied_campaign, "publication_slots")
+                         and not _rows(copied_campaign, "source_errors"), "CAMPAIGN_COPY_CHANGED")
+            _require(_file(new_source) == source_bytes
+                     and all(_file(new_receipts / n) == b for n, b in transformed.items()), "ARTIFACT_COPY_CHANGED")
             with closing(_snapshot(home / "data/krp/state.sqlite3", _KRP)) as copied_krp:
                 _require(_rows(copied_krp, "effects") == ledger, "LEDGER_COPY_CHANGED")
             _require(all(_hash(_file(archive / p)) == h for p, h in archive_hashes.items()), "ARCHIVE_CHANGED")

@@ -1,5 +1,6 @@
 """Bounded, offline failed-analysis snapshot tests; no provider or browser calls."""
 import hashlib
+from contextlib import closing
 import json
 import sqlite3
 import tempfile
@@ -26,7 +27,7 @@ def write_json(path, value):
 
 
 def rows(path, table):
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         db.row_factory = sqlite3.Row
         return [dict(r) for r in db.execute("SELECT * FROM " + table + " ORDER BY 1")]
 
@@ -97,7 +98,7 @@ class FailedAnalysisMigrationTests(unittest.TestCase):
         self.writer = db  # Keep WAL open: raw main-file copying loses these rows.
         self.krp = self.root / "data/krp/state.sqlite3"
         self.krp.parent.mkdir()
-        with sqlite3.connect(self.krp) as journal:
+        with closing(sqlite3.connect(self.krp)) as journal, journal:
             journal.executescript("""
                 CREATE TABLE effects(operation_id TEXT PRIMARY KEY,
                   idempotency_key TEXT NOT NULL UNIQUE, action TEXT NOT NULL,
@@ -214,7 +215,7 @@ class FailedAnalysisMigrationTests(unittest.TestCase):
         self.assertFalse(self.destination.exists())
 
     def test_refuses_existing_selected_effect_without_touching_ledger(self):
-        with sqlite3.connect(self.krp) as db:
+        with closing(sqlite3.connect(self.krp)) as db, db:
             db.execute("UPDATE effects SET idempotency_key=? WHERE operation_id='1'",
                        (f"thoremix:{self.sha}:publish:facebook",))
         before = self.krp.read_bytes()
@@ -238,6 +239,16 @@ class FailedAnalysisMigrationTests(unittest.TestCase):
         with self.assertRaises(MigrationRejected):
             self.run_snapshot()
         self.assertFalse(self.destination.exists())
+
+    def test_empty_home_is_supported_but_archive_and_snapshot_cannot_be_reused(self):
+        self.destination.mkdir()
+        self.run_snapshot()
+        archive_receipt = (self.archive / "receipt.json").read_bytes()
+        destination_receipt = (self.destination / "migration-receipt.json").read_bytes()
+        with self.assertRaises(MigrationRejected):
+            self.run_snapshot()
+        self.assertEqual((self.archive / "receipt.json").read_bytes(), archive_receipt)
+        self.assertEqual((self.destination / "migration-receipt.json").read_bytes(), destination_receipt)
 
     def test_refuses_hardlinked_receipt_and_leaves_source_unchanged(self):
         original = self.receipts / "analysis-provider.json"
