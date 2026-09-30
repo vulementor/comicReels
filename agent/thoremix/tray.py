@@ -110,7 +110,8 @@ class DesktopInstance:
     ACTIVATE = 'Local\\ThoRemixDesktopActivate'
 
     def __init__(self, *, namespace=None):
-        self.MUTEX, self.ACTIVATE = instance_names(namespace)
+        if namespace is not None:
+            self.MUTEX, self.ACTIVATE = instance_names(namespace)
         self.kernel = ctypes.WinDLL('kernel32', use_last_error=True) if os.name == 'nt' else None
         self.mutex = self.event = None
         self.primary = True
@@ -151,4 +152,5 @@ class DesktopInstance:
             if handle:
                 self.kernel.CloseHandle(handle)
                 setattr(self, name, None)
+
 

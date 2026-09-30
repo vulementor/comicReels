@@ -193,3 +193,26 @@ def test_smoke_reservation_never_accepts_normal_entry_or_foreign_source(host):
     with pytest.raises(ValueError, match="INVALID_SMOKE_SOURCE"):
         managed.reserve_smoke_source(context, binding, settings)
     assert state["jobs"] == []
+
+
+
+def test_existing_desktop_activation_cannot_pass_smoke(host, monkeypatch):
+    from agent import private_runtime
+    from agent.thoremix import config, desktop
+    context, state, _ = host
+    binding = SimpleNamespace(instance_id="ui-a", consumer_kind="app", consumer_name="thoremix",
+                              home=context.deployment().home)
+    monkeypatch.setattr(private_runtime, "install_private_runtime", lambda _binding: None)
+    monkeypatch.setattr(config.Settings, "load", lambda _root: SimpleNamespace())
+    monkeypatch.setattr(desktop, "run_desktop", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(managed, "reserve_smoke_source", lambda *_args: None)
+    context.entrypoint = "desktop-smoke"
+    assert managed.run_managed_desktop(context, binding, smoke=True) == 2
+    result = json.loads((context.instance_dir / "app-result.json").read_text())
+    assert result["status"] == "FAILED"
+    assert result["error"] == "EXISTING_DESKTOP_NOT_SMOKE_TESTED"
+    assert "starts" not in state
+    context.entrypoint = "desktop"
+    assert managed.run_managed_desktop(context, binding) == 0
+    result = json.loads((context.instance_dir / "app-result.json").read_text())
+    assert result["status"] == "EXISTING_DESKTOP_ACTIVATED"

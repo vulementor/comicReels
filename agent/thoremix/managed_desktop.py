@@ -233,7 +233,7 @@ def run_managed_desktop(context, binding, *, smoke=False):
         write(context.instance_dir / "app-result.json", result)
         if not smoke:
             return
-        deadline = time.monotonic() + 120
+        deadline = time.monotonic() + 600
         views = []
         pending = list(PAGES)
 
@@ -292,7 +292,11 @@ def run_managed_desktop(context, binding, *, smoke=False):
                           instance_namespace=desktop_namespace(binding),
                           on_ready=on_ready, is_draining=context.is_draining)
     if not started:
-        result.update(status="EXISTING_DESKTOP_ACTIVATED")
+        if smoke:
+            failed.append("EXISTING_DESKTOP_NOT_SMOKE_TESTED")
+            result.update(status="FAILED", error=failed[-1])
+        else:
+            result.update(status="EXISTING_DESKTOP_ACTIVATED")
     elif not smoke:
         result.update(status="CLOSED")
     elif not smoke_done:
@@ -300,3 +304,4 @@ def run_managed_desktop(context, binding, *, smoke=False):
         result.update(status="FAILED", error="SMOKE_INTERRUPTED")
     write(context.instance_dir / "app-result.json", result)
     return 2 if failed else 0
+
