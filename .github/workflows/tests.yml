@@ -1,7 +1,7 @@
 # Nothing ran the tests on push or PR before this, so a broken main was only
 # ever caught by hand. PR #48 reached `main` carrying an ImportError against a
 # module a merged PR had deleted; this job is what catches that class of thing.
-name: tests
+name: portable tests
 
 on:
   pull_request:
@@ -75,7 +75,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Run unit tests
+      - name: Run portable unit tests
         env:
           PYTHONUNBUFFERED: "1"
-        run: python -m pytest tests/unit -q
+        run: |
+          # These three files are not dropped: the Windows full-suite workflow
+          # runs all of tests/unit with the private KAT/KRP sibling checkouts.
+          # Hosted GITHUB_TOKEN is repository-scoped and cannot read those private repos.
+          python -m pytest tests/unit -q \
+            --ignore=tests/unit/test_thoremix_affiliate.py \
+            --ignore=tests/unit/test_thoremix_catalog.py \
+            --ignore=tests/unit/test_thoremix_social_cleanup.py
