@@ -345,8 +345,22 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
         from kabin_affiliate_toolkit.providers.shopee import ShopeeProviderConfig, ShopeeVNProvider
         from .catalog import ShopeeCatalogProvider
 
-        owner = session_provider if session_provider is not None else OwnedCamoufoxSessionProvider(
-            BrowserRuntimeConfig(profile_dir=profile, visible=False, lock_profile=True))
+        from agent.private_runtime import current_runtime
+        runtime = current_runtime()
+        if runtime is not None:
+            runtime.profile("affiliate", profile)
+            if session_provider is not None and session_provider is not runtime.affiliate_session_provider:
+                raise ValueError("PRIVATE_AFFILIATE_OWNER_REQUIRED")
+            owner = runtime.affiliate_session_provider
+            if owner is None:
+                owner = OwnedCamoufoxSessionProvider(
+                    BrowserRuntimeConfig(profile_dir=profile, visible=False, lock_profile=True,
+                        executable_path=runtime.tool("camoufox"), private_runtime=True),
+                    lease_factory=runtime.profile_lease_factory,
+                )
+        else:
+            owner = session_provider if session_provider is not None else OwnedCamoufoxSessionProvider(
+                BrowserRuntimeConfig(profile_dir=profile, visible=False, lock_profile=True))
         phase = 'session'
         with owner.session() as context:
             phase = 'discovery'

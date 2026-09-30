@@ -4,6 +4,8 @@ Two analysis backends:
   1. CLI subprocess (claude/agy/codex, default) — no API key needed, uses contact sheets
   2. Anthropic SDK (if ANTHROPIC_API_KEY set) — direct API, individual frames
 """
+from agent.private_runtime import media_tool
+
 import asyncio
 import base64
 import functools
@@ -181,7 +183,7 @@ async def _download_via_get_media(media_id: str, dest: Path) -> None:
 def _extract_frames(video_path: str, fps: float, out_dir: str) -> list:
     """Extract frames as JPEGs using ffmpeg. Returns sorted list of frame paths."""
     cmd = [
-        "ffmpeg", "-y", "-i", video_path,
+        media_tool("ffmpeg"), "-y", "-i", video_path,
         "-vf", f"fps={fps},scale=640:-1",
         "-q:v", "4",
         f"{out_dir}/frame_%04d.jpg",
@@ -207,7 +209,7 @@ def _has_drawtext() -> bool:
     """
     try:
         out = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-filters"],
+            [media_tool("ffmpeg"), "-hide_banner", "-filters"],
             capture_output=True, text=True, timeout=30,
         )
     except (OSError, subprocess.SubprocessError) as e:
@@ -255,7 +257,7 @@ def _create_contact_sheets(
     def _extract(with_drawtext: bool):
         return subprocess.run(
             [
-                "ffmpeg", "-y", "-i", video_path,
+                media_tool("ffmpeg"), "-y", "-i", video_path,
                 "-vf", _frame_filter(fps, with_drawtext),
                 "-q:v", "2",
                 f"{frames_dir}/frame_%04d.jpg",
@@ -312,7 +314,7 @@ def _create_contact_sheets(
         cols_eff = max(c for c in range(1, REVIEW_SHEET_COLS + 1) if len(chunk) % c == 0)
         rows_eff = len(chunk) // cols_eff
         tile_cmd = [
-            "ffmpeg", "-y",
+            media_tool("ffmpeg"), "-y",
             "-i", f"{chunk_dir}/f_%04d.jpg",
             "-vf", f"tile={cols_eff}x{rows_eff}:nb_frames={len(chunk)}",
             "-q:v", "2", str(output),

@@ -1,5 +1,14 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## Private app runtime — implementation only, 2026-09-30
+
+App-owned instance/resource bindings and nine regression cases are authored, not
+executed. No FBR acceptance, backend switch, paid action, production deployment
+or profile move is claimed. Current production state must be reconciled from its
+own receipts; the historical entries below remain dated evidence. The GPTFP
+candidate still needs deployed batch/progress/raw-message capability parity.
+See [PRIVATE_RUNTIME.md](PRIVATE_RUNTIME.md) for the contract and remaining gates.
+
 ## Thỏ Remix finishing, direct review and resumed production — 2026-09-28 10:31 +07:00
 
 Owner's advisory-QA policy is installed. c367,69e2,333a and now e9cc are completed automatic

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from agent.config import TTS_MODEL, TTS_SAMPLE_RATE
+from agent.private_runtime import current_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,9 @@ async def generate_speech(
     speed: float = 1.0,
 ) -> str:
     """Generate speech for text via subprocess. Returns path to WAV file."""
+    runtime = current_runtime()
+    if runtime is not None:
+        output_path = str(runtime.data_path(output_path))
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     args = {
@@ -108,11 +112,32 @@ async def generate_speech(
     return output_path
 
 
+def _runtime_args(args: dict):
+    runtime = current_runtime()
+    if runtime is None:
+        return [PYTHON_BIN], args, {}
+    owned = dict(args)
+    owned["model"] = str(runtime.model("omnivoice"))
+    if "output" in owned:
+        owned["output"] = str(runtime.data_path(owned["output"]))
+    if "items" in owned:
+        owned["items"] = [
+            {**item, "output": str(runtime.data_path(item["output"]))}
+            for item in owned["items"]
+        ]
+    env = {key: value for key, value in os.environ.items()
+           if key not in {"PYTHONPATH", "PYTHONHOME"}}
+    env.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
+               HF_HOME=str(runtime.home / "cache" / "huggingface"))
+    return [str(runtime.tool("tts-python")), "-I"], owned, {"env": env}
+
+
 def _run_tts_subprocess(args: dict) -> dict:
     """Run TTS subprocess."""
+    python, args, options = _runtime_args(args)
     proc = subprocess.run(
-        [PYTHON_BIN, "-c", _TTS_SCRIPT, json.dumps(args)],
-        capture_output=True, text=True, timeout=120,
+        [*python, "-c", _TTS_SCRIPT, json.dumps(args)],
+        capture_output=True, text=True, timeout=120, **options,
     )
     if proc.returncode != 0:
         return {"ok": False, "error": proc.stderr[-500:] if proc.stderr else "unknown error"}
@@ -135,7 +160,8 @@ async def generate_video_narration(
     Uses batch subprocess — loads model once for all scenes.
     Returns list of result dicts.
     """
-    out_dir = Path(output_dir)
+    runtime = current_runtime()
+    out_dir = runtime.data_path(output_dir) if runtime is not None else Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Build batch items (only scenes with narrator_text)
@@ -238,10 +264,11 @@ async def generate_video_narration(
 
 def _run_batch_subprocess(args: dict) -> list[dict]:
     """Run batch TTS subprocess. Model loads once."""
+    python, args, options = _runtime_args(args)
     timeout = 180 + len(args.get("items", [])) * 45  # ~180s model load + ~45s per scene
     proc = subprocess.run(
-        [PYTHON_BIN, "-c", _TTS_BATCH_SCRIPT, json.dumps(args)],
-        capture_output=True, text=True, timeout=timeout,
+        [*python, "-c", _TTS_BATCH_SCRIPT, json.dumps(args)],
+        capture_output=True, text=True, timeout=timeout, **options,
     )
     if proc.returncode != 0:
         error = proc.stderr[-500:] if proc.stderr else "unknown"

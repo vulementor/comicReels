@@ -12,12 +12,16 @@ import os
 import re
 import secrets
 import socket
+import sys
+from contextlib import ExitStack
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from agent.private_runtime import current_runtime
 
 
 class FlowBrowserError(RuntimeError):
@@ -37,6 +41,12 @@ class FlowProfileConfig:
 
     @classmethod
     def load(cls, source: Path | None = None) -> FlowProfileConfig:
+        runtime = current_runtime()
+        if runtime is not None:
+            source = source if source is not None else runtime.flow_profile_config
+            if source is None:
+                raise FlowBrowserError('PROFILE_CONFIG_REQUIRED')
+            source = runtime.data_path(source)
         if source is None:
             configured = os.environ.get('COMICREELS_FLOW_PROFILE_CONFIG')
             if configured:
@@ -67,6 +77,8 @@ class FlowProfileConfig:
                 raise OSError
         except OSError:
             raise FlowBrowserError('PROFILE_NOT_FOUND') from None
+        if runtime is not None:
+            runtime.profile("flow", profile)
         return cls(name, profile, source, (stat.st_dev, stat.st_ino))
 
     def verify_directory(self):
@@ -181,6 +193,8 @@ class FlowBrowserSessionProvider:
         self._factory = context_factory or _camoufox_context
         self._auth_probe = auth_probe or (lambda _: AuthObservation())
         self._lease = FlowProfileLease(config)
+        self._private_scope = None
+        self._private_release_failed = False
         self._manager = None
         self._context = None
         self.session = None
@@ -223,7 +237,16 @@ class FlowBrowserSessionProvider:
             raise FlowBrowserError('CLOSE_UNCERTAIN')
         if self._lease.held:
             raise FlowBrowserError('ALREADY_OPEN')
-        self._lease.acquire()
+        runtime = current_runtime()
+        scope = ExitStack()
+        try:
+            if runtime is not None:
+                scope.enter_context(runtime.borrow("flow", self.config.user_data_dir))
+            self._lease.acquire()
+        except BaseException:
+            scope.__exit__(*sys.exc_info())
+            raise
+        self._private_scope = scope
         self._thread = threading.get_ident()
         self._auth, self._count, self._error, self._observed_at = 'unknown', 0, None, None
         try:
@@ -231,7 +254,8 @@ class FlowBrowserSessionProvider:
             from kabin_browser_semantic import BrowserSession
             self._manager = self._factory(persistent_context=True,
                 user_data_dir=str(self.config.user_data_dir), headless=not self._visible, locale='vi-VN',
-                main_world_eval=True)
+                main_world_eval=True,
+                **(runtime.camoufox_kwargs() if runtime is not None else {}))
             self._context = self._manager.__enter__()
             page = self._context.pages[0] if self._context.pages else self._context.new_page()
             if inspect.iscoroutinefunction(page.goto):
@@ -241,7 +265,8 @@ class FlowBrowserSessionProvider:
             self._state = 'open'
             return self
         except BaseException:  # noqa: BLE001 - cleanup must also run on interruption.
-            self.close()  # If cleanup fails, retain the lease and report CLOSE_UNCERTAIN.
+            # If cleanup fails, retain both common and legacy leases.
+            self.close(_exc_info=sys.exc_info())
             raise FlowBrowserError('OPEN_FAILED') from None
 
     def capture_health(self) -> dict:
@@ -311,8 +336,10 @@ class FlowBrowserSessionProvider:
                     'observed_at': self._observed_at, 'error': self._error,
                     'ready': bool(fresh and usable and self._auth == 'authenticated' and self._count and not self._error)}
 
-    def close(self):
+    def close(self, *, _exc_info=(None, None, None)):
         self._check_thread()
+        if self._private_release_failed:
+            raise FlowBrowserError('CLOSE_UNCERTAIN')
         if self._manager is not None:
             try:
                 self._manager.__exit__(None, None, None)
@@ -325,11 +352,19 @@ class FlowBrowserSessionProvider:
         except FlowBrowserError:
             self._state, self._error, self._auth = 'close_uncertain', 'CLOSE_UNCERTAIN', 'unknown'
             raise FlowBrowserError('CLOSE_UNCERTAIN') from None
+        if self._private_scope is not None:
+            try:
+                self._private_scope.__exit__(*_exc_info)
+            except BaseException:
+                self._private_release_failed = True
+                self._state, self._error, self._auth = 'close_uncertain', 'CLOSE_UNCERTAIN', 'unknown'
+                raise FlowBrowserError('CLOSE_UNCERTAIN') from None
+            self._private_scope = None
         self._state, self._auth, self._count = 'closed', 'unknown', 0
         self._thread = None
 
     def __enter__(self):
         return self.open()
 
-    def __exit__(self, *_):
-        self.close()
+    def __exit__(self, *exc_info):
+        self.close(_exc_info=exc_info)

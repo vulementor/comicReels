@@ -170,9 +170,21 @@ def _client(home: Path, profile: str, visible: bool, factory=None):
     from kabin_reel_poster.sdk import KRPClient
     from kabin_reel_poster.storage.sqlite import EffectJournal
 
+    from agent.private_runtime import current_runtime
+    runtime = current_runtime()
+    if runtime is not None:
+        home = runtime.data_path(home)
     config = _config(home, profile, visible)
+    private_options = {}
+    if runtime is not None:
+        config.browser = config.browser.model_copy(update={
+            "executable_path": runtime.tool("camoufox"), "private_runtime": True,
+            "profiles": {profile: runtime.profile("social")},
+        })
+        private_options["profile_lease_factory"] = runtime.profile_lease_factory
     journal = EffectJournal(home / "state.sqlite3")
-    client = (factory or KRPClient)(profile=profile, actor=ACTOR, config=config, journal=journal)
+    client = (factory or KRPClient)(profile=profile, actor=ACTOR, config=config, journal=journal,
+                                  **private_options)
     if not callable(getattr(client, "recover_pre_submit", None)):
         raise RuntimeError("KRP runtime is too old: durable pre-submit recovery is required")
     return client, journal

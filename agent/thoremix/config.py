@@ -49,6 +49,13 @@ class Settings:
 
     @property
     def directory(self) -> Path:
+        from agent.private_runtime import current_runtime
+        runtime = current_runtime()
+        if runtime is not None:
+            root = runtime.data_path(self.root)
+            if root != runtime.home or runtime.app_kind != "thoremix":
+                raise ValueError("THOREMIX_INSTANCE_MISMATCH")
+            return root
         return Path(self.root).resolve()
 
     @property
@@ -57,6 +64,10 @@ class Settings:
 
     @property
     def output(self) -> Path:
+        from agent.private_runtime import current_runtime
+        runtime = current_runtime()
+        if runtime is not None:
+            return runtime.data_path(self.directory / "output")
         return Path(self.input_dir).resolve() / 'video'
 
     @property
@@ -64,6 +75,12 @@ class Settings:
         return self.directory / 'config' / 'settings.json'
 
     def validate(self) -> None:
+        from agent.private_runtime import current_runtime
+        runtime = current_runtime()
+        if runtime is not None:
+            self.directory  # Validate instance identity without changing settings.
+            if self.affiliate_profile_dir:
+                runtime.profile("affiliate", self.affiliate_profile_dir)
         from datetime import time
         from zoneinfo import ZoneInfo
 

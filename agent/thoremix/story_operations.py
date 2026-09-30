@@ -438,7 +438,17 @@ class StoryOperations:
             if not transcript.exists():
                 from faster_whisper import WhisperModel
                 # Local recognition supplies timings, not production copy, script or voices.
-                model=WhisperModel('small',device='cpu',compute_type='int8')
+                from agent.private_runtime import current_runtime
+                private = current_runtime()
+                if private is not None:
+                    local_model = private.model("whisper-small")
+                    if any(not (local_model / name).is_file()
+                           for name in ("model.bin", "config.json", "tokenizer.json")):
+                        raise ValueError("PRIVATE_ALIGNMENT_MODEL_INCOMPLETE")
+                    model = WhisperModel(str(local_model), device="cpu", compute_type="int8",
+                                         local_files_only=True)
+                else:
+                    model=WhisperModel('small',device='cpu',compute_type='int8')
                 segments,info=model.transcribe(str(video),language='vi',word_timestamps=True,
                     beam_size=5,condition_on_previous_text=False)
                 words=[{'word':w.word,'start':w.start,'end':w.end,'probability':w.probability}

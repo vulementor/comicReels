@@ -19,6 +19,7 @@ from PIL import Image
 
 from agent.comicreels.images import clamp_box, sha256_file
 from agent.comicreels.sign_text import normalize_panel_text_regions
+from agent.private_runtime import current_runtime
 
 
 _PROVIDER = "gpt_fullproxy"
@@ -32,7 +33,15 @@ _VISIBLE = os.environ.get("COMICREELS_GPTFP_VISIBLE", "1").strip().lower() not i
 }
 
 
+def _visible() -> bool:
+    runtime = current_runtime()
+    return runtime.visible if runtime is not None else _VISIBLE
+
+
 def _default_profile_dir() -> Path | None:
+    runtime = current_runtime()
+    if runtime is not None:
+        return runtime.profile("chatgpt")
     explicit = (os.environ.get("COMICREELS_GPTFP_PROFILE_DIR") or "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
@@ -47,6 +56,9 @@ def _default_profile_dir() -> Path | None:
 
 
 def _home_dir() -> Path:
+    runtime = current_runtime()
+    if runtime is not None:
+        return runtime.chat_home
     explicit = (os.environ.get("COMICREELS_GPTFP_HOME") or "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
@@ -54,6 +66,9 @@ def _home_dir() -> Path:
 
 
 def _downloads_dir() -> Path:
+    runtime = current_runtime()
+    if runtime is not None:
+        return runtime.data_path(runtime.chat_home / "downloads")
     explicit = (os.environ.get("COMICREELS_GPTFP_DOWNLOADS_DIR") or "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
@@ -66,14 +81,15 @@ def _sdk_available() -> bool:
 
 def provider_status() -> dict[str, Any]:
     profile_dir = _default_profile_dir()
+    runtime = current_runtime()
     return {
         "provider": _PROVIDER,
         "configured": bool(_sdk_available() and profile_dir and profile_dir.is_dir()),
         "sdk_available": _sdk_available(),
-        "profile_name": _PROFILE_NAME,
+        "profile_name": runtime.chat_profile_name if runtime is not None else _PROFILE_NAME,
         "profile_dir": str(profile_dir) if profile_dir else None,
         "profile_exists": bool(profile_dir and profile_dir.is_dir()),
-        "visible": _VISIBLE,
+        "visible": runtime.visible if runtime is not None else _VISIBLE,
         # Keep these compatibility fields for the current dashboard contract.
         "vision_model": "ChatGPT Web",
         "image_model": "ChatGPT Create image",
@@ -81,6 +97,9 @@ def provider_status() -> dict[str, Any]:
 
 
 def _client():
+    runtime = current_runtime()
+    if runtime is not None:
+        return runtime.gpt_client()
     if not _sdk_available():
         raise RuntimeError(
             "Chưa cài gpt_fullproxy SDK. Cài repo vulementor/gpt_fullproxy với extra [browser]."
@@ -103,7 +122,7 @@ def _client():
         profile=_PROFILE_NAME,
         profile_dir=profile_dir,
         home=home,
-        visible=_VISIBLE,
+        visible=_visible(),
     )
 
 
@@ -256,7 +275,7 @@ async def verify_dialogues_in_conversation(
         reply = handle.reply(
             text=prompt,
             idempotency_key=idempotency_key,
-            visible=_VISIBLE,
+            visible=_visible(),
         )
         if reply.state != "completed":
             raise RuntimeError(
@@ -273,7 +292,7 @@ async def verify_dialogues_in_conversation(
             after_message_id=anchor,
             role="assistant",
             timeout=180.0,
-            visible=_VISIBLE,
+            visible=_visible(),
         )
         if message is None or not message.text:
             raise RuntimeError("ChatGPT không trả transcript verification trong thời gian chờ.")
@@ -424,7 +443,7 @@ async def backfill_visual_anchors_in_conversation(
         reply = handle.reply(
             text=prompt,
             idempotency_key=idempotency_key,
-            visible=_VISIBLE,
+            visible=_visible(),
         )
         if reply.state != "completed":
             raise RuntimeError(
@@ -444,7 +463,7 @@ async def backfill_visual_anchors_in_conversation(
             after_message_id=anchor,
             role="assistant",
             timeout=180.0,
-            visible=_VISIBLE,
+            visible=_visible(),
         )
         if message is None or not message.text:
             raise RuntimeError("ChatGPT không trả visual-anchor backfill trong thời gian chờ.")
@@ -598,7 +617,7 @@ async def validate_visual_anchors_in_conversation(
         reply = handle.reply(
             text=prompt,
             idempotency_key=idempotency_key,
-            visible=_VISIBLE,
+            visible=_visible(),
         )
         if reply.state != "completed":
             raise RuntimeError(
@@ -618,7 +637,7 @@ async def validate_visual_anchors_in_conversation(
             after_message_id=anchor,
             role="assistant",
             timeout=180.0,
-            visible=_VISIBLE,
+            visible=_visible(),
         )
         if message is None or not message.text:
             raise RuntimeError("ChatGPT không trả visual-anchor validation trong thời gian chờ.")
@@ -683,7 +702,7 @@ async def analyze_comic(path: Path, mime: str, width: int, height: int) -> dict[
         client.chat.send,
         prompt,
         attachments=[path],
-        visible=_VISIBLE,
+        visible=_visible(),
     )
     if result.state != "verified" or not result.text:
         raise RuntimeError(
@@ -960,7 +979,7 @@ async def recover_historical_portrait(
         expected_sha256=expected_sha256,
         expected_width=expected_width,
         expected_height=expected_height,
-        visible=_VISIBLE,
+        visible=_visible(),
     )
     if result.state != "verified" or not result.output_path:
         raise RuntimeError(
@@ -1068,7 +1087,7 @@ async def generate_clean_portrait(
         prompt,
         **reference_args,
         output_dir=artifact_dir,
-        visible=_VISIBLE,
+        visible=_visible(),
     )
     if result.state != "verified" or not result.output_path:
         raise RuntimeError(

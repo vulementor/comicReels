@@ -4,6 +4,8 @@ from pathlib import Path
 import json
 from uuid import UUID
 
+from agent.private_runtime import current_runtime
+
 
 @dataclass(frozen=True)
 class StoryRuntime:
@@ -30,6 +32,12 @@ class StoryRuntime:
         return runtime
 
     def client(self):
+        runtime = current_runtime()
+        if runtime is not None:
+            return runtime.gpt_client(
+                profile=self.chat_profile, profile_dir=self.chat_profile_dir,
+                home=self.chat_home, visible=False,
+            )
         from gpt_fullproxy import GPTFullProxy
         return GPTFullProxy(profile=self.chat_profile, profile_dir=Path(self.chat_profile_dir),
                             home=Path(self.chat_home), visible=False)

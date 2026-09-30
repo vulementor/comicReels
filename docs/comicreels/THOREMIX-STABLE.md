@@ -209,3 +209,11 @@ CLI: finish-unpublished. SDK: configure_finishing(mask_enabled, mask_top_percent
 mask_bottom_percent, laugh_enabled, laugh_path, laugh_volume). Bước finishing mới có journal
 và cài đặt/input bất biến riêng, tiếp tục đúng render khi gián đoạn sau khi xuất video.
 Verify-Review.py kiểm tra trình phát của bản cài với video thật, không gọi duyệt/đăng.
+
+## Private runtime integration — source only
+
+The optional app-owned binding in [PRIVATE_RUNTIME.md](PRIVATE_RUNTIME.md) supplies
+verified native/model resources and actual borrowed profile ownership for separate
+ComicReels/ThoRemix instances. It preserves existing backend selection, journals,
+approval/enable state and scheduling. New regression code is not yet executed;
+this does not advance an FBR acceptance gate or deploy a runtime.

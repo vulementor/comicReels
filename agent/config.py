@@ -3,17 +3,24 @@ import json
 import os
 from pathlib import Path
 
+from agent.private_runtime import current_runtime
+
+_PRIVATE_RUNTIME = current_runtime()
+
 # ─── Paths ───────────────────────────────────────────────────
-BASE_DIR = Path(os.environ.get("FLOW_AGENT_DIR", Path(__file__).parent.parent))
+BASE_DIR = (_PRIVATE_RUNTIME.home if _PRIVATE_RUNTIME is not None
+            else Path(os.environ.get("FLOW_AGENT_DIR", Path(__file__).parent.parent)))
 DB_PATH = BASE_DIR / "flow_agent.db"
 
 # ─── API Server ──────────────────────────────────────────────
 API_HOST = os.environ.get("API_HOST", "127.0.0.1")
-API_PORT = int(os.environ.get("API_PORT", "8100"))
+API_PORT = (_PRIVATE_RUNTIME.api_port if _PRIVATE_RUNTIME is not None
+            else int(os.environ.get("API_PORT", "8100")))
 
 # ─── WebSocket Server (extension connects here) ─────────────
 WS_HOST = os.environ.get("WS_HOST", "127.0.0.1")
-WS_PORT = int(os.environ.get("WS_PORT", "9222"))
+WS_PORT = (_PRIVATE_RUNTIME.websocket_port if _PRIVATE_RUNTIME is not None
+           else int(os.environ.get("WS_PORT", "9222")))
 
 
 # ─── Flow batchexecute ──────────────────────────────────────
