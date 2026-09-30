@@ -140,6 +140,34 @@ class BrowserStateStore:
         state["operation_projects"][operation_id] = project_id
         self._write(state)
 
+    def operation_binding(self, operation_id: str) -> tuple[str, str | None]:
+        """Resolve a durable operation/project binding without remote effects.
+
+        Returns ("bound", project_id), ("receipt", project_id), ("missing", None)
+        or ("conflict", None). Only COMPLETED upload receipts participate.
+        """
+        _require(_identifier(operation_id))
+        state = self.load()
+        direct = state["operation_projects"].get(operation_id)
+        receipt_projects = set()
+        for entry in state["intents"].values():
+            if entry["kind"] != "upload" or entry["state"] != "COMPLETED":
+                continue
+            receipt = entry.get("receipt")
+            if (isinstance(receipt, dict)
+                    and receipt.get("operation_id") == operation_id
+                    and _identifier(receipt.get("project_id"))):
+                receipt_projects.add(receipt["project_id"])
+        if direct is not None:
+            if receipt_projects and receipt_projects != {direct}:
+                return "conflict", None
+            return "bound", direct
+        if len(receipt_projects) > 1:
+            return "conflict", None
+        if len(receipt_projects) == 1:
+            return "receipt", next(iter(receipt_projects))
+        return "missing", None
+
     def lookup(self, key: str) -> dict | None:
         _require(_key(key))
         return copy.deepcopy(self.load()["intents"].get(key))
