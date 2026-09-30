@@ -243,11 +243,16 @@ def main(argv=None) -> int:
             from .desktop import run_desktop
             run_desktop(settings)
             return 0
+        if args.command == 'status':
+            settings = Settings.load(args.root)
+            result = status(settings, probe=getattr(args, 'probe', False))
+            print(json.dumps(result, ensure_ascii=False, default=str))
+            return 0
         with root_operation(args.root.resolve() / 'data'):
             settings = Settings.load(args.root, create=args.command == 'init')
             with campaign_operation(settings):
-                if args.command in {'init', 'status'}:
-                    result = status(settings, probe=getattr(args, 'probe', False))
+                if args.command == 'init':
+                    result = status(settings, probe=False)
                 elif args.command == 'login':
                     from .publishing import login
                     login(krp_home=settings.data / 'krp', profile=settings.social_profile)
