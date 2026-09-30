@@ -88,11 +88,11 @@ def test_failed_row_exposes_reason_and_retry_button(tmp_path):
     import tkinter as tk
     s,q,j,directory,request=failed_story(tmp_path)
     snapshot=build_snapshot(s);row=snapshot['rows'][0]
-    assert row['retry_label']=='Thử lại sản xuất' and '10 giây' in row['failure_message']
+    assert row['retry_label']=='Reset & chạy lại' and '10 giây' in row['failure_message']
     root=tk.Tk();app=DesktopWindow(s,window=root,poll=False)
     calls=[];app.launch=lambda *args:calls.append(args) or True
     try:
-        root.update();app.retry_button.invoke()
+        root.update();assert app.retry_button.cget('text')=='Reset & chạy lại';assert app.retry_all_button.cget('text')=='Reset & thử lại tất cả lỗi/kẹt';app.retry_button.invoke()
         assert calls==[('retry-production',j['id'])]
         assert str(app.retry_button.cget('state'))=='disabled'
         app.retry_button.invoke();assert len(calls)==1
