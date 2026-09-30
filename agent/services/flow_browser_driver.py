@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -42,7 +43,8 @@ _PUBLIC_CODES = frozenset({
     'SESSION_UNVERIFIED', 'HTTP_REJECTED', 'BODY_INCOMPLETE', 'BODY_BUDGET',
     'IMAGE_CONTENT_INVALID', 'IMAGE_MIME_MISMATCH', 'UPLOAD_FAILED',
     'UPLOAD_RECEIPT_UNVERIFIED', 'UPLOAD_RECONCILIATION_REQUIRED',
-    'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
+    'OPERATION_BINDING_REQUIRED', 'OPERATION_BINDING_CONFLICT',
+    'OPERATION_RECEIPT_UNVERIFIED', 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
 })
 
 
@@ -164,7 +166,7 @@ class FlowBrowserDriver:
             'project_create_session': True,
             'project_media_read': True,
             'media_read': True,
-            'operation_reconcile': False,
+            'operation_reconcile': True,
             'upload': True,
             'paid_dispatch': False,
         }
@@ -175,8 +177,8 @@ class FlowBrowserDriver:
             'lease_held': False if self._phase in {'new', 'closed', 'failed'} else None,
             'authentication': 'unknown', 'semantic_node_count': 0,
             'observed_at': None, 'session_ready': False,
-            'ready': False, 'readiness_scope': 'project_read_upload',
-            'operations_implemented': False, 'capabilities': capabilities,
+            'ready': False, 'readiness_scope': 'non_paid_parity',
+            'operations_implemented': True, 'capabilities': capabilities,
             'paid_dispatch_enabled': False,
             'has_saved_project': None, 'pending_intents': None,
             'reconciliation_required': None, 'error': self._error,
@@ -382,9 +384,26 @@ class FlowBrowserDriver:
             'effect': 'completed',
         }
 
+    def _operation_project(self, operation_id: str) -> str:
+        self._require_lease()
+        status, project_id = self._store.operation_binding(uuid_value(operation_id))
+        if status == 'conflict':
+            raise BrowserCommandError('OPERATION_BINDING_CONFLICT')
+        if project_id is None:
+            raise BrowserCommandError('OPERATION_BINDING_REQUIRED')
+        project_id = uuid_value(project_id)
+        if status == 'receipt':
+            # Local-only promotion after a unique COMPLETED receipt proves the
+            # binding. Re-check the lease before mutating the durable journal.
+            self._require_lease()
+            self._store.remember_operation(operation_id, project_id)
+        return project_id
+
     def _read_project_for(self, command) -> str:
         if command.rpcid == fb.RPC_PROJECT_MEDIA:
             return uuid_value(command.project_id)
+        if command.rpcid == fb.RPC_OPERATION:
+            return self._operation_project(command.operation_id)
         saved = self._state()
         project_id = saved.get('project_id')
         if not project_id:
@@ -392,7 +411,7 @@ class FlowBrowserDriver:
         return uuid_value(project_id)
 
     def _execute_read(self, command, timeout=300) -> dict:
-        if command.rpcid not in {fb.RPC_PROJECT_MEDIA, fb.RPC_MEDIA}:
+        if command.rpcid not in {fb.RPC_PROJECT_MEDIA, fb.RPC_MEDIA, fb.RPC_OPERATION}:
             return {'status': 501, 'error': 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
                     'effect': 'not_submitted'}
         project_id = self._read_project_for(command)
@@ -400,7 +419,9 @@ class FlowBrowserDriver:
         if opened.get('status') != 200:
             return opened
         page = self._require_session()
-        response = self._evaluate_rpc(page, command, timeout)
+        bound_command = (replace(command, project_id=project_id)
+                         if command.rpcid == fb.RPC_OPERATION else command)
+        response = self._evaluate_rpc(page, bound_command, timeout)
         if response.get('status') != 200 or response.get('body_complete') is not True:
             return {
                 'status': int(response.get('status') or 502),
@@ -413,7 +434,15 @@ class FlowBrowserDriver:
             return {'status': 502, 'error': 'RPC_READ_FAILED', 'effect': 'unknown'}
         if command.match is None:
             try:
-                fb.first_payload(data, command.rpcid)
+                payload = fb.first_payload(data, command.rpcid)
+                if command.rpcid == fb.RPC_OPERATION:
+                    operation = fb.read_operation(payload)
+                    if (operation.operation_id != command.operation_id
+                            or operation.project_id != project_id):
+                        raise BrowserCommandError('OPERATION_RECEIPT_UNVERIFIED')
+            except BrowserCommandError as error:
+                return {'status': 502, 'error': _public_error(
+                    error, 'OPERATION_RECEIPT_UNVERIFIED'), 'effect': 'unknown'}
             except Exception:
                 return {'status': 502, 'error': 'RPC_READ_FAILED', 'effect': 'unknown'}
         return {**response, 'effect': 'completed'}
