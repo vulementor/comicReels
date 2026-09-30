@@ -48,7 +48,8 @@ def test_retry_reconciles_failed_stage_without_resending_and_keeps_original_audi
     assert calls==['closed'] and Path(j['source']).is_file()
     audits=list((directory/'manual-retries').glob('*/analysis.json'))
     assert len(audits)==1 and audits[0].read_bytes()==original
-    assert retry_story(s,j['id'],producer_factory=lambda c:pytest.fail('60s cooldown'),now=lambda:NOW)['state']=='retry_cooldown'
+    assert retry_story(s,j['id'],producer_factory=Producer,now=lambda:NOW)['state']=='retry_failed'
+    assert calls==['closed','closed']
 
 
 def test_retry_unknown_preserves_effect_and_only_reconciles(tmp_path):
