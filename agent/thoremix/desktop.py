@@ -232,9 +232,13 @@ class DesktopWindow:
     def _ensure_action_state(self):
         if not hasattr(self, 'active_groups') or not isinstance(self.active_groups, dict):
             self.active_groups = {}
+        legacy = getattr(self, 'active', None)
+        if legacy is not None and not self.active_groups:
+            self.active_groups[self._action_group(legacy)] = legacy
 
     def _sync_active(self):
-        self._ensure_action_state()
+        if not hasattr(self, 'active_groups') or not isinstance(self.active_groups, dict):
+            self.active_groups = {}
         for group in ('production', 'browser', 'inspect', 'control'):
             if group in self.active_groups:
                 self.active = self.active_groups[group]
