@@ -65,7 +65,7 @@ def parse_price(value):
 
 def parse_observed_sold(text):
     matches = list(re.finditer(
-        r'(?<![\\w.,])([\\d]+(?:[.,]\\d+)?)\\s*([kKmM]?)\\s*(\\+?)\\s*(?:lượt\\s*bán|sold)',
+        r'(?<![\w.,])([\d]+(?:[.,]\d+)?)\s*([kKmM]?)\s*(\+?)\s*(?:lượt\s*bán|sold)',
         str(text),
         re.IGNORECASE,
     ))
@@ -90,8 +90,8 @@ def parse_observed_commission(text):
     without upgrading the claim to cross-channel proof.
     """
     matches = list(re.finditer(
-        r'(?<!\\w)(?:t(?:ỉ|ỷ)\\s*lệ\\s*hoa\\s*hồng|comm(?:ission)?\\s*rate)\\s*'
-        r'(\\d+(?:[.,]\\d+)?)\\s*%',
+        r'(?<!\w)(?:t(?:ỉ|ỷ)\s*lệ\s*hoa\s*hồng|comm(?:ission)?\s*rate)\s*'
+        r'(\d+(?:[.,]\d+)?)\s*%',
         str(text),
         re.IGNORECASE,
     ))
