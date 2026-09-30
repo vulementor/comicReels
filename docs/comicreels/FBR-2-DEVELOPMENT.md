@@ -1,5 +1,8 @@
 # FBR-2 development ledger
 
+Latest continuation: **FBR-2-code-3a — durable upload wiring**, recorded below.
+Overall FBR-2 remains **CODE_IN_PROGRESS**. No test, build or runtime acceptance.
+
 ## Authority and execution boundary
 
 - Architecture: `FLOW-BROWSER-FIRST-ARCHITECTURE.md`.
@@ -194,3 +197,94 @@ reconciliation into this same driver/state boundary; complete capability/facade
 integration and restart/resume authored coverage. Keep paid dispatch false and
 extension selectable. After FBR-2 code closure, continue forward through the
 remaining approved FBR-3/FBR-4/FBR-5 coding scopes before starting validation.
+
+
+## FBR-2-code-3a — durable upload wiring
+
+Date: 2026-09-30.
+Status: **CODE_COMPLETE for the bounded upload wiring only; NOT VALIDATED**.
+Overall FBR-2: **CODE_IN_PROGRESS**, not ready for full build/runtime acceptance.
+
+Continuation base: `bce10f9ce31c42b146a08f2b99ff3b90e9a62748`.
+That earlier commit added `test_flow_browser_driver_project_reads.py`; it is
+additional authored project/read coverage, not a test execution or implementation.
+Branch remains `feat/fbr-2-driver-lifecycle-20260930`.
+
+Source commits for this slice:
+
+- Authored upload coverage: `0eda8b9fc5b18e59906be258b9a80c48dd566b7f`.
+- Shared uploader implementation: `19748c956c3b07dde6e8d959752ab902d87e4476`.
+- Concrete driver wiring: `f09038d39f2ac1d363040d21db663f20a1855dab`.
+
+### Implemented scope
+
+- `FlowBrowserDriver.execute()` now routes validated non-paid upload commands to
+  the shared `flow_browser_upload.execute_upload()` implementation.
+- The existing path-based `upload_reference()` signature remains available and
+  delegates to that same implementation. Existing persisted keys remain valid:
+  `upload:<project UUID>:<source SHA-256>:<file name>`.
+- Validate the envelope and the actual image content/MIME before navigation,
+  journal mutation or upload. A changed random client request UUID does not
+  authorize another upload of the same project/source/file identity.
+- New uploads navigate only through the same authenticated leased provider.
+  Driver-supplied lease guards run before journal access, dispatch and completion.
+- SUBMITTING is durable before browser dispatch. Acknowledgement follows a
+  complete matching RPC response, verified project/media UUIDs and durable receipt.
+- Retain an observed operation UUID inside the upload receipt for the next
+  reconciliation slice. It is not yet promoted to `operation_projects` here.
+- Reuse a completed receipt only when its kind, source attributes and project
+  binding match. Reuse and pre-existing uncertain intents cause no new browser
+  upload, navigation or journal rewrite.
+- Incomplete/ambiguous responses, invalid receipts and completion persistence
+  failures return `UPLOAD_RECONCILIATION_REQUIRED` with `effect=unknown`.
+  UNKNOWN is recorded when possible. Lost lease/disk failure may leave SUBMITTING;
+  both states remain non-retryable. Never overwrite a completed receipt.
+- Return a minimal envelope derived from verified receipt fields rather than
+  passing arbitrary private response fields to application callers.
+- Upload availability is now reported with `readiness_scope=project_read_upload`.
+  `operation_reconcile`, `operations_implemented` and paid dispatch stay false.
+
+Ruling: reuse the existing browser upload JS and keep its bounded timeout policy;
+do not create another browser/profile, duplicate transport or new UI selectors.
+Native captcha/session handling remains inside that established browser recipe.
+
+### Authored requirements and deferred validation
+
+`tests/unit/test_flow_browser_driver_upload.py` adds requirements for pre-effect
+intent persistence, project binding, completed receipt reuse after restart,
+unknown-outcome replay blocking, invalid responses, disk failure, lease loss,
+image-content/MIME checks, project isolation, privacy and path-helper compatibility.
+
+Tests executed: **none**. No pytest/import/compile/lint/build/workflow dispatch,
+live browser upload, runtime inspection, EXE launch or Stable action occurred.
+GitHub source read-back confirmed the driver commit/diff; it is not runtime proof.
+
+The final FBR-2 coverage-integration slice must align historical lifecycle/project
+read tests with the accumulated capability/readiness contract, including earlier
+upload-unavailable expectations. Do not claim those historical tests pass now.
+The async facade/cancellation and full extension/browser parity coverage remain
+part of that outstanding integration scope.
+
+Runtime revision, selected backend, physical profile identity/lease/health,
+scheduler and existing paid-effect state: **not observed**.
+KBS pin unchanged: `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+Main, other branches, PR #12, profiles, production data and Stable are untouched
+by this slice. Existing good-video reuse, review gates, logs, TTS/concat and
+publishing behavior have not been removed or rewritten.
+
+### Exact next coding task and EXE gate
+
+**FBR-2-code-3b:** implement read-only operation reconciliation, resolving the
+operation/project binding from the durable journal and verified upload receipts.
+Reject unbound or conflicting operation IDs; do not infer a project from whichever
+tab happens to be open. No replay or fabricated resolution of UNKNOWN effects.
+
+Then finish FBR-2 facade/readiness/restart coverage integration and the remaining
+approved FBR-3/FBR-4/FBR-5 coding scopes. Only after complete source integration
+may the separate validation/build/EXE acceptance pass start. Paid activation and
+production default cutover require their own gates; optional FBR-6 deletion is
+not authorized by this upload implementation.
+
+Rollback source boundary for this slice: `bce10f9ce31c42b146a08f2b99ff3b90e9a62748`.
+No runtime rollback is needed: these changes exist only on the development branch.
+Owner continuation authorized coding toward EXE testing, not a runtime PASS.
