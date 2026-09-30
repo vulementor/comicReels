@@ -256,3 +256,10 @@ def configuration_file(name: str) -> Path:
     if runtime is None:
         return Path(__file__).parent / name
     return runtime.data_path(runtime.home / "config" / name)
+
+
+
+def require_standalone_desktop() -> None:
+    """Legacy children cannot inherit private bindings or resource ownership."""
+    if current_runtime() is not None:
+        raise PrivateRuntimeError("BOUND_CHILD_LAUNCH_UNAVAILABLE")

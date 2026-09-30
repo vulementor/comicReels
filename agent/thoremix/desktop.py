@@ -153,6 +153,8 @@ class DesktopWindow:
     """A passive viewer until the user explicitly invokes a command."""
 
     def __init__(self, settings: Settings, *, window=None, poll=True, snapshot_loader=build_snapshot):
+        from agent.private_runtime import require_standalone_desktop
+        require_standalone_desktop()
         self.settings, self.load_snapshot = settings, snapshot_loader
         self.window = window or tk.Tk()
         self.window.title('Thỏ Remix — Toolkit')
@@ -1012,6 +1014,8 @@ class DesktopWindow:
 
 
 def run_desktop(settings: Settings) -> None:
+    from agent.private_runtime import require_standalone_desktop
+    require_standalone_desktop()
     from .tray import DesktopInstance
 
     instance = DesktopInstance()
@@ -1027,3 +1031,4 @@ def run_desktop(settings: Settings) -> None:
         if app and app.tray:
             app.tray.stop()
         instance.close()
+

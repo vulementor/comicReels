@@ -19,6 +19,12 @@ def binding(tmp_path, monkeypatch):
     monkeypatch.delitem(sys.modules, "agent.config", raising=False)
     home = tmp_path / "data" / "channel-a"
     home.mkdir(parents=True)
+    config_dir = home / "config"
+    config_dir.mkdir()
+    (config_dir / "models.json").write_text(json.dumps({
+        "video_models": {}, "upscale_models": {}, "image_models": {},
+    }), encoding="utf-8")
+    (config_dir / "providers.json").write_text("{}", encoding="utf-8")
     native = tmp_path / "release" / "native"
     native.mkdir(parents=True)
     for name in ("camoufox", "ffmpeg", "ffprobe", "tts-python"):
@@ -267,3 +273,20 @@ def test_tts_subprocess_receives_only_local_model_and_private_python(binding, mo
     assert json.loads(command[-1])["model"] == str(value.model("omnivoice"))
     assert options["env"]["HF_HUB_OFFLINE"] == "1"
     assert options["env"]["TRANSFORMERS_OFFLINE"] == "1"
+
+
+
+def test_private_desktop_fails_before_unbound_child_commands(binding):
+    with pytest.raises(private.PrivateRuntimeError, match="BOUND_CHILD_LAUNCH_UNAVAILABLE"):
+        private.require_standalone_desktop()
+
+
+def test_standalone_desktop_guard_allows_legacy_mode(monkeypatch):
+    monkeypatch.setattr(private, "_binding", None)
+    private.require_standalone_desktop()
+
+
+def test_private_configuration_files_are_seeded_per_instance(binding):
+    value, _ = binding
+    assert private.configuration_file("models.json") == value.home / "config" / "models.json"
+    assert json.loads(private.configuration_file("providers.json").read_text()) == {}
