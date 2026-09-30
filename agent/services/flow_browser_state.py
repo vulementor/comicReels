@@ -13,7 +13,7 @@ _MAX_BYTES = 4 * 1024 * 1024
 _MAX_RECORDS = 4096
 _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
-_ATTRIBUTES = {"project_id", "image_sha256", "title", "file_name", "mime_type"}
+_ATTRIBUTES = {"project_id", "image_sha256", "request_sha256", "idempotency_sha256", "title", "file_name", "mime_type", "rpcid"}
 _RECEIPT = {"project_id", "media_id", "title", "operation_id"}
 _ERROR_CODES = {
     "INVALID_INPUT", "INVALID_STATE", "OWNER_MISMATCH", "STATE_READ_FAILED",
@@ -46,8 +46,10 @@ def _fields(value, allowed: set[str]) -> bool:
             valid = _identifier(item)
         elif key in {"title", "file_name"}:
             valid = isinstance(item, str) and len(item) <= 160
-        elif key == "image_sha256":
+        elif key in {"image_sha256", "request_sha256", "idempotency_sha256"}:
             valid = isinstance(item, str) and _SHA256.fullmatch(item) is not None
+        elif key == "rpcid":
+            valid = isinstance(item, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,32}", item) is not None
         else:
             valid = isinstance(item, str) and item in {"image/png", "image/jpeg", "image/webp"}
         if not valid:
@@ -101,7 +103,7 @@ class BrowserStateStore:
         return state
 
     def begin(self, key: str, kind: str, attributes: dict) -> dict:
-        _require(_key(key) and isinstance(kind, str) and kind in {"create", "upload"})
+        _require(_key(key) and isinstance(kind, str) and kind in {"create", "upload", "paid_image"})
         _require(_fields(attributes, _ATTRIBUTES))
         state = self.load()
         existing = state["intents"].get(key)
@@ -198,7 +200,7 @@ class BrowserStateStore:
             _require(set(entry) == {"state", "kind", "attributes", "receipt", "created_at"}, code)
             _require(isinstance(entry["state"], str)
                      and entry["state"] in {"SUBMITTING", "UNKNOWN", "COMPLETED"}, code)
-            _require(isinstance(entry["kind"], str) and entry["kind"] in {"create", "upload"}, code)
+            _require(isinstance(entry["kind"], str) and entry["kind"] in {"create", "upload", "paid_image"}, code)
             _require(_fields(entry["attributes"], _ATTRIBUTES), code)
             receipt = entry["receipt"]
             _require(receipt is None or _fields(receipt, _RECEIPT), code)
