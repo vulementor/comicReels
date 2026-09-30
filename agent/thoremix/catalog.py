@@ -414,6 +414,27 @@ class ShopeeCatalogProvider:
                 or intent.get('catalog_offer') != catalog_offer
                 or offer_identity(catalog_offer) != product.product_id):
             raise ValueError('catalog_link_intent_invalid')
+        return receipt
+
+    def _link_checkpoint(self, product, stage, *, activation_state=None, url=None):
+        from .affiliate import LINK_STAGES, ACTIVATION_STATES, _safe_url
+        from .config import atomic_json
+        if stage not in LINK_STAGES or (activation_state is not None and activation_state not in ACTIVATION_STATES):
+            raise ValueError('catalog_link_intent_invalid')
+        receipt = self._require_intent(product)
+        receipt['link_stage'] = stage
+        steps = receipt.setdefault('link_steps', [])
+        if not isinstance(steps, list) or any(item not in LINK_STAGES for item in steps) or len(steps) >= 12:
+            raise ValueError('catalog_link_intent_invalid')
+        steps.append(stage)
+        if activation_state is not None:
+            receipt['activation_state'] = activation_state
+        if url is not None:
+            if not _safe_url(url, affiliate=True):
+                raise ValueError('catalog_link_url_invalid')
+            receipt.update(resolved_url=url, resolved_product_id=product.product_id,
+                           resolved_at=datetime.now(timezone.utc).isoformat())
+        atomic_json(self._intent[0], receipt)
 
     @staticmethod
     def _visible_short_links(page):
@@ -456,33 +477,44 @@ class ShopeeCatalogProvider:
         if limit != 1 or len(products) != 1:
             raise ValueError('catalog_one_link_only')
         product = products[0]
-        self._require_intent(product)
+        receipt = self._require_intent(product)
+        if receipt.get('link_steps') or receipt.get('activation_state') not in {None, 'not_started'} or receipt.get('resolved_url'):
+            raise ValueError('catalog_link_activation_already_attempted')
         with self.browser.session() as context:
             page = self._page(context)
+            self._link_checkpoint(product, 'link_navigation', activation_state='not_started')
             page.goto(CATALOG_URL, wait_until='domcontentloaded', timeout=60000)
+            self._link_checkpoint(product, 'link_readiness')
             try:
                 page.locator('.AffiliateItemCard').first.wait_for(state='visible', timeout=25000)
             finally:
                 self._guard(page)
+            self._link_checkpoint(product, 'link_card_match')
             card = self._matching_catalog_card(page, product)
             if page.locator('[role="dialog"]:visible,.ant-modal:visible').count():
                 raise ValueError('catalog_existing_dialog_requires_reconciliation')
             button = card.get_by_role('button', name='Lấy link', exact=True)
             if button.count() != 1:
                 raise ValueError('catalog_link_button_ambiguous')
+            self._link_checkpoint(product, 'link_focus')
             button.focus(timeout=5000)
             if not button.evaluate('n => document.activeElement === n'):
                 raise ValueError('catalog_link_button_focus_unverified')
             # One activation only; after dispatch, read/reconcile but never press again.
+            self._link_checkpoint(product, 'activation_intent', activation_state='intent')
             self._activation_attempted = True
             try:
                 button.press('Enter', timeout=5000)
             except Exception:
-                pass
+                self._link_checkpoint(product, 'activation_uncertain', activation_state='unknown_after_dispatch')
+            else:
+                self._link_checkpoint(product, 'activation_returned', activation_state='returned')
+            self._link_checkpoint(product, 'link_observation')
             for _ in range(12):
                 self._guard(page)
                 urls = self._visible_short_links(page)
                 if len(urls) == 1:
+                    self._link_checkpoint(product, 'link_observed', url=urls[0])
                     product.affiliate = AffiliateLink(url=urls[0], status='resolved',
                                                      observed_at=datetime.now(timezone.utc))
                     return products
@@ -490,4 +522,3 @@ class ShopeeCatalogProvider:
                     break
                 page.wait_for_timeout(500)
         raise ProviderBlocked('shopee_affiliate_link_unconfirmed', 'Chưa đọc được một link; cần đối soát, không tạo lại.')
-

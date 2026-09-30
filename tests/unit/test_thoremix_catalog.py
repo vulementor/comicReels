@@ -430,3 +430,86 @@ def test_header_only_table_is_not_enough_wait_for_product_and_populated_rows(set
     assert result['state'] == 'verified' and page.waited_detail and page.presses == 1
     assert result['selection_evidence']['detail_count'] == 1
     assert result['selection_evidence']['rate_basis'] == 'minimum_other_social_and_facebook_reels_fallback'
+
+
+@pytest.mark.parametrize('press_timeout', [False, True])
+def test_link_checkpoint_is_durable_before_activation_and_keeps_public_url(settings, monkeypatch, press_timeout):
+    page = CatalogPage()
+    page.press_error = press_timeout
+    original = Button.press
+    def press(button, *args, **kwargs):
+        receipt = json.loads(next((settings.data/'affiliate').glob('*.json')).read_text())
+        assert receipt['link_stage'] == 'activation_intent'
+        assert receipt['activation_state'] == 'intent'
+        assert receipt['link_steps'] == ['link_navigation', 'link_readiness', 'link_card_match',
+                                        'link_focus', 'activation_intent']
+        return original(button, *args, **kwargs)
+    monkeypatch.setattr(Button, 'press', press)
+    result = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
+    assert result['state'] == 'verified' and page.presses == 1
+    receipt = json.loads(next((settings.data/'affiliate').glob('*.json')).read_text())
+    assert receipt['activation_state'] == ('unknown_after_dispatch' if press_timeout else 'returned')
+    assert receipt['link_steps'][-3:] == [
+        'activation_uncertain' if press_timeout else 'activation_returned', 'link_observation', 'link_observed']
+    assert receipt['resolved_url'] == 'https://s.shopee.vn/newexample'
+
+
+def test_pre_activation_failure_records_phase_and_blocks_new_product_fallback(settings):
+    class FailingPage(CatalogPage):
+        def goto(self, *args, **kwargs):
+            if self.visited:
+                raise RuntimeError('Cookie: private-do-not-store')
+            return super().goto(*args, **kwargs)
+    page = FailingPage()
+    result = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
+    assert result['reason'] == 'affiliate_link_resolution_failed'
+    assert result['phase'] == 'link_resolution' and result['link_stage'] == 'link_navigation'
+    assert result['activation_state'] == 'not_started'
+    receipt_path = next((settings.data/'affiliate').glob('*.json'))
+    assert json.loads(receipt_path.read_text())['error_code'] == result['reason']
+    changed = CatalogPage()
+    changed.cards = [dict(DETAIL['selected_card'], href=CATALOG_URL+'/999')]
+    again = affiliate.acquire_affiliate(settings, session_provider=Browser(changed))
+    assert again['reason'] == 'affiliate_link_incomplete_requires_reconciliation'
+    assert again['phase'] == 'intent_reconciliation'
+    assert not changed.visited and page.presses == changed.presses == 0
+    assert 'private-do-not-store' not in receipt_path.read_text() + json.dumps(result)
+
+
+def test_observed_url_survives_failure_before_provider_returns_and_retry_only_reads(settings, monkeypatch):
+    import agent.thoremix.catalog as catalog
+    original = catalog.AffiliateLink
+    def fail(**kwargs):
+        receipt = json.loads(next((settings.data/'affiliate').glob('*.json')).read_text())
+        assert receipt['resolved_url'] == kwargs['url']
+        assert receipt['link_stage'] == 'link_observed'
+        raise RuntimeError('private-model-failure')
+    monkeypatch.setattr(catalog, 'AffiliateLink', fail)
+    page = CatalogPage()
+    browser = Browser(page)
+    result = affiliate.acquire_affiliate(settings, session_provider=browser)
+    assert result['state'] == 'blocked' and page.presses == 1
+    path = next((settings.data/'affiliate').glob('*.json'))
+    before = json.loads(path.read_text())
+    assert before['state'] == 'incomplete' and before['resolved_product_id'] == '2931643720'
+    monkeypatch.setattr(catalog, 'AffiliateLink', original)
+    retry = affiliate.acquire_affiliate(settings, session_provider=browser)
+    assert retry['state'] == 'verified' and page.presses == 1
+    after = json.loads(path.read_text())
+    assert before['intent'] == after['intent'] and before['link_steps'] == after['link_steps']
+    assert 'private-model-failure' not in path.read_text()
+
+
+def test_uncertain_activation_history_is_retained_and_cannot_replay(settings):
+    page = CatalogPage()
+    page.short_links = []
+    page.press_error = True
+    first = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
+    assert first['reason'] == 'shopee_affiliate_link_unconfirmed'
+    assert first['activation_state'] == 'unknown_after_dispatch'
+    assert first['link_stage'] == 'link_observation'
+    path = next((settings.data/'affiliate').glob('*.json'))
+    before = path.read_bytes()
+    second = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
+    assert second['reason'] == 'affiliate_link_incomplete_requires_reconciliation'
+    assert path.read_bytes() == before and page.presses == 1

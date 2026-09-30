@@ -477,3 +477,26 @@ def test_trusted_provider_observed_total_does_not_require_components(settings):
     result, _, _ = run(settings, [p])
     assert result['state'] == 'verified'
     assert result['product']['commission']['effective_rate'] == .2
+
+
+@pytest.mark.parametrize('unsafe', [False, True])
+def test_story_stage_preserves_only_fixed_affiliate_failure_diagnostics(settings, monkeypatch, unsafe):
+    from agent.thoremix import affiliate
+    from agent.thoremix.story_operations import StoryOperations
+    value = {'state':'blocked', 'reason':'shopee_affiliate_link_unconfirmed', 'phase':'link_resolution',
+             'candidate_count':20, 'link_stage':'link_observation', 'activation_state':'unknown_after_dispatch',
+             'provider_text':'Cookie: private', 'url':'https://example.invalid/?token=private'}
+    if unsafe:
+        value.update(reason='Cookie: private', phase='https://private.invalid', candidate_count='private',
+                     link_stage='private', activation_state='private')
+    monkeypatch.setattr(affiliate, 'acquire_affiliate', lambda _:value)
+    result = StoryOperations(settings, None)._run('affiliate', {'source':str(settings.directory/'fixture.png')},
+                                                  settings.data, lambda _:None)
+    assert result['state'] == 'uncertain'
+    if unsafe:
+        assert result == {'state':'uncertain', 'reason':'AFFILIATE_UNVERIFIED'}
+    else:
+        assert result == {'state':'uncertain', 'reason':'shopee_affiliate_link_unconfirmed',
+            'phase':'link_resolution', 'candidate_count':20, 'link_stage':'link_observation',
+            'activation_state':'unknown_after_dispatch'}
+    assert 'private' not in json.dumps(result)

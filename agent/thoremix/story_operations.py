@@ -297,7 +297,7 @@ class StoryOperations:
                 data['provider_receipt'] = result['provider_receipt']
             return result
         if name == 'affiliate':
-            from .affiliate import acquire_affiliate, _fresh, DISCLOSURE
+            from .affiliate import acquire_affiliate, failure_diagnostic, _fresh, DISCLOSURE
             cached = self.settings.data/'affiliate-selection.json'
             value = json.loads(cached.read_text(encoding='utf-8')) if cached.exists() else {}
             product = value.get('product', {})
@@ -308,7 +308,7 @@ class StoryOperations:
                 if value.get('state') == 'verified':
                     atomic_json(cached, value)
             if value.get('state') != 'verified':
-                return {'state': 'uncertain', 'reason': 'AFFILIATE_UNVERIFIED'}
+                return {'state': 'uncertain', **failure_diagnostic(value)}
             value['comment'] = '\n'.join(s for s in value['comment'].splitlines() if s.strip()!=DISCLOSURE)
             return {'state': 'verified', 'data': value}
         raise ValueError('UNKNOWN_STORY_STAGE')
@@ -482,4 +482,3 @@ class StoryOperations:
             if result.get('state')=='blocked':raise PacingDeferred(result.get('reason','CHATGPT_WAIT_PAUSED'))
             return (intervals if result['data']['accepted'] else []),result['data']
         return [],{'accepted':True,'issues':[],'advisory':True}
-

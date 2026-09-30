@@ -27,6 +27,90 @@ _HOSTS = {'shopee.vn', 'www.shopee.vn', 'affiliate.shopee.vn', 's.shopee.vn', 's
 _SECRET = re.compile(r'password|passwd|cookie|authorization|bearer|secret|access.?token|refresh.?token|session.?id', re.I)
 
 
+PHASES = {'configuration', 'session', 'discovery', 'link_resolution',
+          'destination_verification', 'intent_reconciliation'}
+LINK_STAGES = {'link_navigation', 'link_readiness', 'link_card_match', 'link_focus',
+               'activation_intent', 'activation_returned', 'activation_uncertain', 'link_observation',
+               'link_observed'}
+ACTIVATION_STATES = {'not_started', 'intent', 'returned', 'unknown_after_dispatch'}
+SAFE_REASONS = {
+    'configured_existing_affiliate_profile_required', 'affiliate_selection_settings_invalid',
+    'no_eligible_observed_product', 'affiliate_link_intent_requires_reconciliation',
+    'affiliate_link_incomplete_requires_reconciliation', 'affiliate_evidence_changed_during_link_resolution',
+    'affiliate_link_destination_unverified', 'shopee_link_resolution_not_live_verified',
+    'shopee_security_challenge', 'shopee_affiliate_auth_required', 'shopee_affiliate_link_unconfirmed',
+    'catalog_detail_unavailable', 'catalog_cross_channel_commission_unavailable',
+    'catalog_link_intent_required', 'catalog_link_intent_invalid',
+    'catalog_product_card_ambiguous', 'catalog_product_card_unreadable',
+    'catalog_link_evidence_changed', 'catalog_existing_dialog_requires_reconciliation',
+    'catalog_link_button_ambiguous', 'catalog_link_button_focus_unverified',
+    'catalog_link_activation_already_attempted', 'catalog_one_link_only',
+    'catalog_link_url_invalid', 'product_identity_unverified', 'price_evidence_missing',
+    'price_evidence_stale', 'price_above_limit', 'commission_unverified', 'commission_evidence_stale',
+    'native_commission_components_unknown', 'native_commission_total_inconsistent',
+    'commission_percentage_unknown_or_zero', 'observed_sold_evidence_missing',
+    'observed_sold_evidence_stale', 'observed_sold_below_limit', 'product_title_invalid',
+} | {'affiliate_' + phase + '_failed' for phase in PHASES}
+
+
+def failure_diagnostic(value):
+    """Project fixed public diagnostics only; never copy arbitrary provider fields."""
+    reason, phase = value.get('reason'), value.get('phase')
+    result = {'reason': reason if isinstance(reason, str) and reason in SAFE_REASONS
+              else 'AFFILIATE_UNVERIFIED'}
+    if isinstance(phase, str) and phase in PHASES:
+        result['phase'] = phase
+    count = value.get('candidate_count')
+    if type(count) is int and 0 <= count <= 10000:
+        result['candidate_count'] = count
+    for key, allowed in (('link_stage', LINK_STAGES), ('activation_state', ACTIVATION_STATES)):
+        if isinstance(value.get(key), str) and value[key] in allowed:
+            result[key] = value[key]
+    return result
+
+
+def _retained_receipt(path, original):
+    current = json.loads(path.read_text(encoding='utf-8'))
+    if (current.get('schema_version') != 2 or current.get('intent') != original.get('intent')
+            or current.get('intent_sha256') != original.get('intent_sha256')
+            or _intent_hash(current.get('intent')) != current.get('intent_sha256')):
+        raise ValueError('catalog_link_intent_invalid')
+    return current
+
+
+def _pending_intent(settings):
+    """Freeze unresolved product scope before new discovery can choose another item."""
+    pending = []
+    for path in sorted((settings.data / 'affiliate').glob('*.json')):
+        try:
+            value = json.loads(path.read_text(encoding='utf-8'))
+            intent = value.get('intent')
+            if (value.get('schema_version') != 2 or not isinstance(intent, dict)
+                    or value.get('intent_sha256') != _intent_hash(intent)):
+                raise ValueError
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None, 'affiliate_link_intent_requires_reconciliation'
+        if value.get('state') == 'verified':
+            continue
+        if value.get('state') not in {'intent', 'incomplete'}:
+            return None, 'affiliate_link_intent_requires_reconciliation'
+        pending.append(value)
+    if not pending:
+        return None, None
+    if len(pending) != 1:
+        return None, 'affiliate_link_incomplete_requires_reconciliation'
+    value = pending[0]
+    intent = value['intent']
+    readable = (intent.get('effect') == 'verify_existing_link'
+                and _safe_url(intent.get('existing_url'), affiliate=True))
+    readable = readable or (intent.get('effect') == 'resolve_link'
+        and value.get('resolved_product_id') == intent.get('product_id')
+        and _safe_url(value.get('resolved_url'), affiliate=True))
+    if not readable:
+        return value, 'affiliate_link_incomplete_requires_reconciliation'
+    return value, None
+
+
 def _stop(reason, *, state='needs_input', candidate_count=0):
     return {'state': state, 'reason': reason, 'candidate_count': candidate_count}
 
@@ -329,17 +413,31 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
     receipt_path = None
     receipt = None
     phase = 'configuration'
+    def stop(reason, *, state='needs_input', candidate_count=0):
+        result = _stop(reason, state=state, candidate_count=candidate_count)
+        result['phase'] = phase
+        if receipt is not None:
+            result.update({key: receipt[key] for key, allowed in
+                (('link_stage', LINK_STAGES), ('activation_state', ACTIVATION_STATES))
+                if isinstance(receipt.get(key), str) and receipt[key] in allowed})
+        return result
     try:
         raw_profile = settings.affiliate_profile_dir
         if not raw_profile or not Path(raw_profile).is_absolute() or not Path(raw_profile).is_dir():
-            return _stop('configured_existing_affiliate_profile_required')
+            return stop('configured_existing_affiliate_profile_required')
         profile = Path(raw_profile).resolve()
         queries = settings.affiliate_queries
         if (not isinstance(queries, (tuple, list)) or not queries
                 or any(not isinstance(q, str) or not q.strip() for q in queries)
                 or not _number(settings.affiliate_max_price) or settings.affiliate_max_price <= 0
                 or type(settings.affiliate_min_sold) is not int or settings.affiliate_min_sold < 1):
-            return _stop('affiliate_selection_settings_invalid')
+            return stop('affiliate_selection_settings_invalid')
+        phase = 'intent_reconciliation'
+        pending, blocked = _pending_intent(settings)
+        if blocked:
+            receipt = pending
+            return stop(blocked, state='blocked')
+        phase = 'configuration'
         from kabin_affiliate_toolkit.browser import BrowserRuntimeConfig, OwnedCamoufoxSessionProvider
         from kabin_affiliate_toolkit.models import ProductRecommendRequest
         from kabin_affiliate_toolkit.providers.shopee import ShopeeProviderConfig, ShopeeVNProvider
@@ -384,6 +482,14 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                 for product in products:
                     candidates[(product.shop_id, product.product_id)] = product
             count = len(candidates)
+            if pending is not None:
+                identity = (pending['intent'].get('shop_id'), pending['intent'].get('product_id'))
+                candidates = {key: value for key, value in candidates.items() if key == identity}
+                if not candidates:
+                    phase = 'intent_reconciliation'
+                    receipt = pending
+                    return stop('affiliate_link_incomplete_requires_reconciliation', state='blocked',
+                                candidate_count=count)
             eligible, reasons = [], set()
             now = datetime.now(timezone.utc)
             for product in candidates.values():
@@ -393,7 +499,7 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                 else:
                     eligible.append((product, rate))
             if not eligible:
-                result = _stop('no_eligible_observed_product', candidate_count=count)
+                result = stop('no_eligible_observed_product', candidate_count=count)
                 result['missing_evidence'] = sorted(reasons) or ['no_candidates']
                 if candidates:
                     selection = _catalog_selection_evidence(next(iter(candidates.values())))
@@ -410,7 +516,7 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                 if (receipt.get('schema_version') != 2 or not isinstance(intent, dict)
                         or receipt.get('intent_sha256') != _intent_hash(intent)
                         or (intent.get('shop_id'), intent.get('product_id')) != expected):
-                    return _stop('affiliate_link_intent_requires_reconciliation', state='blocked', candidate_count=count)
+                    return stop('affiliate_link_intent_requires_reconciliation', state='blocked', candidate_count=count)
                 if receipt.get('state') == 'verified':
                     # Reuse a confirmed URL with current eligibility/destination.
                     url = receipt.get('url')
@@ -431,7 +537,7 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                     receipt.update(state='intent', last_stage='resolved_link_reverification')
                     atomic_json(receipt_path, receipt)
                 else:
-                    return _stop('affiliate_link_incomplete_requires_reconciliation', state='blocked', candidate_count=count)
+                    return stop('affiliate_link_incomplete_requires_reconciliation', state='blocked', candidate_count=count)
             elif selected.affiliate.status in {'verified', 'resolved'} and selected.affiliate.url:
                 url = selected.affiliate.url
                 if _safe_url(url, affiliate=True):
@@ -439,7 +545,7 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                     atomic_json(receipt_path, receipt)
             else:
                 if native:
-                    return _stop('shopee_link_resolution_not_live_verified', state='blocked', candidate_count=count)
+                    return stop('shopee_link_resolution_not_live_verified', state='blocked', candidate_count=count)
                 receipt = _new_receipt(selected, rate, now, effect='resolve_link')
                 atomic_json(receipt_path, receipt)
                 binder = getattr(provider, 'bind_link_intent', None)
@@ -449,6 +555,7 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                 # Snapshot identity before calling a provider that may mutate the
                 # same Pydantic model in place. One call only, even after timeout.
                 resolved = provider.resolve_links([selected.model_copy(deep=True)], 1)
+                receipt = _retained_receipt(receipt_path, receipt)
                 if len(resolved) != 1 or resolved[0].product_id != selected.product_id:
                     raise ValueError('identity')
                 linked = resolved[0]
@@ -467,7 +574,7 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                         or linked.sold != selected.sold or linked.title != selected.title):
                     receipt.update(state='incomplete', last_stage='evidence_changed_during_link_resolution')
                     atomic_json(receipt_path, receipt)
-                    return _stop('affiliate_evidence_changed_during_link_resolution',
+                    return stop('affiliate_evidence_changed_during_link_resolution',
                                  state='blocked', candidate_count=count)
                 if _safe_url(url, affiliate=True):
                     update = {'resolved_url': url, 'resolved_product_id': selected.product_id,
@@ -482,7 +589,7 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                 if receipt is not None and receipt.get('state') == 'intent':
                     receipt.update(state='incomplete', last_stage=phase)
                     atomic_json(receipt_path, receipt)
-                return _stop('affiliate_link_destination_unverified', state='blocked', candidate_count=count)
+                return stop('affiliate_link_destination_unverified', state='blocked', candidate_count=count)
             if selected.shop_id is None:
                 selected.shop_id = destination_identity[0]
                 selected.product_url = f'https://shopee.vn/product/{destination_identity[0]}/{destination_identity[1]}'
@@ -493,7 +600,7 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
             # Browser work may take long enough to expire eligibility.
             rate, reason = _eligibility(selected, settings, datetime.now(timezone.utc), native=native)
             if reason:
-                return _stop(reason, candidate_count=count)
+                return stop(reason, candidate_count=count)
             pack = _pack(selected, rate, url, count)
             # Reuse does not rewrite the original intent or the confirmed result.
             if receipt['state'] != 'verified':
@@ -501,17 +608,18 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                 atomic_json(receipt_path, receipt)
             return pack
     except Exception as exc:
+        code = getattr(exc, 'code', None)
+        if not isinstance(code, str) or code not in SAFE_REASONS:
+            code = str(exc) if str(exc) in SAFE_REASONS else 'affiliate_' + phase + '_failed'
         # Exception messages and provider details can contain session credentials.
         # Emit only controlled stage names. An existing intent survives a crash.
         if receipt_path is not None and receipt is not None and receipt.get('state') == 'intent':
             try:
-                receipt.update(state='incomplete', last_stage=phase)
+                receipt = _retained_receipt(receipt_path, receipt)
+                receipt.update(state='incomplete', last_stage=phase, error_code=code)
                 atomic_json(receipt_path, receipt)
-            except OSError:
+            except (OSError, ValueError, TypeError):
                 pass
-        code = getattr(exc, 'code', None)
-        if code in {'shopee_security_challenge', 'shopee_affiliate_auth_required', 'shopee_affiliate_link_unconfirmed',
-                    'catalog_detail_unavailable', 'catalog_cross_channel_commission_unavailable'}:
-            return _stop(code, state='needs_input' if code in {'shopee_security_challenge', 'shopee_affiliate_auth_required'} else 'blocked',
-                         candidate_count=count)
-        return _stop('affiliate_' + phase + '_failed', state='blocked', candidate_count=count)
+        return stop(code, state='needs_input' if code in
+            {'shopee_security_challenge', 'shopee_affiliate_auth_required'} else 'blocked',
+            candidate_count=count)
