@@ -1,17 +1,24 @@
 """Concrete synchronous owner for the non-paid Flow browser backend.
 
-FBR-2-code-1 implements lifecycle and read-only journal loading only. Session
-readiness is NOT operation readiness: project/read/upload/reconciliation wiring
-is still pending, so the backend stays unready and all operations fail closed.
+FBR-2-code-1 established lifecycle/state ownership. FBR-2-code-2 adds the
+bounded project open/resume/create-session path plus project/media reads.
+Upload, operation reconciliation and every paid capability remain fail-closed.
 No browser is constructed at import time or in the driver constructor.
 """
 from __future__ import annotations
 
+import hashlib
 import threading
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from agent.services import flow_batch as fb
 from agent.services.flow_browser_auth import observe_flow_account
-from agent.services.flow_browser_contract import BrowserCommandError, uuid_value
+from agent.services.flow_browser_contract import (
+    BrowserCommandError,
+    uuid_value,
+    validate_command,
+)
 from agent.services.flow_browser_session import FlowBrowserSessionProvider, FlowProfileConfig
 from agent.services.flow_browser_state import BrowserStateStore
 
@@ -27,7 +34,11 @@ _PUBLIC_CODES = frozenset({
     'IDENTITY_UNVERIFIED', 'IDENTITY_CHANGED', 'OBSERVATION_FAILED',
     'INVALID_INPUT', 'INVALID_STATE', 'OWNER_MISMATCH', 'STATE_READ_FAILED',
     'STATE_WRITE_FAILED', 'STATE_LIMIT_EXCEEDED', 'INVALID_TRANSITION',
-    'RECONCILIATION_REQUIRED',
+    'RECONCILIATION_REQUIRED', 'BROWSER_NOT_READY', 'PROJECT_REQUIRED',
+    'PROJECT_OPEN_FAILED', 'PROJECT_RECEIPT_UNVERIFIED',
+    'RPC_READ_FAILED', 'RPC_NOT_ALLOWED', 'RECIPE_UNVERIFIED',
+    'SESSION_UNVERIFIED', 'HTTP_REJECTED', 'BODY_INCOMPLETE', 'BODY_BUDGET',
+    'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
 })
 
 
@@ -38,17 +49,21 @@ def _public_error(error: BaseException, fallback: str) -> str:
     return code if isinstance(code, str) and code in _PUBLIC_CODES else fallback
 
 
+def _fixed_response_error(value, fallback='RPC_READ_FAILED') -> str:
+    return value if isinstance(value, str) and value in _PUBLIC_CODES else fallback
+
+
 class FlowBrowserDriver:
     """Own one provider on the backend's existing single executor thread.
 
     The provider alone owns the browser context and physical profile lease.
-    The driver reads BrowserStateStore only while that provider reports its
-    lease held. Existing SUBMITTING/UNKNOWN records are never replayed, marked
-    complete, or replaced during start/health/close.
+    State is read/written only while that provider reports its lease held.
+    Existing SUBMITTING/UNKNOWN records are never replayed automatically.
 
-    session_factory is the offline session seam; production supplies neither
-    a fake driver nor a replacement profile. A failed close retains the same
-    provider for an explicit close retry. A closed driver cannot be restarted.
+    Project creation here is the durable *session-project* path. Generic raw
+    create RPC execution stays unavailable until a caller-facing idempotency
+    contract exists; repeated identical raw create envelopes are not silently
+    treated as permission to create duplicate remote projects.
     """
 
     paid_dispatch_enabled = False
@@ -74,6 +89,35 @@ class FlowBrowserDriver:
         if (not isinstance(observed, dict) or observed.get('state') != 'open'
                 or observed.get('lease_held') is not True):
             raise BrowserCommandError('PROFILE_LEASE_REQUIRED')
+
+    def _require_session(self):
+        self._check_thread()
+        if self._phase != 'open' or self._provider is None:
+            raise BrowserCommandError('BROWSER_NOT_READY')
+        self.config.verify_directory()
+        self._require_lease()
+        observed = self._provider.capture_health()
+        if not isinstance(observed, dict):
+            raise BrowserCommandError('BROWSER_NOT_READY')
+        code = observed.get('error')
+        if code is not None:
+            raise BrowserCommandError(_fixed_response_error(
+                code, 'BROWSER_NOT_READY'))
+        if (observed.get('state') != 'open' or observed.get('lease_held') is not True
+                or observed.get('authentication') != 'authenticated'
+                or observed.get('ready') is not True
+                or type(observed.get('semantic_node_count')) is not int
+                or observed.get('semantic_node_count') <= 0):
+            raise BrowserCommandError('BROWSER_NOT_READY')
+        session = getattr(self._provider, 'session', None)
+        page = getattr(session, 'page', None)
+        if page is None:
+            raise BrowserCommandError('BROWSER_NOT_READY')
+        return page
+
+    def _state(self) -> dict:
+        self._require_lease()
+        return self._store.load()
 
     def start(self) -> None:
         self._check_thread()
@@ -109,8 +153,17 @@ class FlowBrowserDriver:
             raise BrowserCommandError(self._error) from None
 
     def health(self) -> dict:
-        """Fresh session evidence and journal summary, never a parity/PASS claim."""
+        """Fresh session evidence plus bounded capability/state projection."""
         self._check_thread()
+        capabilities = {
+            'project_open_resume': True,
+            'project_create_session': True,
+            'project_media_read': True,
+            'media_read': True,
+            'operation_reconcile': False,
+            'upload': False,
+            'paid_dispatch': False,
+        }
         report = {
             'backend_kind': 'browser', 'profile': self.config.profile_logical_name,
             'state': self._phase,
@@ -118,8 +171,9 @@ class FlowBrowserDriver:
             'lease_held': False if self._phase in {'new', 'closed', 'failed'} else None,
             'authentication': 'unknown', 'semantic_node_count': 0,
             'observed_at': None, 'session_ready': False,
-            'ready': False, 'readiness_scope': 'session_only',
-            'operations_implemented': False, 'paid_dispatch_enabled': False,
+            'ready': False, 'readiness_scope': 'project_read',
+            'operations_implemented': False, 'capabilities': capabilities,
+            'paid_dispatch_enabled': False,
             'has_saved_project': None, 'pending_intents': None,
             'reconciliation_required': None, 'error': self._error,
         }
@@ -153,35 +207,228 @@ class FlowBrowserDriver:
                 and report['authentication'] == 'authenticated'
                 and report['semantic_node_count'] > 0 and report['observed_at']
                 and observed.get('error') is None)
+            report['ready'] = report['session_ready']
             code = observed.get('error')
             if code is not None:
                 report['error'] = (code if isinstance(code, str) and code in _PUBLIC_CODES
                                    else 'DRIVER_OBSERVATION_FAILED')
             elif not report['session_ready']:
                 report['error'] = 'BROWSER_NOT_READY'
-            elif pending:
-                report['error'] = 'RECONCILIATION_REQUIRED'
             else:
-                report['error'] = 'BROWSER_CAPABILITIES_PENDING'
+                # Pending intents block mutation/replay in their own methods but
+                # do not prevent safe project/media reads.
+                report['error'] = None
         except Exception as error:  # Never leak state bytes, profile paths or account text.
             report['session_ready'] = False
+            report['ready'] = False
             report['error'] = _public_error(error, 'DRIVER_OBSERVATION_FAILED')
         return report
 
-    def execute(self, command, timeout=300) -> dict:
-        self._check_thread()
-        return {'status': 501, 'error': 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
-                'effect': 'not_submitted'}
+    def _open_project_page(self, project_id: str):
+        project_id = uuid_value(project_id)
+        page = self._require_session()
+        try:
+            page.goto(f'https://flow.google.com/project/{project_id}',
+                      wait_until='domcontentloaded', timeout=60_000)
+            location = urlsplit(page.url)
+            if (location.scheme != 'https' or location.hostname != 'flow.google.com'
+                    or location.port not in {None, 443}
+                    or location.username or location.password
+                    or location.path != f'/project/{project_id}'):
+                raise ValueError
+            # Navigation can change identity/session state. Require fresh evidence.
+            self._require_session()
+        except BrowserCommandError:
+            raise
+        except Exception:
+            raise BrowserCommandError('PROJECT_OPEN_FAILED') from None
+        return page
 
     def open_project(self, project_id: str) -> dict:
         self._check_thread()
-        uuid_value(project_id)
-        return {'status': 501, 'error': 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
-                'effect': 'not_submitted'}
+        try:
+            project_id = uuid_value(project_id)
+            self._open_project_page(project_id)
+            self._store.set_project(project_id)
+            return {'status': 200, 'data': {'projectId': project_id},
+                    'effect': 'completed'}
+        except Exception as error:
+            return {'status': 409,
+                    'error': _public_error(error, 'PROJECT_OPEN_FAILED'),
+                    'effect': 'not_submitted'}
+
+    def _create_intents(self, saved: dict):
+        return [(key, entry) for key, entry in saved['intents'].items()
+                if entry.get('kind') == 'create']
+
+    def _matching_completed_create(self, saved: dict, title: str):
+        matches = []
+        for key, entry in self._create_intents(saved):
+            receipt = entry.get('receipt')
+            if (entry.get('state') == 'COMPLETED'
+                    and entry.get('attributes', {}).get('title') == title
+                    and isinstance(receipt, dict)
+                    and receipt.get('title') == title):
+                try:
+                    project_id = uuid_value(receipt.get('project_id'))
+                except Exception:
+                    continue
+                matches.append((entry.get('created_at', 0), key, project_id))
+        return max(matches, default=None)
+
+    def _create_key(self, saved: dict, title: str) -> str:
+        digest = hashlib.sha256(title.encode('utf-8')).hexdigest()[:24]
+        ordinal = sum(entry.get('attributes', {}).get('title') == title
+                      for _, entry in self._create_intents(saved))
+        return f'create:{digest}:{ordinal}'
+
+    def _evaluate_rpc(self, page, command, timeout: float) -> dict:
+        script = Path(__file__).with_name('flow_browser_rpc.js').read_text(encoding='utf-8')
+        try:
+            result = page.evaluate('mw:' + script, {
+                'rpcid': command.rpcid,
+                'freq': command.freq,
+                'projectId': command.project_id,
+                'match': command.match,
+                'timeoutMs': max(1000, min(int(float(timeout) * 1000), 120000)),
+            })
+        except Exception:
+            raise BrowserCommandError('RPC_READ_FAILED') from None
+        if not isinstance(result, dict):
+            raise BrowserCommandError('RPC_READ_FAILED')
+        return result
+
+    def _submit_session_project(self, command, key: str) -> tuple[str, str]:
+        page = self._require_session()
+        entry = self._store.begin(key, 'create', {'title': command.title})
+        if entry['state'] == 'COMPLETED':
+            receipt = entry.get('receipt') or {}
+            return uuid_value(receipt.get('project_id')), receipt.get('title') or command.title
+        try:
+            response = self._evaluate_rpc(page, command, 60)
+            if (response.get('status') != 200 or response.get('body_complete') is not True
+                    or response.get('effect') != 'completed'
+                    or not isinstance(response.get('data'), str)):
+                raise BrowserCommandError('RECONCILIATION_REQUIRED')
+            payload = fb.first_payload(response['data'], fb.RPC_CREATE_PROJECT)
+            project_id, observed_title = fb.read_created_project(payload)
+            project_id = uuid_value(project_id)
+            title = observed_title or command.title
+            if title != command.title:
+                raise BrowserCommandError('PROJECT_RECEIPT_UNVERIFIED')
+            # Receipt first, active-project pointer second. If pointer persistence
+            # is interrupted, the completed receipt is enough to recover safely.
+            self._store.complete(key, {'project_id': project_id, 'title': title})
+            self._store.set_project(project_id)
+            return project_id, title
+        except Exception as error:
+            try:
+                current = self._store.lookup(key)
+                if current and current.get('state') == 'SUBMITTING':
+                    self._store.mark_unknown(key)
+            except Exception:
+                pass
+            code = _public_error(error, 'RECONCILIATION_REQUIRED')
+            if code == 'PROJECT_RECEIPT_UNVERIFIED':
+                # The remote effect may have completed under a different receipt.
+                code = 'RECONCILIATION_REQUIRED'
+            raise BrowserCommandError(code) from None
 
     def ensure_session_project(self, title=None, force_new=False) -> dict:
         self._check_thread()
-        raise BrowserCommandError('BROWSER_CAPABILITY_NOT_IMPLEMENTED')
+        self._require_session()
+        saved = self._state()
+        pending_create = [entry for _, entry in self._create_intents(saved)
+                          if entry.get('state') in {'SUBMITTING', 'UNKNOWN'}]
+        if pending_create:
+            raise BrowserCommandError('RECONCILIATION_REQUIRED')
+
+        if not force_new and saved.get('project_id'):
+            project_id = uuid_value(saved['project_id'])
+            opened = self.open_project(project_id)
+            if opened.get('status') != 200:
+                raise BrowserCommandError(opened.get('error') or 'PROJECT_OPEN_FAILED')
+            return {'status': 200, 'data': {'projectId': project_id, 'reused': True},
+                    'effect': 'completed'}
+
+        command = validate_command('batch_rpc', {
+            'rpcid': fb.RPC_CREATE_PROJECT,
+            'freq': fb.create_project_request(title),
+        })
+        if not force_new:
+            completed = self._matching_completed_create(saved, command.title)
+            if completed is not None:
+                _, _, project_id = completed
+                # Recover the narrow crash window between receipt and pointer.
+                self._store.set_project(project_id)
+                opened = self.open_project(project_id)
+                if opened.get('status') != 200:
+                    raise BrowserCommandError(opened.get('error') or 'PROJECT_OPEN_FAILED')
+                return {'status': 200, 'data': {'projectId': project_id, 'reused': True},
+                        'effect': 'completed'}
+
+        key = self._create_key(saved, command.title)
+        project_id, resolved_title = self._submit_session_project(command, key)
+        opened = self.open_project(project_id)
+        if opened.get('status') != 200:
+            raise BrowserCommandError(opened.get('error') or 'PROJECT_OPEN_FAILED')
+        return {
+            'status': 200,
+            'data': {'projectId': project_id, 'title': resolved_title, 'reused': False},
+            'effect': 'completed',
+        }
+
+    def _read_project_for(self, command) -> str:
+        if command.rpcid == fb.RPC_PROJECT_MEDIA:
+            return uuid_value(command.project_id)
+        saved = self._state()
+        project_id = saved.get('project_id')
+        if not project_id:
+            raise BrowserCommandError('PROJECT_REQUIRED')
+        return uuid_value(project_id)
+
+    def _execute_read(self, command, timeout=300) -> dict:
+        if command.rpcid not in {fb.RPC_PROJECT_MEDIA, fb.RPC_MEDIA}:
+            return {'status': 501, 'error': 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
+                    'effect': 'not_submitted'}
+        project_id = self._read_project_for(command)
+        opened = self.open_project(project_id)
+        if opened.get('status') != 200:
+            return opened
+        page = self._require_session()
+        response = self._evaluate_rpc(page, command, timeout)
+        if response.get('status') != 200 or response.get('body_complete') is not True:
+            return {
+                'status': int(response.get('status') or 502),
+                'error': _fixed_response_error(response.get('error')),
+                'effect': response.get('effect') if response.get('effect') in {
+                    'completed', 'unknown', 'not_submitted'} else 'unknown',
+            }
+        data = response.get('data')
+        if not isinstance(data, str):
+            return {'status': 502, 'error': 'RPC_READ_FAILED', 'effect': 'unknown'}
+        if command.match is None:
+            try:
+                fb.first_payload(data, command.rpcid)
+            except Exception:
+                return {'status': 502, 'error': 'RPC_READ_FAILED', 'effect': 'unknown'}
+        return {**response, 'effect': 'completed'}
+
+    def execute(self, command, timeout=300) -> dict:
+        self._check_thread()
+        try:
+            if getattr(command, 'capability', None) == 'read':
+                return self._execute_read(command, timeout)
+            # Session-project creation uses ensure_session_project so a durable
+            # intent key exists before the effect. Raw create/upload remain off.
+            return {'status': 501, 'error': 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
+                    'effect': 'not_submitted'}
+        except Exception as error:
+            return {
+                'status': 409,
+                'error': _public_error(error, 'RPC_READ_FAILED'),
+                'effect': 'not_submitted',
+            }
 
     def close(self) -> None:
         self._check_thread()
