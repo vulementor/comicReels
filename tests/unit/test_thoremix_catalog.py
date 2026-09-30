@@ -369,24 +369,17 @@ def test_provider_cannot_activate_without_durable_intent():
     assert page.presses == 0
 
 
-def test_missing_reels_row_excludes_only_that_product_and_freezes_safe_reason(settings):
-    missing = json.loads((FIXTURES / 'thoremix_shopee_missing_reels.json').read_text(encoding='utf-8'))
-    bad = DETAIL['selected_card'] | {'href': f"{CATALOG_URL}/{missing['product_id']}"}
-    class MixedPage(CatalogPage):
-        def goto(self, url, **kwargs):
-            super().goto(url, **kwargs)
-            unsupported = url.endswith('/' + missing['product_id'])
-            self.rows = missing['rows'] if unsupported else DETAIL['rows']
-            self.product_links = [f"https://shopee.vn/product/252432728/{missing['product_id']}"] if unsupported else DETAIL['product_links']
-    page = MixedPage([bad, DETAIL['selected_card']])
+def test_card_commission_selection_does_not_depend_on_detail_reels_table(settings):
+    lower = DETAIL['selected_card'].copy()
+    lower['href'] = f"{CATALOG_URL}/2338530731"
+    lower['text'] = lower['text'].replace('Tỉ lệ hoa hồng 12,5%', 'Tỉ lệ hoa hồng 5%')
+    page = CatalogPage([lower, DETAIL['selected_card']])
     result = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
     assert result['state'] == 'verified' and result['candidate_count'] == 2
     assert result['product']['product_id'] == '2931643720' and page.presses == 1
-    expected = [{'product_id': '2338530731', 'reason': 'catalog_cross_channel_commission_unavailable',
-                 'stage': 'commission_table'}]
-    assert result['selection_evidence']['excluded_details'] == expected
-    receipt = json.loads(next((settings.data / 'affiliate').glob('*.json')).read_text(encoding='utf-8'))
-    assert receipt['intent']['catalog_selection']['excluded_details'] == expected
+    assert result['selection_evidence']['detail_count'] == 0
+    assert result['selection_evidence']['excluded_details'] == []
+    assert result['selection_evidence']['rate_basis'] == 'product_offer_card_display'
 
 
 @pytest.mark.parametrize('guard, reason', [('Đăng nhập', 'shopee_affiliate_auth_required'),
@@ -411,6 +404,10 @@ def test_header_only_table_is_not_enough_wait_for_product_and_populated_rows(set
             self.product_links = DETAIL['product_links']
             self.rows = DETAIL['rows']
             super().wait_for_function(script, **kwargs)
-    page = HydratingPage()
+    card = DETAIL['selected_card'].copy()
+    card['text'] = card['text'].replace('Tỉ lệ hoa hồng 12,5%\n', '')
+    page = HydratingPage([card])
     result = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
     assert result['state'] == 'verified' and page.waited_detail and page.presses == 1
+    assert result['selection_evidence']['detail_count'] == 1
+    assert result['selection_evidence']['rate_basis'] == 'minimum_other_social_and_facebook_reels_fallback'
