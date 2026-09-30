@@ -220,9 +220,11 @@ class FlowBrowserDriver:
                                    else 'DRIVER_OBSERVATION_FAILED')
             elif not report['session_ready']:
                 report['error'] = 'BROWSER_NOT_READY'
+            elif report['reconciliation_required']:
+                # The backend remains usable for safe non-paid reads/reconciliation,
+                # while health still surfaces that a mutation outcome needs review.
+                report['error'] = 'RECONCILIATION_REQUIRED'
             else:
-                # Pending intents block mutation/replay in their own methods but
-                # do not prevent safe project/media reads.
                 report['error'] = None
         except Exception as error:  # Never leak state bytes, profile paths or account text.
             report['session_ready'] = False
