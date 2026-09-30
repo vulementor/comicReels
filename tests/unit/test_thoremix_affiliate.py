@@ -490,7 +490,7 @@ def test_story_stage_preserves_only_fixed_affiliate_failure_diagnostics(settings
         value.update(reason='Cookie: private', phase='https://private.invalid', candidate_count='private',
                      link_stage='private', activation_state='private')
     monkeypatch.setattr(affiliate, 'acquire_affiliate', lambda _:value)
-    result = StoryOperations(settings, None)._run('affiliate', {'source':str(settings.directory/'fixture.png')},
+    result = StoryOperations(settings, object())._run('affiliate', {'source':str(settings.directory/'fixture.png')},
                                                   settings.data, lambda _:None)
     assert result['state'] == 'uncertain'
     if unsafe:
