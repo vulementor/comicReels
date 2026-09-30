@@ -9,7 +9,8 @@ from agent.private_runtime import PrivateRuntime, install_private_runtime
 def run_thoremix(
     context: Any, binding: PrivateRuntime, *, operation: str, job_id: str,
 ) -> dict:
-    if binding.app_kind != "thoremix" or operation not in {"tick", "dispatch", "status"}:
+    if ((binding.consumer_kind, binding.consumer_name) != ("app", "thoremix")
+            or operation not in {"tick", "dispatch", "status"}):
         raise ValueError("Unsupported ThoRemix instance operation")
     install_private_runtime(binding)
     from agent.thoremix.sdk import ThoRemixClient
@@ -18,3 +19,4 @@ def run_thoremix(
     # authoritative. No retry, automatic enable, approval or task registration.
     with context.job(job_id):
         return getattr(ThoRemixClient(binding.home), operation)()
+

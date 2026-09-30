@@ -53,7 +53,8 @@ class Settings:
         runtime = current_runtime()
         if runtime is not None:
             root = runtime.data_path(self.root)
-            if root != runtime.home or runtime.app_kind != "thoremix":
+            if (root != runtime.home
+                    or (runtime.consumer_kind, runtime.consumer_name) != ("app", "thoremix")):
                 raise ValueError("THOREMIX_INSTANCE_MISMATCH")
             return root
         return Path(self.root).resolve()
@@ -156,3 +157,4 @@ def change_settings(root, **changes):
         settings = replace(Settings.load(root), **changes)
         settings.save()
         return settings
+

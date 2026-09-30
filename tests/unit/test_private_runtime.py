@@ -72,7 +72,8 @@ def binding(tmp_path, monkeypatch):
         "profile_logical_name": "flow-a", "user_data_dir": str(profiles["flow"]),
     }))
     value = private.PrivateRuntime(
-        instance_id="channel-a", app_kind="thoremix", home=home, profiles=profiles,
+        instance_id="channel-a", consumer_kind="app", consumer_name="thoremix",
+        home=home, profiles=profiles,
         tool_resolver=lambda name: native / name, profile_lease_factory=owner,
         model_resolver=lambda name: models / name, chat_profile_name="chat-a",
         flow_profile_config=config,
@@ -290,3 +291,27 @@ def test_private_configuration_files_are_seeded_per_instance(binding):
     value, _ = binding
     assert private.configuration_file("models.json") == value.home / "config" / "models.json"
     assert json.loads(private.configuration_file("providers.json").read_text()) == {}
+
+
+
+def test_comicreels_binding_is_a_service_and_legacy_app_is_rejected(binding):
+    value, _ = binding
+    toolkit = replace(value, consumer_kind="service", consumer_name="comicreels")
+    assert (toolkit.consumer_kind, toolkit.consumer_name) == ("service", "comicreels")
+    for kind, name in (("app", "comic"), ("app", "comicreels"), ("service", "thoremix")):
+        with pytest.raises(private.PrivateRuntimeError, match="INVALID_CONSUMER_INSTANCE"):
+            replace(value, consumer_kind=kind, consumer_name=name)
+
+
+def test_thoremix_settings_reject_toolkit_identity_without_work(binding, monkeypatch):
+    from agent.thoremix.config import Settings
+
+    value, events = binding
+    settings = Settings(root=str(value.home))
+    assert settings.directory == value.home
+    assert settings.enabled is False
+    toolkit = replace(value, consumer_kind="service", consumer_name="comicreels")
+    monkeypatch.setattr(private, "_binding", toolkit)
+    with pytest.raises(ValueError, match="THOREMIX_INSTANCE_MISMATCH"):
+        settings.directory
+    assert events == []

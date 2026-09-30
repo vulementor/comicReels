@@ -1,4 +1,4 @@
-"""Explicit resources for independent ComicReels and ThoRemix app instances.
+"""Explicit resources for the ComicReels toolkit and ThoRemix app instances.
 
 This module has no platform dependency and performs no browser/model work on
 import or installation. Callbacks are supplied by the trusted, verified host.
@@ -37,7 +37,8 @@ def absolute_path(value: str | Path) -> Path:
 @dataclass(frozen=True, slots=True)
 class PrivateRuntime:
     instance_id: str
-    app_kind: str
+    consumer_kind: str
+    consumer_name: str
     home: Path
     profiles: Mapping[str, Path]
     tool_resolver: Callable[[str], Path]
@@ -51,9 +52,10 @@ class PrivateRuntime:
     affiliate_session_provider: Any | None = None
 
     def __post_init__(self) -> None:
-        if (self.app_kind not in {"comic", "thoremix"}
+        if ((self.consumer_kind, self.consumer_name) not in {
+                ("service", "comicreels"), ("app", "thoremix")}
                 or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", self.instance_id) is None):
-            raise PrivateRuntimeError("INVALID_APP_INSTANCE")
+            raise PrivateRuntimeError("INVALID_CONSUMER_INSTANCE")
         if (not self.chat_profile_name or self.chat_profile_name in {".", ".."}
                 or any(char in self.chat_profile_name for char in "/\\\0")):
             raise PrivateRuntimeError("INVALID_CHAT_PROFILE_NAME")
@@ -232,7 +234,8 @@ class OwnedGPTClient:
                 id=self.binding.chat_profile_name, user_data_dir=borrowed.profile_dir,
                 downloads_dir=self.binding.chat_home / "downloads",
                 lock_mode="external", lease_id=borrowed.lease_id,
-                metadata={"owner": self.binding.app_kind, "instance": self.binding.instance_id},
+                metadata={"owner": self.binding.consumer_name, "owner_kind": self.binding.consumer_kind,
+                          "instance": self.binding.instance_id},
             )
             client = GPTFullProxy(
                 browser_profile=handle, home=self.binding.chat_home, visible=self.visible,
@@ -263,3 +266,4 @@ def require_standalone_desktop() -> None:
     """Legacy children cannot inherit private bindings or resource ownership."""
     if current_runtime() is not None:
         raise PrivateRuntimeError("BOUND_CHILD_LAUNCH_UNAVAILABLE")
+
