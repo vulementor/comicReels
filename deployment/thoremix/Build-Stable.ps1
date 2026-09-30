@@ -194,6 +194,8 @@ import tkinter, ssl, sqlite3, PIL, httpx, tzdata, pydantic, yaml, camoufox, pyst
 import kabin_reel_poster, kabin_affiliate_toolkit
 import gpt_fullproxy, kabin_browser_semantic, faster_whisper
 from kabin_reel_poster.sdk import KRPClient
+from kabin_affiliate_toolkit.models import SelectionPolicy
+from kabin_affiliate_toolkit.providers.shopee import ShopeeProviderConfig, ShopeeVNProvider
 from ffpyplayer.player import MediaPlayer
 from agent.services.flow_story_browser import FlowStoryBrowser
 from agent.thoremix.story_operations import StoryOperations
@@ -203,6 +205,12 @@ stage = pathlib.Path(os.environ['THOREMIX_BUILD_STAGE'])
 root = pathlib.Path(os.environ['THOREMIX_BUILD_ROOT'])
 assert pathlib.Path(core.__file__).resolve().is_relative_to(stage.resolve())
 assert callable(getattr(KRPClient, 'recover_pre_submit', None)), 'KRP runtime lacks durable pre-submit recovery'
+kat_fields = SelectionPolicy.model_fields
+assert {'sold_min', 'commission_min'} <= set(kat_fields), 'KAT runtime lacks catalog-first hard-filter contract'
+kat_config = ShopeeProviderConfig()
+assert kat_config.catalog_first is True, 'KAT runtime must default to Product Offer catalog-first'
+assert kat_config.legacy_public_search_fallback is False, 'KAT legacy detail-first fallback must remain opt-in'
+assert ShopeeVNProvider.product_offer_url == 'https://affiliate.shopee.vn/offer/product_offer', 'KAT Product Offer surface mismatch'
 assert compileall.compile_dir(stage / 'source', quiet=1)
 s = Settings.load(root) if (root / 'config/settings.json').exists() else Settings(root=str(root))
 if os.environ.get('THOREMIX_AFF_PROFILE'):
