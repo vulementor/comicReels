@@ -9,6 +9,12 @@ import pytest
 from agent.thoremix import managed_desktop as managed
 
 
+class RegistryError(RuntimeError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
 class Deployment:
     def __init__(self, root, raw):
         self.root = root
