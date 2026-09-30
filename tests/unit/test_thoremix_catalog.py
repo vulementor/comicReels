@@ -28,8 +28,14 @@ def test_observed_price_forms(raw, expected):
     assert parse_price(raw) == expected
 
 
-@pytest.mark.parametrize('raw, amount, lower', [('10k+ lượt bán', 10000, True), ('600k+ lượt bán', 600000, True),
-                                              ('155 lượt bán', 155, False), ('1,5k+ lượt bán', 1500, True)])
+@pytest.mark.parametrize('raw, amount, lower', [
+    ('10k+ lượt bán', 10000, True),
+    ('600k+ lượt bán', 600000, True),
+    ('155 lượt bán', 155, False),
+    ('1,5k+ lượt bán', 1500, True),
+    ('600k+ sold', 600000, True),
+    ('155 sold', 155, False),
+])
 def test_observed_sold_is_explicit_lower_bound(raw, amount, lower):
     parsed = parse_observed_sold(raw)
     assert parsed['sold'] == amount and parsed['is_lower_bound'] is lower
@@ -43,7 +49,10 @@ def test_unknown_and_ambiguous_sold_are_not_zero():
 
 @pytest.mark.parametrize('raw, expected', [
     ('Tỉ lệ hoa hồng 12,5%', .125),
+    ('Tỷ lệ hoa hồng 17.5%', .175),
     ('TỈ LỆ HOA HỒNG 17.5%', .175),
+    ('Comm Rate 12,5%', .125),
+    ('Commission Rate 17.5%', .175),
     ('Tỉ lệ hoa hồng 0%', 0.0),
 ])
 def test_product_offer_card_commission_is_parsed_as_listing_evidence(raw, expected):
@@ -91,6 +100,17 @@ def test_channel_totals_are_percentages_and_do_not_sum_money_column():
     assert rates['other_social']['effective_rate'] == .125
     assert rates['facebook_reels']['effective_rate'] == .15
     assert min(r['effective_rate'] for r in rates.values()) == .125
+
+
+def test_english_detail_labels_use_the_same_cross_channel_contract():
+    rows = [
+        ['Channel Type', 'Content Type', '', 'Commission from Shopee', 'Estimated Commission'],
+        ['Social Media\nMost Used Channel', 'Other Content', '10% (₫12.000)', '2,5% (₫3.000)', '₫15.000'],
+        ['Reels on Facebook/Instagram', '10% (₫12.000)', '5% (₫6.000)', '₫18.000'],
+    ]
+    rates = channel_rates(rows)
+    assert rates['other_social']['effective_rate'] == .125
+    assert rates['facebook_reels']['effective_rate'] == .15
 
 
 @pytest.mark.parametrize('row, column, replacement', [(1, 2, '--'), (1, 3, ''), (2, 1, '10% total 15%'),
@@ -254,8 +274,11 @@ def settings(tmp_path):
 
 
 def request():
-    return ProductRecommendRequest(query='gia dụng', selection={'price_max': 200000},
-                                    context={'affiliate_min_sold': 1000})
+    return ProductRecommendRequest(
+        query='gia dụng',
+        selection={'price_max': 200000, 'sold_min': 1000},
+        context={},
+    )
 
 
 def test_catalog_card_rates_avoid_detail_reads_and_cache_across_queries():
