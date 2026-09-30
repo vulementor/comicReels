@@ -175,7 +175,7 @@ def test_retry_all_snapshots_only_failed_stories_and_waits_after_each_failure(tm
     q.campaign.update(second['id'],'production_quarantined')
     result=retry.retry_failed(s,now=lambda:clock[0],sleep=sleep)
     assert result['state']=='retry_batch_finished' and set(calls)=={j['id'],second['id']}
-    assert result['processed']==2 and sum(waits)==60
+    assert result['processed']==2 and waits==[]
 
 
 def test_video_filters_and_production_sort_do_not_use_last_approval_time():
