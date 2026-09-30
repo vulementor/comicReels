@@ -396,16 +396,18 @@ class ShopeeCatalogProvider:
 
 
     def _matching_catalog_card(self, page, product):
-        selector = f".AffiliateItemCard:has(a[href*='/offer/product_offer/{product.product_id}'])"
-        card = page.locator(selector)
-        if card.count() != 1:
-            raise ValueError('catalog_product_card_ambiguous')
-        raw = card.evaluate("""n => ({
+        cards = page.locator('.AffiliateItemCard')
+        snapshots = cards.evaluate_all("""nodes => nodes.map(n => ({
             text: n.innerText,
             title: n.querySelector('.ItemCard__name')?.innerText,
             price: n.querySelector('.price')?.innerText,
             href: n.querySelector('a')?.href
-        })""")
+        }))""")
+        matches = [(index, raw) for index, raw in enumerate(snapshots)
+                   if offer_identity(raw.get('href')) == product.product_id]
+        if len(matches) != 1:
+            raise ValueError('catalog_product_card_ambiguous')
+        index, raw = matches[0]
         observed = parse_card(raw, observed_at=datetime.now(timezone.utc))
         if observed is None or observed.product_id != product.product_id:
             raise ValueError('catalog_product_card_unreadable')
@@ -414,7 +416,7 @@ class ShopeeCatalogProvider:
         if (observed.title != product.title or observed.price.current != product.price.current
                 or observed.sold != product.sold or expected != actual):
             raise ValueError('catalog_link_evidence_changed')
-        return card
+        return cards.nth(index)
 
     def resolve_links(self, products, limit):
         if self._activation_attempted:
