@@ -114,8 +114,11 @@ def test_default_provider_uses_existing_profile_and_canonical_readonly_auth_prob
     assert constructed[0][1]['auth_probe'] is observe_flow_account
     report = driver.health()
     assert report['session_ready'] is True
-    assert report['ready'] is True  # Code-2 exposes only the bounded project/read transport.
-    assert report['operations_implemented'] is False
+    assert report['ready'] is True
+    assert report['readiness_scope'] == 'non_paid_parity'
+    assert report['operations_implemented'] is True
+    assert report['capabilities']['upload'] is True
+    assert report['capabilities']['operation_reconcile'] is True
     assert report['paid_dispatch_enabled'] is False
     assert report['error'] is None
     assert not path.exists(), 'an empty read must not manufacture a journal'
@@ -141,7 +144,8 @@ def test_start_retains_submitting_and_unknown_receipts_without_replay(rig):
     assert report['pending_intents'] == 2
     assert report['reconciliation_required'] is True
     assert report['error'] == 'RECONCILIATION_REQUIRED'
-    assert report['ready'] is False
+    assert report['ready'] is True
+    assert report['session_ready'] is True
     driver.close()
     assert path.read_bytes() == before
     assert all(name in {'open', 'passive', 'capture', 'close'} for name, _ in provider.calls)
@@ -296,7 +300,8 @@ async def test_backend_default_import_instantiates_real_driver_on_one_owner_thre
         assert backend.ready is True and backend.paid_dispatch_enabled is False
         report = await backend.check_readiness()
         assert report['ready'] is True
-        assert report['operations_implemented'] is False
+        assert report['operations_implemented'] is True
+        assert report['readiness_scope'] == 'non_paid_parity'
     finally:
         await backend.close()
     threads = {owner for _, owner in provider.calls}
