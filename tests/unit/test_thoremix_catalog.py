@@ -130,7 +130,25 @@ class Locator:
         return self.page.guard_text
 
     def count(self):
+        if self.selector.startswith(".AffiliateItemCard:has(a[href*='/offer/product_offer/"):
+            product_id = self.selector.split('/offer/product_offer/', 1)[1].split("']", 1)[0]
+            return sum(product_id in card.get('href', '') for card in self.page.cards)
+        if self.selector == '.AffiliateItemCard':
+            return len(self.page.cards)
         return self.page.dialog_count if 'dialog' in self.selector else 1
+
+    def evaluate(self, script):
+        if self.selector.startswith(".AffiliateItemCard:has(a[href*='/offer/product_offer/"):
+            product_id = self.selector.split('/offer/product_offer/', 1)[1].split("']", 1)[0]
+            matches = [card for card in self.page.cards if product_id in card.get('href', '')]
+            if len(matches) != 1:
+                raise AssertionError('card is not unique')
+            return matches[0]
+        raise AssertionError(self.selector)
+
+    def get_by_role(self, role, **kwargs):
+        assert role == 'button' and kwargs == {'name': 'Lấy link', 'exact': True}
+        return Button(self.page)
 
     def evaluate_all(self, script):
         if self.selector == '.AffiliateItemCard':
@@ -244,7 +262,7 @@ def request():
                                     context={'affiliate_min_sold': 1000})
 
 
-def test_prefilter_before_bounded_detail_reads_and_cache_across_queries():
+def test_catalog_card_rates_avoid_detail_reads_and_cache_across_queries():
     page = CatalogPage(CARDS)
     provider = ShopeeCatalogProvider(Browser(page), config=ShopeeProviderConfig(enrich_limit=2))
     detailed = []
@@ -256,22 +274,30 @@ def test_prefilter_before_bounded_detail_reads_and_cache_across_queries():
     enriched = provider.enrich(found, request())
     provider.enrich(provider.search(request()), request())
     assert len(found) == 20 and provider.observed_count == 20
-    assert detailed == ['7988383802', '2931643720']
-    assert len(page.visited) == 1 and provider.detail_count == 2
-    assert sum(p.commission.verified for p in enriched) == 2
+    assert detailed == []
+    assert len(page.visited) == 1 and provider.detail_count == 0
+    verified = [p for p in enriched if p.commission.verified]
+    assert verified
+    assert all(p.metadata['commission_basis'] == 'product_offer_card_display' for p in verified)
 
 
-def test_default_is_qualified_catalog_with_one_activation_and_lower_bound_comment(settings):
+def test_default_is_catalog_first_with_one_activation_and_lower_bound_comment(settings):
     page = CatalogPage()
     result = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
     assert result['state'] == 'verified'
     assert result['product']['commission']['effective_rate'] == .125
-    assert result['product']['commission']['placement_rates']['facebook_reels']['effective_rate'] == .15
+    assert result['product']['commission']['basis'] == 'product_offer_card_display'
+    assert 'placement_rates' not in result['product']['commission']
     assert 'ít nhất 10000' in result['comment']
-    assert result['selection_evidence']['detail_count'] == 1
+    assert result['selection_evidence']['detail_count'] == 0
+    assert result['selection_evidence']['rate_basis'] == 'product_offer_card_display'
     assert result['candidate_count'] == 1 and page.presses == 1
+    assert page.visited == [CATALOG_URL, CATALOG_URL]
     receipt = json.loads(next((settings.data / 'affiliate').glob('*.json')).read_text(encoding='utf-8'))
     assert receipt['resolved_url'] == result['url']
+    assert receipt['resolved_product_id'] == '2931643720'
+    assert receipt['resolved_identity'] == ['252432728', '2931643720']
+    assert receipt['intent']['catalog_offer'] == DETAIL['selected_card']['href']
     assert receipt['intent']['sold_is_lower_bound'] is True
 
 
