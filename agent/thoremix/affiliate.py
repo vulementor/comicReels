@@ -78,7 +78,7 @@ def _retained_receipt(path, original):
     return current
 
 
-def _pending_intent(settings):
+def _pending_intent(settings, profile):
     """Freeze unresolved product scope before new discovery can choose another item."""
     pending = []
     for path in sorted((settings.data / 'affiliate').glob('*.json')):
@@ -94,6 +94,9 @@ def _pending_intent(settings):
             continue
         if value.get('state') not in {'intent', 'incomplete'}:
             return None, 'affiliate_link_intent_requires_reconciliation'
+        identity = (intent.get('shop_id'), intent.get('product_id'))
+        if path.resolve() != _receipt_path(settings, profile, identity).resolve():
+            return value, 'affiliate_link_intent_requires_reconciliation'
         pending.append(value)
     if not pending:
         return None, None
@@ -433,7 +436,7 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                 or type(settings.affiliate_min_sold) is not int or settings.affiliate_min_sold < 1):
             return stop('affiliate_selection_settings_invalid')
         phase = 'intent_reconciliation'
-        pending, blocked = _pending_intent(settings)
+        pending, blocked = _pending_intent(settings, profile)
         if blocked:
             receipt = pending
             return stop(blocked, state='blocked')

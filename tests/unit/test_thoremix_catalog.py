@@ -513,3 +513,27 @@ def test_uncertain_activation_history_is_retained_and_cannot_replay(settings):
     second = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
     assert second['reason'] == 'affiliate_link_incomplete_requires_reconciliation'
     assert path.read_bytes() == before and page.presses == 1
+
+
+def test_pending_resolved_link_cannot_move_to_another_profile(settings, tmp_path):
+    from dataclasses import replace
+    first_page = CatalogPage()
+    first_browser = Browser(first_page)
+    first_browser.destinations = ['https://shopee.vn/product/252432728/999']
+    first = affiliate.acquire_affiliate(settings, session_provider=first_browser)
+    assert first['reason'] == 'affiliate_link_destination_unverified' and first_page.presses == 1
+    path = next((settings.data/'affiliate').glob('*.json'))
+    before = path.read_bytes()
+    receipt = json.loads(before)
+    assert receipt['state'] == 'incomplete' and receipt['resolved_url']
+    other_profile = tmp_path/'different-profile'
+    other_profile.mkdir()
+    changed = replace(settings, affiliate_profile_dir=str(other_profile))
+    second_page = CatalogPage()
+    second = affiliate.acquire_affiliate(changed, session_provider=Browser(second_page))
+    assert second['state'] == 'blocked'
+    assert second['reason'] == 'affiliate_link_intent_requires_reconciliation'
+    assert second['phase'] == 'intent_reconciliation'
+    assert second_page.visited == [] and second_page.presses == 0
+    assert path.read_bytes() == before
+    assert list((settings.data/'affiliate').glob('*.json')) == [path]
