@@ -206,7 +206,7 @@ def test_project_media_read_opens_exact_project_and_returns_raw_transport_body(r
     }
 
 
-def test_media_read_uses_saved_project_but_operation_upload_and_raw_create_stay_blocked(rig):
+def test_media_read_uses_saved_project_and_unbound_operation_raw_create_fail_closed(rig):
     driver, _, page, state_path, owner, _ = rig
     BrowserStateStore(state_path, owner).set_project(PROJECT)
     media = validate_command("batch_rpc", {
@@ -218,30 +218,33 @@ def test_media_read_uses_saved_project_but_operation_upload_and_raw_create_stay_
     operation = validate_command("batch_rpc", {
         "rpcid": fb.RPC_OPERATION, "freq": fb.operation_request(MEDIA),
     })
-    upload = SimpleNamespace(capability="upload", rpcid=fb.RPC_UPLOAD_IMAGE)
+    assert driver.execute(operation, 10) == {
+        "status": 409, "error": "OPERATION_BINDING_REQUIRED",
+        "effect": "not_submitted",
+    }
+
     create = validate_command("batch_rpc", {
         "rpcid": fb.RPC_CREATE_PROJECT, "freq": fb.create_project_request("Other"),
     })
-    for command in (operation, upload, create):
-        assert driver.execute(command, 10) == {
-            "status": 501, "error": "BROWSER_CAPABILITY_NOT_IMPLEMENTED",
-            "effect": "not_submitted",
-        }
+    assert driver.execute(create, 10) == {
+        "status": 501, "error": "BROWSER_CAPABILITY_NOT_IMPLEMENTED",
+        "effect": "not_submitted",
+    }
 
 
-def test_project_read_slice_advertises_session_transport_ready_but_not_full_fbr2(rig):
+def test_final_non_paid_slice_advertises_complete_non_paid_capabilities(rig):
     driver, _, _, _, _, _ = rig
     report = driver.health()
     assert report["ready"] is True and report["session_ready"] is True
-    assert report["readiness_scope"] == "project_read"
-    assert report["operations_implemented"] is False
+    assert report["readiness_scope"] == "non_paid_parity"
+    assert report["operations_implemented"] is True
     assert report["capabilities"] == {
         "project_open_resume": True,
         "project_create_session": True,
         "project_media_read": True,
         "media_read": True,
-        "operation_reconcile": False,
-        "upload": False,
+        "operation_reconcile": True,
+        "upload": True,
         "paid_dispatch": False,
     }
     assert report["paid_dispatch_enabled"] is False
