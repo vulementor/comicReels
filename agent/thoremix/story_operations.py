@@ -28,7 +28,7 @@ def required_text_regions(analysis):
     for index,panel in enumerate(analysis.get('panels') or []):
         for region in panel.get('text_regions') or []:
             text=region.get('text')
-            if (region.get('kind') in {'signage','prop_text','narrative_caption'}
+            if (region.get('kind') in {'signage','prop_text','narrative_caption','sound_effect'}
                     and isinstance(text,str) and text.strip()):
                 rows.append({'panel_index':index,'kind':region['kind'],'text':text})
     return rows
@@ -46,7 +46,7 @@ def text_preservation_verified(analysis,data):
     return all((row['panel_index'],row['kind'],row['text']) in proven for row in expected)
 
 
-def normalize_analysis(data):
+def normalize_analysis(data, *, timing_policy=None):
     from agent.comicreels.prompts import story_timeline
     from agent.comicreels.sign_text import normalize_panel_text_regions
     raw_panels = sorted(data['panels'], key=lambda p: p['order'])
@@ -67,7 +67,7 @@ def normalize_analysis(data):
         if panel.get('text_warnings'):
             raise ValueError('UNCERTAIN_SOURCE_TEXT')
         for region in panel.get('text_regions') or []:
-            if (region.get('kind') not in {'signage','prop_text','narrative_caption'}
+            if (region.get('kind') not in {'signage','prop_text','narrative_caption','sound_effect'}
                     or not isinstance(region.get('text'),str) or not region['text'].strip()
                     or not isinstance(region.get('confidence'),(int,float))
                     or region['confidence'] < .9):
@@ -75,8 +75,12 @@ def normalize_analysis(data):
         panels.append(panel)
     if any(d['panel_index'] not in range(len(panels)) for d in data.get('dialogues', [])):
         raise ValueError('DIALOGUE_PANEL_UNKNOWN')
-    story_timeline(panels)
-    return dict(data, panels=panels)
+    story_timeline(panels, timing_policy=timing_policy)
+    result = {k: v for k, v in data.items() if k not in {"timing_policy", "analysis_correction"}}
+    result["panels"] = panels
+    if timing_policy is not None:
+        result["timing_policy"] = dict(timing_policy)
+    return result
 
 
 class StoryOperations:
@@ -177,6 +181,10 @@ class StoryOperations:
     def _run(self, name, req, directory, progress, previous=None):
         source = Path(req['source'])
         if name == 'analysis':
+            from .analysis_correction import reviewed_analysis
+            reviewed = reviewed_analysis(self.settings, req, directory)
+            if reviewed is not None:
+                return reviewed
             from agent.comicreels.ai_provider import _analysis_prompt
             with Image.open(source) as image:
                 prompt = _analysis_prompt(*image.size)
@@ -198,6 +206,7 @@ class StoryOperations:
                 'là cảnh con theo thứ tự. Đối chiếu TẤT CẢ khung nguồn, số lượng/thứ tự, nhân vật, tư thế, '
                 'biểu cảm, vị trí, đạo cụ và nét vẽ. Cảnh con phải không còn bong bóng/chữ thoại, không '
                 'được xóa hoặc đổi chữ nguồn trên biển báo, bảng thông báo, nhãn/đạo cụ hay chữ kể chuyện. '
+                'Chữ hiệu ứng sound_effect phải giữ đúng trong cảnh, không coi là lời nhân vật. '
                 'Đối chiếu nguyên văn các text_regions với ảnh nguồn; bảng trắng thay cho biển có chữ là lỗi mất nội dung. Không đọc chữ biển thành lời thoại. Không '
                 'được thêm tình tiết. Kiểm tra độ trung thành về NỘI DUNG và phong cách: không yêu cầu '
                 'trùng từng pixel. Cho phép khác biệt nhỏ do đổi kích thước, làm mượt viền hoặc tái tạo '
@@ -236,6 +245,7 @@ class StoryOperations:
                 'nhân vật/tình tiết, không lặp lại cảnh, không biến dạng lớn, không có bong bóng thoại '
                 'hoặc phụ đề. Chữ nguồn trên biển báo, bảng thông báo, nhãn/đạo cụ và chữ kể chuyện '
                 'phải còn đúng nguyên văn, đúng cảnh và bám đúng vị trí đạo cụ; mất hoặc đổi chữ là lỗi nội dung. '
+                'Chữ hiệu ứng sound_effect cũng phải giữ đúng trong cảnh, không đọc thành lời nhân vật. '
                 'Cho phép chuyển động nhẹ. Đây chỉ là kiểm tra hình ảnh lấy mẫu, '
                 'không khẳng định nghe được âm thanh. Với MỖI text_regions có chữ, trả preserved_text '
                 'gồm panel_index, kind, text NGUYÊN VĂN và present=true/false từ các khung lấy mẫu. '
@@ -326,6 +336,7 @@ class StoryOperations:
             required=required_text_regions(req['analysis'])
             prompt = (SCENE_BATCH_PROMPT+'\nẢnh nguồn có đúng '+str(len(req['analysis']['panels']))
                 +' khung; tạo đúng số ảnh riêng biệt đó.'
+                +'\nChữ sound_effect là chữ hiệu ứng trong cảnh, giữ nguyên và không biến thành lời thoại.'
                 +'\nCHỮ NGUỒN BẮT BUỘC GIỮ NGUYÊN THEO PANEL: '
                 +json.dumps(required,ensure_ascii=False))
             try:
@@ -471,3 +482,4 @@ class StoryOperations:
             if result.get('state')=='blocked':raise PacingDeferred(result.get('reason','CHATGPT_WAIT_PAUSED'))
             return (intervals if result['data']['accepted'] else []),result['data']
         return [],{'accepted':True,'issues':[],'advisory':True}
+

@@ -111,7 +111,18 @@ def spoken_text(text: str) -> str:
     return ' '.join(text.replace('\\r\\n', ' ').replace('\\n', ' ').replace('\\r', ' ').split())
 
 
-def story_timeline(panels: list[dict], *, duration_s: int = 10) -> list[tuple[float, float]]:
+def reviewed_speech_rate(policy=None) -> float:
+    """Only an explicit reviewed Vietnamese syllable budget may change the default."""
+    if policy is None:
+        return 2.6
+    expected = {"schema": "comicreels.speech-budget.v1", "language": "vi-VN",
+                "unit": "whitespace_syllable", "units_per_second": 2.7}
+    if type(policy) is not dict or policy != expected:
+        raise ValueError('INVALID_REVIEWED_SPEECH_POLICY')
+    return 2.7
+
+
+def story_timeline(panels: list[dict], *, duration_s: int = 10, timing_policy=None) -> list[tuple[float, float]]:
     """Reserve speech time and a readable silent beat before sharing spare time.
 
     Returns intervals in reading order. Budgeting never edits source dialogue;
@@ -122,12 +133,13 @@ def story_timeline(panels: list[dict], *, duration_s: int = 10) -> list[tuple[fl
     ordered = sorted(panels, key=lambda p: p['display_order'])
     if [p['display_order'] for p in ordered] != list(range(len(ordered))):
         raise ValueError('STORY_PANEL_ORDER_INVALID')
+    speech_rate = reviewed_speech_rate(timing_policy)
     minimum = []
     for panel in ordered:
         lines = panel.get('dialogues', [])
         words = sum(len(spoken_text(d['text']).split()) for d in lines)
-        # Keep the established 2.6 words/s cap, with a breath between utterances.
-        minimum.append(max(75, math.ceil((words / 2.6 + .15 * len(lines)) * 100)))
+        # Default stays 2.6; an explicit reviewed vi-VN policy can budget 2.7 syllables/s.
+        minimum.append(max(75, math.ceil((words / speech_rate + .15 * len(lines)) * 100)))
     spare = duration_s * 100 - sum(minimum)
     if spare < 0:
         raise ValueError('STORY_DIALOGUE_TOO_LONG')
@@ -140,7 +152,7 @@ def story_timeline(panels: list[dict], *, duration_s: int = 10) -> list[tuple[fl
     return intervals
 
 
-def story_video_prompt(panels: list[dict], *, duration_s: int = 10, allow_unverified: bool = False) -> str:
+def story_video_prompt(panels: list[dict], *, duration_s: int = 10, allow_unverified: bool = False, timing_policy=None) -> str:
     """One source story in one native generation, without per-panel splitting.
 
     Reference capacity is checked separately against the observed Flow composer.
@@ -151,7 +163,7 @@ def story_video_prompt(panels: list[dict], *, duration_s: int = 10, allow_unveri
     ordered = sorted(panels, key=lambda p: p['display_order'])
     if [p['display_order'] for p in ordered] != list(range(len(ordered))):
         raise ValueError('STORY_PANEL_ORDER_INVALID')
-    timeline = story_timeline(ordered, duration_s=duration_s)
+    timeline = story_timeline(ordered, duration_s=duration_s, timing_policy=timing_policy)
     segments = []
     for index, panel in enumerate(ordered):
         start, end = timeline[index]
@@ -163,7 +175,7 @@ def story_video_prompt(panels: list[dict], *, duration_s: int = 10, allow_unveri
         speech = (' '.join(f'{d["speaker_id"]} nói đúng một lần: {spoken_text(d["text"])!r}.' for d in lines)
                   if lines else 'KHÔNG CÓ LỜI THOẠI; không tự thêm câu nói hoặc lời dẫn.')
         signs = [r for r in panel.get('text_regions', []) if str(r.get('text') or '').strip()]
-        signage = (' CHỮ NGUỒN TRONG CẢNH (giữ nguyên trên đạo cụ, tuyệt đối không đọc thành tiếng): '
+        signage = (' CHỮ NGUỒN TRONG CẢNH (giữ nguyên trong cảnh, tuyệt đối không đọc thành tiếng; chữ hiệu ứng không phải lời nhân vật): '
                    + '; '.join(repr(r['text']) for r in signs) + '.') if signs else ''
         segments.append(f'{start:g}-{end:g}s · REFERENCE {index + 1}: '
                         f'Tại đúng {start:g}s, cắt thẳng sang ảnh {index + 1}; giữ riêng cảnh này đến {end:g}s. '
@@ -231,3 +243,4 @@ def build_shots(
                 })
                 order += 1
     return shots
+

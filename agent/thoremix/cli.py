@@ -116,6 +116,9 @@ def main(argv=None) -> int:
     commands.add_parser('resume-quality-stops')
     retry=commands.add_parser('retry-production')
     retry.add_argument('job_id')
+    review_analysis=commands.add_parser('review-analysis')
+    review_analysis.add_argument('job_id')
+    review_analysis.add_argument('--spec',type=Path,required=True)
     commands.add_parser('retry-failed')
     commands.add_parser('finish-unpublished')
     repair_audio=commands.add_parser('repair-audio')
@@ -166,6 +169,11 @@ def main(argv=None) -> int:
     prepare.add_argument('--frame', type=Path, action='append', default=[])
     args = parser.parse_args(argv)
     try:
+        if args.command=='review-analysis':
+            from .analysis_correction import review_analysis
+            result=review_analysis(Settings.load(args.root),args.job_id,args.spec)
+            print(json.dumps(result,ensure_ascii=False))
+            return 0
         if args.command=='retry-production':
             from .retry import retry_story
             result=retry_story(Settings.load(args.root),args.job_id)
@@ -334,3 +342,4 @@ def main(argv=None) -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
+

@@ -162,7 +162,8 @@ class FlowStoryBrowser:
                     for panel in panels:
                         for dialogue in panel.get('dialogues',[]):
                             dialogue['verified']=approved_words
-                    prompt=story_video_prompt(panels,allow_unverified=True)
+                    prompt=story_video_prompt(panels,allow_unverified=True,
+                        timing_policy=req["analysis"].get("timing_policy"))
                     step='fill_prompt'
                     progress({'preparation_step':step})
                     page.locator('div.ProseMirror').fill(prompt)
@@ -346,3 +347,4 @@ class FlowStoryBrowser:
         receipt.update(state='COMPLETED',artifact=artifact(final))
         atomic_json(receipt_path,receipt)
         return {'path':str(final),'data':data}
+

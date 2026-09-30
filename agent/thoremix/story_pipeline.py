@@ -79,6 +79,9 @@ class StoryPipeline:
                             'highest_download': highest.get('data', {})},
                 copy_provider=copy.get('provider_receipt', {}),
                 youtube={'made_for_kids': False}, publication_targets=['facebook', 'tiktok', 'youtube'])
+            if "analysis_correction" in analysis:
+                metadata["analysis_correction"] = analysis["analysis_correction"]
+                metadata["timing_policy"] = analysis["timing_policy"]
             final_video=Path(audio['files'][0]['path'])
             if hasattr(self.campaign.settings,'mask_enabled'):
                 finished=stage('finishing',video=audio)
@@ -96,3 +99,4 @@ class StoryPipeline:
             return {'state': 'production_not_ready', 'reason': str(exc)}
         except StageUncertain:
             return {'state': 'reconciliation_required', 'job_id': job_id}
+

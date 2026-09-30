@@ -18,7 +18,7 @@ from fractions import Fraction
 
 from PIL import ImageFont
 
-PRESERVED_KINDS = frozenset({'signage', 'prop_text', 'narrative_caption'})
+PRESERVED_KINDS = frozenset({'signage', 'prop_text', 'narrative_caption', 'sound_effect'})
 REMOVED_KINDS = frozenset({'speech_bubble', 'dialogue_caption', 'watermark'})
 
 
@@ -205,3 +205,4 @@ def render_sign_text(source_video: Path, source_image: Path, output: Path, direc
         receipt.update(state='incomplete', error=str(error))
         record()
         raise
+
