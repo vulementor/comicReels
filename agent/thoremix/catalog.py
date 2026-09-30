@@ -1,7 +1,8 @@
 """Bounded native Shopee catalog, qualified against the 2026-09-27 live flow.
 
 Uses the first visible catalog page, not an unobserved search/category selector.
-Rates are the minimum of the separately observed other-social and FB-Reels rows.
+Price, sold count, and the displayed Product Offer commission are read from cards.
+Detail commission tables are a bounded fallback only when no eligible card exposes a rate.
 The already-qualified URL is loaded from a local evidence receipt when present;
 it never influences selection. No account body text or response headers escape.
 """
@@ -291,38 +292,76 @@ class ShopeeCatalogProvider:
             raise ValueError('catalog_selection_bounds_required')
         eligible = [p for p in products if p.price.current is not None and 0 < p.price.current <= cap
                     and p.sold is not None and p.sold >= minimum]
-        with self.browser.session() as context:
-            page = self._page(context)
-            for product in eligible[:min(MAX_DETAILS, self.config.enrich_limit)]:
-                self.detail_count += 1
-                try:
-                    identity, rates = self._detail(page, product)
-                except ProviderBlocked as exc:
-                    if exc.code not in {'catalog_cross_channel_commission_unavailable', 'catalog_detail_unavailable'}:
-                        raise
-                    product.metadata['detail_state'] = 'unverified'
-                    self.detail_failures.append({'product_id': product.product_id, 'reason': exc.code,
-                                                 'stage': self.detail_stage})
-                    continue
-                except ValueError:
-                    product.metadata['detail_state'] = 'unverified'
-                    self.detail_failures.append({'product_id': product.product_id,
-                                                'reason': 'catalog_identity_or_commission_unverified',
-                                                'stage': self.detail_stage})
-                    continue
+
+        catalog_rate_count = 0
+        for product in eligible:
+            evidence = product.metadata.get('catalog_commission')
+            if not isinstance(evidence, dict):
+                continue
+            rate = evidence.get('effective_rate')
+            observed_at = evidence.get('observed_at')
+            source = evidence.get('source')
+            try:
+                observed = datetime.fromisoformat(observed_at.replace('Z', '+00:00'))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if (type(rate) not in (int, float) or not 0 < rate <= 1
+                    or source != CATALOG_URL or observed.tzinfo is None):
+                continue
+            product.commission = CommissionSnapshot(
+                effective_rate=rate,
+                verified=True,
+                source=CATALOG_URL,
+                observed_at=observed,
+            )
+            product.metadata['commission_basis'] = 'product_offer_card_display'
+            catalog_rate_count += 1
+            matches = [(identity, url) for identity, url in self.known_links.items()
+                       if identity[1] == product.product_id]
+            if len(matches) == 1:
+                identity, url = matches[0]
                 product.shop_id = identity[0]
                 product.product_url = f'https://shopee.vn/product/{identity[0]}/{identity[1]}'
-                rate = min(value['effective_rate'] for value in rates.values())
-                product.commission = CommissionSnapshot(effective_rate=rate, verified=True,
-                    source=product.metadata['offer_url'], observed_at=datetime.now(timezone.utc))
-                product.metadata['placement_rates'] = rates
-                if identity in self.known_links:
-                    product.affiliate = AffiliateLink(url=self.known_links[identity], status='verified')
+                product.affiliate = AffiliateLink(url=url, status='verified')
+
+        # Normal runtime is detail-zero. The old table path remains only as a
+        # bounded fallback if the Product Offer listing yields no usable rate at all.
+        if eligible and catalog_rate_count == 0:
+            with self.browser.session() as context:
+                page = self._page(context)
+                for product in eligible[:min(MAX_DETAILS, self.config.enrich_limit)]:
+                    self.detail_count += 1
+                    try:
+                        identity, rates = self._detail(page, product)
+                    except ProviderBlocked as exc:
+                        if exc.code not in {'catalog_cross_channel_commission_unavailable', 'catalog_detail_unavailable'}:
+                            raise
+                        product.metadata['detail_state'] = 'unverified'
+                        self.detail_failures.append({'product_id': product.product_id, 'reason': exc.code,
+                                                     'stage': self.detail_stage})
+                        continue
+                    except ValueError:
+                        product.metadata['detail_state'] = 'unverified'
+                        self.detail_failures.append({'product_id': product.product_id,
+                                                    'reason': 'catalog_identity_or_commission_unverified',
+                                                    'stage': self.detail_stage})
+                        continue
+                    product.shop_id = identity[0]
+                    product.product_url = f'https://shopee.vn/product/{identity[0]}/{identity[1]}'
+                    rate = min(value['effective_rate'] for value in rates.values())
+                    product.commission = CommissionSnapshot(effective_rate=rate, verified=True,
+                        source=product.metadata['offer_url'], observed_at=datetime.now(timezone.utc))
+                    product.metadata['placement_rates'] = rates
+                    product.metadata['commission_basis'] = 'minimum_other_social_and_facebook_reels_fallback'
+                    if identity in self.known_links:
+                        product.affiliate = AffiliateLink(url=self.known_links[identity], status='verified')
+
+        basis = ('product_offer_card_display' if catalog_rate_count
+                 else 'minimum_other_social_and_facebook_reels_fallback')
         for product in products:
             product.metadata['selection_evidence'] = {'scope': self.discovery_scope,
                 'observed_card_count': self.observed_count, 'detail_count': self.detail_count,
-                'excluded_details': self.detail_failures.copy(),
-                'rate_basis': 'minimum_other_social_and_facebook_reels'}
+                'excluded_details': self.detail_failures.copy(), 'rate_basis': basis}
         self._enriched = True
         return products
 
@@ -352,6 +391,28 @@ class ShopeeCatalogProvider:
                 .filter(v=>/^https:\/\/s\.shopee\.vn\/[A-Za-z0-9._~-]+$/.test(v)))];
         }''')
 
+
+    def _matching_catalog_card(self, page, product):
+        selector = f".AffiliateItemCard:has(a[href*='/offer/product_offer/{product.product_id}'])"
+        card = page.locator(selector)
+        if card.count() != 1:
+            raise ValueError('catalog_product_card_ambiguous')
+        raw = card.evaluate("""n => ({
+            text: n.innerText,
+            title: n.querySelector('.ItemCard__name')?.innerText,
+            price: n.querySelector('.price')?.innerText,
+            href: n.querySelector('a')?.href
+        })""")
+        observed = parse_card(raw, observed_at=datetime.now(timezone.utc))
+        if observed is None or observed.product_id != product.product_id:
+            raise ValueError('catalog_product_card_unreadable')
+        expected = product.metadata.get('catalog_commission', {}).get('effective_rate')
+        actual = observed.metadata.get('catalog_commission', {}).get('effective_rate')
+        if (observed.title != product.title or observed.price.current != product.price.current
+                or observed.sold != product.sold or expected != actual):
+            raise ValueError('catalog_link_evidence_changed')
+        return card
+
     def resolve_links(self, products, limit):
         if self._activation_attempted:
             raise ValueError('catalog_link_activation_already_attempted')
@@ -361,20 +422,21 @@ class ShopeeCatalogProvider:
         self._require_intent(product)
         with self.browser.session() as context:
             page = self._page(context)
-            identity, rates = self._detail(page, product)
-            if (identity != (product.shop_id, product.product_id)
-                    or rates != product.metadata.get('placement_rates')):
-                raise ValueError('catalog_link_evidence_changed')
+            page.goto(CATALOG_URL, wait_until='domcontentloaded', timeout=60000)
+            try:
+                page.locator('.AffiliateItemCard').first.wait_for(state='visible', timeout=25000)
+            finally:
+                self._guard(page)
+            card = self._matching_catalog_card(page, product)
             if page.locator('[role="dialog"]:visible,.ant-modal:visible').count():
                 raise ValueError('catalog_existing_dialog_requires_reconciliation')
-            button = page.get_by_role('button', name='Lấy link', exact=True)
+            button = card.get_by_role('button', name='Lấy link', exact=True)
             if button.count() != 1:
                 raise ValueError('catalog_link_button_ambiguous')
             button.focus(timeout=5000)
             if not button.evaluate('n => document.activeElement === n'):
                 raise ValueError('catalog_link_button_focus_unverified')
-            # Qualified in affiliate-live-link-2931643720.json; one activation,
-            # followed only by reads even if dispatch reports a timeout.
+            # One activation only; after dispatch, read/reconcile but never press again.
             self._activation_attempted = True
             try:
                 button.press('Enter', timeout=5000)
@@ -391,3 +453,4 @@ class ShopeeCatalogProvider:
                     break
                 page.wait_for_timeout(500)
         raise ProviderBlocked('shopee_affiliate_link_unconfirmed', 'Chưa đọc được một link; cần đối soát, không tạo lại.')
+
