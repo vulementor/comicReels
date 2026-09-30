@@ -119,6 +119,9 @@ def main(argv=None) -> int:
     review_analysis=commands.add_parser('review-analysis')
     review_analysis.add_argument('job_id')
     review_analysis.add_argument('--spec',type=Path,required=True)
+    review_order=commands.add_parser('review-image-order')
+    review_order.add_argument('job_id')
+    review_order.add_argument('--spec',type=Path,required=True)
     commands.add_parser('retry-failed')
     commands.add_parser('finish-unpublished')
     repair_audio=commands.add_parser('repair-audio')
@@ -169,6 +172,11 @@ def main(argv=None) -> int:
     prepare.add_argument('--frame', type=Path, action='append', default=[])
     args = parser.parse_args(argv)
     try:
+        if args.command=='review-image-order':
+            from .image_order_correction import review_image_order
+            result=review_image_order(Settings.load(args.root),args.job_id,args.spec)
+            print(json.dumps(result,ensure_ascii=False))
+            return 0
         if args.command=='review-analysis':
             from .analysis_correction import review_analysis
             result=review_analysis(Settings.load(args.root),args.job_id,args.spec)
@@ -342,4 +350,5 @@ def main(argv=None) -> int:
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
 

@@ -42,12 +42,15 @@ class StoryPipeline:
                 advisory=name in {'image_review','video_review','audio'})
 
         try:
+            from .image_order_correction import ensure_image_order_ready, reviewed_image_order
+            ensure_image_order_ready(self.campaign.settings, job)
             analysis = stage('analysis')['data']
             panels = analysis['panels']
             if (not 1 <= len(panels) <= 4 or
                     [p['display_order'] for p in panels] != list(range(len(panels)))):
                 return {'state': 'invalid_source', 'reason': 'story_reference_capacity_or_order'}
             images = stage('images', analysis=analysis)
+            images = reviewed_image_order(self.campaign.settings, job, images)
             if len(images['files']) != len(panels):
                 raise StageRejected('image_count_mismatch')
             from .story_assets import save_working_assets
@@ -79,6 +82,8 @@ class StoryPipeline:
                             'highest_download': highest.get('data', {})},
                 copy_provider=copy.get('provider_receipt', {}),
                 youtube={'made_for_kids': False}, publication_targets=['facebook', 'tiktok', 'youtube'])
+            if "order_review" in images:
+                metadata["image_order_review"] = images["order_review"]
             if "analysis_correction" in analysis:
                 metadata["analysis_correction"] = analysis["analysis_correction"]
                 metadata["timing_policy"] = analysis["timing_policy"]
@@ -99,4 +104,5 @@ class StoryPipeline:
             return {'state': 'production_not_ready', 'reason': str(exc)}
         except StageUncertain:
             return {'state': 'reconciliation_required', 'job_id': job_id}
+
 

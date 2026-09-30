@@ -15,7 +15,7 @@ COMMANDS = frozenset({
     "status", "login", "auth-status", "affiliate", "configure-facebook",
     "pause", "resume", "configure-production", "produce-ahead", "produce-one",
     "dispatch", "tick", "reconcile-production", "resume-quality-stops",
-    "retry-production", "review-analysis", "retry-failed", "finish-unpublished", "repair-audio",
+    "retry-production", "review-analysis", "review-image-order", "retry-failed", "finish-unpublished", "repair-audio",
     "repair-audio-all", "repair-source-text", "prepare-media-correction",
     "approve-correction", "cleanup-tiktok-stale-editor", "approve",
     "import-source", "reconcile-package", "publish", "publish-platform",
@@ -304,5 +304,6 @@ def run_managed_desktop(context, binding, *, smoke=False):
         result.update(status="FAILED", error="SMOKE_INTERRUPTED")
     write(context.instance_dir / "app-result.json", result)
     return 2 if failed else 0
+
 
 
