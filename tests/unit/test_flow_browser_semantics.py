@@ -67,13 +67,32 @@ def test_preview_from_wrong_asset_or_host_fails(url):
         image_id_from_composer_url(url)
 
 
-def test_highest_download_is_selected_without_choosing_gif():
-    assert highest_video_download(["270p Ảnh GIF động", "720p Đã tăng độ phân giải", "360p Kích thước gốc"]) == "720p Đã tăng độ phân giải"
+def option(label, enabled=True):
+    return {"label": label, "enabled": enabled}
 
 
-def test_unknown_download_option_needs_fresh_observation():
-    with pytest.raises(ValueError, match="UNKNOWN_DOWNLOAD_RESOLUTION"):
-        highest_video_download(["360p Original", "4K Enhanced"])
+@pytest.mark.parametrize("upscale_enabled,expected", [(True, "720p Đã tăng độ phân giải"),
+                                                       (False, "360p Kích thước gốc")])
+def test_highest_download_uses_only_enabled_non_gif_option(upscale_enabled, expected):
+    assert highest_video_download([option("270p Ảnh GIF động"),
+        option("720p Đã tăng độ phân giải", upscale_enabled),
+        option("360p Kích thước gốc")]) == expected
+
+
+@pytest.mark.parametrize("bad", [
+    option("4K Enhanced"), option("1080p Future", False),
+    "720p Upscaled", {"label": "720p Upscaled"},
+    option("720p Upscaled", "false"), option("360p Duplicate", False),
+])
+def test_unknown_or_mixed_download_options_fail_closed(bad):
+    with pytest.raises(ValueError):
+        highest_video_download([option("360p Original"), bad])
+
+
+def test_no_enabled_video_does_not_choose_gif_or_upgrade():
+    with pytest.raises(ValueError, match="NO_VIDEO_DOWNLOAD"):
+        highest_video_download([option("270p GIF"), option("360p Original", False),
+                                option("720p Upscaled", False)])
 
 
 def test_delayed_picker_confirmation_is_awaited_before_attachment(monkeypatch):

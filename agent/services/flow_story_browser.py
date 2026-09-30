@@ -59,6 +59,33 @@ def verified_native_submit(body, post_data, intent):
 class FlowStoryBrowser:
     def __init__(self, settings, runtime):
         self.settings, self.runtime = settings, runtime
+        self._step, self._progress, self._rpc_evidence = 'open', lambda _: None, None
+
+    def _mark(self, step):
+        self._step = step
+        self._rpc_evidence = None
+        self._progress({'preparation_step': step})
+
+    def _error_receipt(self, error, name, folder):
+        # Provider exception text can contain signed URLs, tokens or page content.
+        allowed = {
+            'POLL_BODY_INCOMPLETE', 'POLL_RECEIPT_INVALID', 'POLL_ID_MISMATCH',
+            'NATIVE_GENERATION_FAILED', 'NATIVE_GENERATION_PENDING',
+            'NATIVE_SUBMIT_UNCONFIRMED', 'NATIVE_SUBMIT_MISMATCH', 'NATIVE_RECEIPT_MISSING',
+            'NATIVE_VARIANTS_MISMATCH', 'NATIVE_PROJECT_MISMATCH', 'HIGHEST_MEDIA_MISMATCH',
+            'DOWNLOAD_RECEIPT_MEDIA_MISMATCH', 'DOWNLOAD_BYTES_CHANGED',
+            'DOWNLOAD_RECONCILIATION_REQUIRED', 'DOWNLOAD_BYTES_INVALID',
+            'DOWNLOAD_EDITOR_MISMATCH', 'DOWNLOAD_INCOMPLETE', 'DOWNLOAD_MEDIA_MISMATCH',
+            'DOWNLOAD_OPTION_STATE_UNKNOWN', 'UNKNOWN_DOWNLOAD_RESOLUTION',
+            'AMBIGUOUS_DOWNLOAD_OPTIONS', 'NO_VIDEO_DOWNLOAD', 'ORIGINAL_DOWNLOAD_UNAVAILABLE',
+            'DOWNLOAD_OPTION_CHANGED',
+        }
+        reason = str(error) if str(error) in allowed else 'FLOW_' + self._step.upper() + '_FAILED'
+        receipt = {'step': self._step, 'reason': reason, 'error_type': type(error).__name__}
+        if self._rpc_evidence is not None:
+            receipt['rpc'] = self._rpc_evidence
+        atomic_json(folder / (name + '-error.json'), receipt)
+        return receipt
 
     def _check_enabled(self):
         path=getattr(self.settings,'path',None)
@@ -68,8 +95,22 @@ class FlowStoryBrowser:
 
     def _rpc(self, page, rpcid, freq):
         script = Path(__file__).with_name('flow_browser_rpc.js').read_text(encoding='utf-8')
+        route = urlsplit(page.url)
+        self._rpc_evidence = {
+            'phase': self._step, 'rpcid': rpcid if rpcid in {'jwpduf', 'as29s'} else 'OTHER',
+            'route_match': route.scheme == 'https' and route.netloc == 'flow.google.com'
+                and route.path == '/project/' + self.runtime.flow_project_id,
+            'status': None, 'error': 'RPC_NO_RESPONSE', 'body_complete': False,
+        }
         response = page.evaluate('mw:'+script, {'rpcid':rpcid,'freq':freq,
                         'projectId':self.runtime.flow_project_id,'timeoutMs':30000})
+        known_errors = {'RPC_NOT_ALLOWED', 'RECIPE_UNVERIFIED', 'SESSION_UNVERIFIED',
+                        'HTTP_REJECTED', 'BODY_INCOMPLETE', 'BODY_BUDGET'}
+        self._rpc_evidence.update(
+            status=response.get('status') if type(response.get('status')) is int else None,
+            error=response.get('error') if isinstance(response.get('error'), str) and response.get('error') in known_errors else
+                ('RPC_ERROR_UNRECOGNIZED' if response.get('error') else None),
+            body_complete=response.get('body_complete') is True)
         if response.get('status')!=200 or response.get('body_complete') is not True:
             raise RuntimeError('POLL_BODY_INCOMPLETE')
         values=[v for v in fb.parse_envelope(response['data']) if v.rpcid==rpcid and not v.error]
@@ -80,6 +121,7 @@ class FlowStoryBrowser:
     def _wait(self,page,record):
         deadline=time.monotonic()+900
         while time.monotonic()<deadline:
+            self._mark('poll')
             result=fb.read_operation(self._rpc(page,'jwpduf',fb.operation_request(record['media_id'])))
             if result.operation_id!=record['media_id'] or result.project_id!=record['project_id']:
                 raise RuntimeError('POLL_ID_MISMATCH')
@@ -119,9 +161,12 @@ class FlowStoryBrowser:
         folder.mkdir(exist_ok=True)
         story=StoryReceipt(folder/'story-receipt.json')
         step='open'
-        provider=FlowBrowserSessionProvider(FlowProfileConfig.load(Path(self.runtime.flow_profile_config)),
-                                            auth_probe=observe_flow_account, visible=False).open()
+        self._progress = progress
+        self._mark(step)
+        provider = None
         try:
+            provider=FlowBrowserSessionProvider(FlowProfileConfig.load(Path(self.runtime.flow_profile_config)),
+                                                auth_probe=observe_flow_account, visible=False).open()
             page=provider.session.page
             project=self.runtime.flow_project_id
             page.goto('https://flow.google.com/project/'+project,wait_until='domcontentloaded',timeout=60000)
@@ -137,6 +182,7 @@ class FlowStoryBrowser:
                     return {'state':'uncertain','reason':'FLOW_PREPARATION_INCOMPLETE'}
                 else:
                     step='settings'
+                    self._mark(step)
                     try:
                         readiness=self._prepare(page)
                     except ValueError as exc:
@@ -147,7 +193,7 @@ class FlowStoryBrowser:
                     state=BrowserStateStore(folder/'uploads.json',owner_key='thoremix-'+req['source_sha256'][:20])
                     refs=[]
                     step='upload_references'
-                    progress({'preparation_step':step})
+                    self._mark(step)
                     for item in req['images']['files']:
                         path=Path(item['path'])
                         media_id=upload_reference(provider.session,path,project,state)
@@ -155,7 +201,7 @@ class FlowStoryBrowser:
                     # Refresh makes freshly uploaded native assets visible in the picker.
                     page.reload(wait_until='domcontentloaded')
                     step='attach_references'
-                    progress({'preparation_step':step})
+                    self._mark(step)
                     attach_existing_references(page,refs)
                     panels=json.loads(json.dumps(req['analysis']['panels']))
                     approved_words=req['image_review']['data'].get('dialogues_verified') is True
@@ -165,15 +211,16 @@ class FlowStoryBrowser:
                     prompt=story_video_prompt(panels,allow_unverified=True,
                         timing_policy=req["analysis"].get("timing_policy"))
                     step='fill_prompt'
-                    progress({'preparation_step':step})
+                    self._mark(step)
                     page.locator('div.ProseMirror').fill(prompt)
                     step='verify_composer'
-                    progress({'preparation_step':step})
+                    self._mark(step)
                     verified=verify_reference_composer(page,project,refs,prompt)
                     intent={'source_sha256':req['source_sha256'],'project_id':project,
                         'ordered_reference_ids':verified['ordered_reference_ids'],'prompt':prompt,
                         'duration_s':10,'aspect':'9:16','resolution':'360p','model':'Omni 1.1 Flash','variants':1}
                     self._check_enabled()
+                    self._mark('submit')
                     story.begin(intent)
                     with page.expect_response(lambda r:'rpcids=MZZa6b' in r.url,timeout=120000) as pending:
                         page.get_by_role('button',name='Bắt đầu tạo',exact=True).press('Enter')
@@ -183,6 +230,7 @@ class FlowStoryBrowser:
                     receipt=verified_native_submit(response.body().decode('utf-8'),response.request.post_data,intent)
                     record=story.submitted(receipt)
                     progress(receipt)
+                self._mark('poll')
                 self._wait(page,record)
                 downloaded=self._download(page,record,folder,highest=False)
             else:
@@ -196,6 +244,7 @@ class FlowStoryBrowser:
         except ProductionPaused:
             return {'state':'blocked','not_submitted':True,'reason':'PRODUCTION_PAUSED'}
         except Exception as error:
+            diagnostic = self._error_receipt(error, name, folder)
             # The paid intent is durable BEFORE the only generate click. Missing
             # intent proves preparation stopped before that boundary; upload
             # receipts still reconcile independently and are never replayed.
@@ -203,9 +252,10 @@ class FlowStoryBrowser:
                 atomic_json(folder/'preparation-error.json',
                     {'step':step,'error_type':type(error).__name__,'not_submitted':True})
                 return {'state':'blocked','not_submitted':True,'reason':'FLOW_PREPARATION_'+step.upper()}
-            raise
+            return {'state': 'uncertain', **diagnostic}
         finally:
-            provider.close()
+            if provider is not None:
+                provider.close()
 
     def download_existing(self, record, folder, *, highest=True):
         """Download an already-created Flow derivative without generation/upscale clicks.
@@ -245,12 +295,14 @@ class FlowStoryBrowser:
                     return {'path':str(final),'data':receipt['data']}
             resolution=720 if highest else 360
             derivative=record['media_id']+('_720p_upsampled' if highest else '')
+            self._mark('download_url')
             data=self._rpc(page,'as29s',fb.media_request(derivative))
             url=fb.read_media_urls(data,derivative).video
             parsed=urlsplit(url or '')
             if (parsed.scheme!='https' or parsed.hostname!='flow-content.google'
                     or parsed.path!='/video/'+derivative):
                 raise RuntimeError('RECOVERY_DOWNLOAD_NOT_BOUND')
+            self._mark('download_bytes')
             response=page.request.get(url,timeout=120000)
             if response.status!=200:
                 raise RuntimeError('RECOVERY_DOWNLOAD_FAILED')
@@ -267,6 +319,7 @@ class FlowStoryBrowser:
             provider.close()
 
     def _download(self,page,record,folder,*,highest):
+        self._mark('download_receipt')
         stem='highest' if highest else 'original'
         receipt_path=folder/(stem+'-download.json')
         final=folder/(stem+'.mp4')
@@ -281,6 +334,7 @@ class FlowStoryBrowser:
                 candidate=final if final.exists() else part
                 if artifact(candidate)['sha256']!=receipt['artifact']['sha256']:
                     raise RuntimeError('DOWNLOAD_BYTES_CHANGED')
+                self._mark('download_validate')
                 validate_media(candidate,tool_root=self.settings.directory)
                 if candidate!=final:
                     os.replace(part,final)
@@ -293,11 +347,13 @@ class FlowStoryBrowser:
             if resolution not in {360,720}:
                 raise RuntimeError('DOWNLOAD_RECONCILIATION_REQUIRED')
             derivative=record['media_id']+('_720p_upsampled' if resolution==720 else '')
+            self._mark('download_url')
             data=self._rpc(page,'as29s',fb.media_request(derivative))
             url=fb.read_media_urls(data,derivative).video
             parsed=urlsplit(url or '')
             if parsed.scheme!='https' or parsed.hostname!='flow-content.google' or parsed.path!='/video/'+derivative:
                 raise RuntimeError('DOWNLOAD_RECONCILIATION_REQUIRED')
+            self._mark('download_bytes')
             response=page.request.get(url,timeout=120000)
             if response.status!=200:
                 raise RuntimeError('DOWNLOAD_RECONCILIATION_REQUIRED')
@@ -309,6 +365,7 @@ class FlowStoryBrowser:
             return self._promote_download(part,final,receipt_path,record,selected,receipt['options'],highest)
         # Reopened gallery thumbnails use opaque CDN paths. The native editor
         # route is bound to the workflow ID from the validated submit receipt.
+        self._mark('download_open')
         editor_path=f"/project/{record['project_id']}/edit/{record['workflow_id']}"
         page.goto('https://flow.google.com'+editor_path,wait_until='domcontentloaded',timeout=60000)
         if urlsplit(page.url).path!=editor_path:
@@ -316,25 +373,40 @@ class FlowStoryBrowser:
         button=page.get_by_role('button',name='Tải nội dung nghe nhìn xuống',exact=True)
         button.wait_for(state='visible',timeout=15000)
         button.press('Enter')
+        self._mark('download_menu')
         menu=page.get_by_role('menuitem')
         menu.first.wait_for(state='visible',timeout=10000)
-        labels=menu.all_inner_texts()
-        selected=highest_video_download(labels) if highest else next(
-            label for label in labels if re.match(r'^360p(?:\s|$)',label) and 'gif' not in label.casefold())
+        options = [{'label': menu.nth(i).inner_text(), 'enabled': menu.nth(i).is_enabled()}
+                   for i in range(menu.count())]
+        atomic_json(folder / (stem + '-menu.json'), {
+            **{k:record[k] for k in ('media_id','project_id','workflow_id')}, 'options': options})
+        # Validate every observed option, including disabled and unknown entries.
+        best = highest_video_download(options)
+        selected = best if highest else next((item['label'] for item in options
+            if item['enabled'] and re.match(r'^360p(?:\s|$)', item['label'])
+            and 'gif' not in item['label'].casefold()), None)
+        if selected is None:
+            raise ValueError('ORIGINAL_DOWNLOAD_UNAVAILABLE')
         # Observe and save intent before native click. Browser owner stays alive through save_as.
         self._check_enabled()
+        choice = page.get_by_role('menuitem',name=normalized_prompt(selected),exact=True)
+        if choice.is_enabled() is not True:
+            raise ValueError('DOWNLOAD_OPTION_CHANGED')
+        self._mark('download_submit')
         atomic_json(receipt_path,{'state':'SUBMITTING',
-            **{k:record[k] for k in ('media_id','project_id','workflow_id')},'selected':selected,'options':labels})
+            **{k:record[k] for k in ('media_id','project_id','workflow_id')},'selected':selected,'options':options})
         with page.expect_download(timeout=900000) as pending:
-            page.get_by_role('menuitem',name=normalized_prompt(selected),exact=True).press('Enter')
+            choice.press('Enter')
         download=pending.value
         part=folder/(stem+'.part.mp4')
+        self._mark('download_bytes')
         download.save_as(str(part))
         if download.failure() is not None:
             raise RuntimeError('DOWNLOAD_INCOMPLETE')
-        return self._promote_download(part,final,receipt_path,record,selected,labels,highest)
+        return self._promote_download(part,final,receipt_path,record,selected,options,highest)
 
     def _promote_download(self,part,final,receipt_path,record,selected,labels,highest):
+        self._mark('download_validate')
         media=validate_media(part,tool_root=self.settings.directory)
         wanted=int(re.match(r'\d+',selected)[0])
         if media['width']!=wanted or abs(media['duration_s']-10)>.1:
@@ -347,4 +419,3 @@ class FlowStoryBrowser:
         receipt.update(state='COMPLETED',artifact=artifact(final))
         atomic_json(receipt_path,receipt)
         return {'path':str(final),'data':data}
-

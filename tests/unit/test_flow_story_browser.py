@@ -48,8 +48,28 @@ def test_multiple_native_variants_are_rejected():
     with pytest.raises(ValueError,match='VARIANTS'): verified_native_submit(*native(records=2))
 
 
-@pytest.mark.parametrize('highest,expected',[(False,'360p Original'),(True,'720p Upscaled')])
-def test_reopened_download_uses_exact_workflow_and_observed_multiline_menu(tmp_path,highest,expected,monkeypatch):
+def observed_menu(page, upscale_enabled=True):
+    from unittest.mock import MagicMock
+    options = [{'label': '270p\nGIF', 'enabled': True},
+               {'label': '360p\nOriginal', 'enabled': True},
+               {'label': '720p\nUpscaled', 'enabled': upscale_enabled}]
+    items = []
+    for option in options:
+        item = MagicMock()
+        item.inner_text.return_value = option['label']
+        item.is_enabled.return_value = option['enabled']
+        items.append(item)
+    menu = page.get_by_role.return_value
+    menu.count.return_value = len(items)
+    menu.nth.side_effect = lambda i: items[i]
+    menu.is_enabled.return_value = True
+    return options
+
+
+@pytest.mark.parametrize('highest,upscale_enabled,expected',[
+    (False,True,'360p Original'),(True,True,'720p Upscaled'),(True,False,'360p Original')])
+def test_reopened_download_uses_exact_workflow_and_observed_multiline_menu(
+        tmp_path,highest,upscale_enabled,expected,monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import MagicMock
     from agent.services.flow_story_browser import FlowStoryBrowser
@@ -57,7 +77,7 @@ def test_reopened_download_uses_exact_workflow_and_observed_multiline_menu(tmp_p
     record={'project_id':PROJECT,'workflow_id':REFS[0],'media_id':REFS[1]}
     url='https://flow.google.com/project/'+PROJECT+'/edit/'+REFS[0]
     page.url=url
-    page.get_by_role.return_value.all_inner_texts.return_value=['270p\nGIF','360p\nOriginal','720p\nUpscaled']
+    options = observed_menu(page, upscale_enabled)
     download=page.expect_download.return_value.__enter__.return_value.value
     download.failure.return_value=None
     operation=FlowStoryBrowser(SimpleNamespace(),None)
@@ -66,6 +86,7 @@ def test_reopened_download_uses_exact_workflow_and_observed_multiline_menu(tmp_p
     page.goto.assert_called_once_with(url,wait_until='domcontentloaded',timeout=60000)
     page.get_by_role.assert_any_call('menuitem',name=expected,exact=True)
     download.save_as.assert_called_once()
+    assert json.loads((tmp_path/(('highest' if highest else 'original')+'-menu.json')).read_text())['options'] == options
 
 
 def test_pause_at_upscale_boundary_has_no_download_intent_or_click(tmp_path):
@@ -75,7 +96,7 @@ def test_pause_at_upscale_boundary_has_no_download_intent_or_click(tmp_path):
     page=MagicMock()
     record={'project_id':PROJECT,'workflow_id':REFS[0],'media_id':REFS[1]}
     page.url='https://flow.google.com/project/'+PROJECT+'/edit/'+REFS[0]
-    page.get_by_role.return_value.all_inner_texts.return_value=['360p Original','720p Upscaled']
+    observed_menu(page)
     operation=FlowStoryBrowser(SimpleNamespace(enabled=False),None)
     with pytest.raises(ProductionPaused):operation._download(page,record,tmp_path,highest=True)
     page.expect_download.assert_not_called()
@@ -101,10 +122,60 @@ def test_only_preparation_before_paid_intent_is_retryable(tmp_path,monkeypatch,p
     monkeypatch.setattr(operation,'_prepare',fail)
     monkeypatch.setattr(operation,'_wait',fail)
     if paid_intent_exists:
-        with pytest.raises(TimeoutError):operation.run('video',{},tmp_path,lambda _:None)
+        result = operation.run('video',{},tmp_path,lambda _:None)
+        assert result['state'] == 'uncertain' and result['reason'] == 'FLOW_POLL_FAILED'
+        assert result['step'] == 'poll' and 'private' not in json.dumps(result)
+        assert json.loads((folder/'video-error.json').read_text())['reason'] == 'FLOW_POLL_FAILED'
         assert not (folder/'preparation-error.json').exists()
     else:
         result=operation.run('video',{},tmp_path,lambda _:None)
         assert result['state']=='blocked' and result['not_submitted'] is True
         assert 'private' not in (folder/'preparation-error.json').read_text()
     provider.close.assert_called_once()
+
+def test_rpc_failure_keeps_safe_diagnostic_in_unknown_stage(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from agent.services import flow_story_browser as flow
+    from agent.thoremix.story_stages import StageJournal, StageUncertain
+    folder = tmp_path/'flow'; folder.mkdir()
+    (folder/'story-receipt.json').write_text('{}')
+    record = {'state': 'PROCESSING', 'project_id': PROJECT, 'workflow_id': REFS[0], 'media_id': REFS[1]}
+    monkeypatch.setattr(flow, 'StoryReceipt', lambda path: SimpleNamespace(path=path, load=lambda:record))
+    provider = MagicMock(); provider.open.return_value = provider
+    page = provider.session.page
+    page.url = 'https://flow.google.com/project/'+PROJECT+'/edit/'+REFS[0]
+    page.evaluate.return_value = {'status':409, 'error':'SESSION_UNVERIFIED',
+                                 'private':'must-not-leak', 'data':'signed-url'}
+    monkeypatch.setattr(flow, 'FlowBrowserSessionProvider', lambda *a,**k:provider)
+    monkeypatch.setattr(flow.FlowProfileConfig, 'load', lambda _:None)
+    monkeypatch.setattr(flow, 'observe_flow_account', lambda _:SimpleNamespace(state='authenticated'))
+    operation = flow.FlowStoryBrowser(SimpleNamespace(),
+        SimpleNamespace(flow_profile_config='config', flow_project_id=PROJECT))
+    journal = StageJournal(tmp_path, source_sha256='a'*64)
+    with pytest.raises(StageUncertain):
+        journal.run('video', {}, lambda progress:operation.run('video', {}, tmp_path, progress))
+    stage = json.loads((tmp_path/'video.json').read_text())
+    assert stage['state'] == 'UNKNOWN'
+    assert stage['progress']['preparation_step'] == 'poll'
+    diagnostic = json.loads((folder/'video-error.json').read_text())
+    assert stage['result']['reason'] == diagnostic['reason'] == 'POLL_BODY_INCOMPLETE'
+    assert diagnostic['rpc'] == {'phase':'poll', 'rpcid':'jwpduf', 'route_match':False,
+                                 'status':409, 'error':'SESSION_UNVERIFIED', 'body_complete':False}
+    assert 'signed-url' not in json.dumps(stage) and 'must-not-leak' not in json.dumps(diagnostic)
+    provider.close.assert_called_once()
+
+
+def test_selection_disabled_after_observation_has_no_intent(tmp_path):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from agent.services.flow_story_browser import FlowStoryBrowser
+    page = MagicMock()
+    observed_menu(page)
+    page.get_by_role.return_value.is_enabled.return_value = False
+    record = {'project_id':PROJECT, 'workflow_id':REFS[0], 'media_id':REFS[1]}
+    page.url = 'https://flow.google.com/project/'+PROJECT+'/edit/'+REFS[0]
+    with pytest.raises(ValueError, match='DOWNLOAD_OPTION_CHANGED'):
+        FlowStoryBrowser(SimpleNamespace(), None)._download(page, record, tmp_path, highest=True)
+    page.expect_download.assert_not_called()
+    assert not (tmp_path/'highest-download.json').exists()

@@ -118,15 +118,29 @@ def attach_existing_references(page, images: list[ExistingReference]) -> None:
             raise TimeoutError("REFERENCE_ATTACH_TIMEOUT")
 
 
-def highest_video_download(labels: list[str]) -> str:
-    options = []
-    for label in labels:
-        if "gif" in label.casefold():
-            continue
+def highest_video_download(observed: list[dict]) -> str:
+    """Select only an explicitly enabled native video option; never infer availability."""
+    if not isinstance(observed, list):
+        raise ValueError("DOWNLOAD_OPTION_STATE_UNKNOWN")
+    options, resolutions = [], set()
+    for item in observed:
+        if (not isinstance(item, dict) or set(item) != {"label", "enabled"}
+                or not isinstance(item["label"], str) or type(item["enabled"]) is not bool):
+            raise ValueError("DOWNLOAD_OPTION_STATE_UNKNOWN")
+        label = item["label"]
         match = re.match(r"^(\d{3,4})p(?:\s|$)", label)
         if not match:
             raise ValueError("UNKNOWN_DOWNLOAD_RESOLUTION")
-        options.append((int(match[1]), label))
+        if "gif" in label.casefold():
+            continue
+        resolution = int(match[1])
+        if resolution not in {360, 720}:
+            raise ValueError("UNKNOWN_DOWNLOAD_RESOLUTION")
+        if resolution in resolutions:
+            raise ValueError("AMBIGUOUS_DOWNLOAD_OPTIONS")
+        resolutions.add(resolution)
+        if item["enabled"]:
+            options.append((resolution, label))
     if not options:
         raise ValueError("NO_VIDEO_DOWNLOAD")
     return max(options, key=lambda item: item[0])[1]
