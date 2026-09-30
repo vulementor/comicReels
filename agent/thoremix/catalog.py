@@ -356,8 +356,8 @@ class ShopeeCatalogProvider:
                     if identity in self.known_links:
                         product.affiliate = AffiliateLink(url=self.known_links[identity], status='verified')
 
-        basis = ('product_offer_card_display' if catalog_rate_count
-                 else 'minimum_other_social_and_facebook_reels_fallback')
+        basis = ('minimum_other_social_and_facebook_reels_fallback'
+                 if self.detail_count else 'product_offer_card_display')
         for product in products:
             product.metadata['selection_evidence'] = {'scope': self.discovery_scope,
                 'observed_card_count': self.observed_count, 'detail_count': self.detail_count,
