@@ -1,5 +1,37 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+
+## Shopee Affiliate catalog-first — DEVELOPMENT COMPLETE — 2026-09-30
+
+Owner reasserted the execution rule: finish the complete GitHub development plan before any
+local/runtime testing or test-driven repair. Remote Desktop is validation/observation only and
+must never be used to edit source.
+
+Canonical development is complete for the Shopee Affiliate catalog-first scope:
+
+- KAT Product Offer discovery reads exact product ID, price, sold and displayed commission from
+  listing cards; Vietnamese and English labels are supported.
+- KAT hard filters now include price, sold and verified commission; legacy public-search/detail
+  fallback is opt-in and disabled by default.
+- ThoRemix normal selection is detail-zero and keeps its strict commission→price→sold ordering.
+- Detail commission is a bounded fallback only when no eligible card exposes a usable rate.
+- Get Link is bound to the exact selected Product Offer card and verified by browser destination.
+- ThoRemix keeps its durable mutation intent/receipt/reconciliation adapter.
+- Stable build contract requires the catalog-first KAT API before promotion.
+- Canonical feature merges: KAT `a575a78d4ad6663cc7b796575b9f532f3620fb24`;
+  ThoRemix `5e93f1a61ccec63fa3f034613fcf7b34cf1b7224`.
+- Development-plan authority:
+  `docs/superpowers/plans/2026-09-30-shopee-affiliate-catalog-first.md`.
+
+Validation findings observed before the workflow rule was reasserted are deliberately parked:
+an older staged KAT contract mismatch, an unrelated review-window frame-count failure, and
+GitHub Actions jobs that may fail before any runner step starts. None is being repaired inside
+this development checkpoint.
+
+**Next checkpoint is validation/fix only after explicit transition.** Any reproduced defect must
+be repaired in GitHub source first; no Stable/AppData/local-runtime hotfixes.
+
+
 ## Thỏ Remix finishing, direct review and resumed production — 2026-09-28 10:31 +07:00
 
 Owner's advisory-QA policy is installed. c367,69e2,333a and now e9cc are completed automatic
