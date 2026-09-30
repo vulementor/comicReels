@@ -359,7 +359,8 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
             candidates = {}
             for query in queries:
                 request = ProductRecommendRequest(query=query, selection={'top_k': 100, 'resolve_links': 0,
-                                                                          'price_max': settings.affiliate_max_price},
+                                                                          'price_max': settings.affiliate_max_price,
+                                                                          'sold_min': settings.affiliate_min_sold},
                                                   context={'affiliate_min_sold': settings.affiliate_min_sold},
                                                   caller={'harness': 'thoremix'})
                 products = provider.search(request)
