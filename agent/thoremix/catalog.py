@@ -77,20 +77,51 @@ def parse_observed_sold(text):
     return {'sold': int(amount), 'is_lower_bound': bool(suffix or plus), 'display_text': match[0].strip()}
 
 
+def parse_observed_commission(text):
+    """Parse the single commission percentage printed on a Product Offer card.
+
+    This is listing evidence only. It stays separate from the per-placement
+    detail table so catalog-first selection can use what Shopee already exposes
+    without upgrading the claim to cross-channel proof.
+    """
+    matches = list(re.finditer(
+        r'(?<!\w)tỉ\s*lệ\s*hoa\s*hồng\s*(\d+(?:[.,]\d+)?)\s*%',
+        str(text),
+        re.IGNORECASE,
+    ))
+    if len(matches) != 1:
+        return None
+    rate = Decimal(matches[0][1].replace(',', '.')) / 100
+    if not 0 <= rate <= 1:
+        return None
+    return {
+        'effective_rate': float(rate),
+        'display_text': matches[0][0].strip(),
+    }
+
+
 def parse_card(card, *, observed_at):
     item = offer_identity(card.get('href'))
     price = parse_price(card.get('price'))
-    sold = parse_observed_sold(card.get('text', ''))
+    text = card.get('text', '')
+    sold = parse_observed_sold(text)
+    commission = parse_observed_commission(text)
     title = card.get('title')
     if not item or price is None or price <= 0 or sold is None or not isinstance(title, str) or not title.strip():
         return None
     canonical_offer = f'{CATALOG_URL}/{item}'
+    metadata = {
+        'offer_url': canonical_offer,
+        'sold_evidence': sold | {'source': CATALOG_URL, 'observed_at': observed_at.isoformat()},
+    }
+    if commission is not None:
+        metadata['catalog_commission'] = commission | {
+            'source': CATALOG_URL,
+            'observed_at': observed_at.isoformat(),
+        }
     return ProductCandidate(product_id=item, title=title.strip(), product_url=canonical_offer,
                             price=PriceSnapshot(current=price, source=CATALOG_URL, observed_at=observed_at),
-                            sold=sold['sold'], metadata={
-                                'offer_url': canonical_offer,
-                                'sold_evidence': sold | {'source': CATALOG_URL, 'observed_at': observed_at.isoformat()},
-                            })
+                            sold=sold['sold'], metadata=metadata)
 
 
 def _component(cell):
