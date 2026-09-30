@@ -288,3 +288,67 @@ not authorized by this upload implementation.
 Rollback source boundary for this slice: `bce10f9ce31c42b146a08f2b99ff3b90e9a62748`.
 No runtime rollback is needed: these changes exist only on the development branch.
 Owner continuation authorized coding toward EXE testing, not a runtime PASS.
+
+
+## FBR-2-code-3b — read-only operation reconciliation
+
+Date: 2026-09-30.
+Status: **CODE_COMPLETE for this bounded reconciliation slice; NOT VALIDATED**.
+Overall FBR-2 remains **CODE_IN_PROGRESS** pending facade/readiness/restart
+integration and accumulated validation.
+
+Source commits:
+- Authored reconciliation coverage: `f3eb131e5fff4a844f13216f304ba262a0830c9e`.
+- Operation identity in validated command contract:
+  `4864ba81a2d98d83405d43f657871606d0870d50`.
+- Durable operation/project resolver:
+  `801f937977fc5b8a4e7e018cba156ac081e25187`.
+- Concrete read-only operation reconciliation:
+  `581d950da29c93c2200745a9230a1b3f4e12e2f9`.
+
+### Implemented scope
+
+- Validated `jwpduf` commands now expose their operation UUID explicitly and
+  reject caller-supplied project/match bindings.
+- The state store resolves an operation only from durable
+  `operation_projects` or from exactly one COMPLETED upload receipt carrying
+  the same operation UUID.
+- SUBMITTING/UNKNOWN upload intents never establish an operation binding.
+- Missing bindings return `OPERATION_BINDING_REQUIRED`; conflicting completed
+  receipts or an explicit binding conflicting with a completed receipt return
+  `OPERATION_BINDING_CONFLICT`.
+- A unique completed receipt may be promoted locally into
+  `operation_projects` under the held profile lease. This is journal
+  reconciliation only; it performs no remote mutation and sends no upload.
+- Operation reads navigate to the verified bound project and pass that project
+  into the existing browser RPC guard. The current browser tab is never used as
+  implicit project authority.
+- Returned operation payloads are parsed with the existing Flow batch reader and
+  must contain the same operation UUID and project UUID; otherwise the result is
+  `OPERATION_RECEIPT_UNVERIFIED` with unknown effect.
+- Driver capability reporting now advertises operation reconciliation and the
+  complete non-paid driver surface as `readiness_scope=non_paid_parity`.
+  Paid dispatch remains false.
+
+### Authored requirements and validation boundary
+
+`tests/unit/test_flow_browser_driver_operation_reconcile.py` records requirements
+for explicit binding, completed-receipt promotion, restart reuse, unbound and
+conflicting IDs, uncertain receipt exclusion, project-response verification and
+capability reporting.
+
+Tests executed: **none**, per the owner-directed development-first workflow.
+No pytest/import/compile/lint/build, browser launch, EXE launch, Stable action,
+profile inspection or Remote Desktop action occurred.
+
+Ruling: the Superpowers TDD skill normally requires RED/GREEN execution, but the
+repository's owner directive explicitly forbids testing until the coding phase is
+100% complete. Therefore this slice authors tests before implementation but defers
+their execution to the dedicated validation phase.
+
+### Exact next coding task
+
+**FBR-2-code-3c:** finish facade/readiness/restart integration and reconcile older
+authored tests with the final non-paid capability contract. Keep extension fallback
+selectable and paid dispatch false. After that, continue the remaining approved
+FBR-3/FBR-4/FBR-5 coding scopes before starting build/EXE validation.
