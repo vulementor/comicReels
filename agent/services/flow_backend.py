@@ -14,6 +14,7 @@ class FlowBackend(Protocol):
     async def check_readiness(self) -> dict: ...
     async def execute(self, method: str, params: dict, timeout: float = 300) -> dict: ...
     async def open_project(self, project_id: str) -> dict: ...
+    async def ensure_session_project(self, *, title=None, force_new=False) -> dict: ...
 
 
 class ExtensionFlowBackend:
@@ -53,3 +54,10 @@ class ExtensionFlowBackend:
 
     async def open_project(self, project_id: str) -> dict:
         return {"status": 501, "error": "Extension project scoping is handled by RPC requests"}
+
+    async def ensure_session_project(self, *, title=None, force_new=False) -> dict:
+        return {
+            "status": 501,
+            "error": "Extension session-project lifecycle is handled by existing RPC callers",
+            "effect": "not_submitted",
+        }
