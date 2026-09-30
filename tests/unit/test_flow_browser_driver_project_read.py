@@ -6,8 +6,6 @@ only until the separate validation pass runs them against the completed coding p
 import hashlib
 import json
 from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
 
 from agent.services import flow_batch as fb
