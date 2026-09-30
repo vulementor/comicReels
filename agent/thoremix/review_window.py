@@ -213,7 +213,7 @@ class ReviewWindow:
                  if self.is_correction else
                  self.app.settings.data/'review-requests'/(str(self.row['job_id'])+'.json'))
         active_command='approve-correction' if self.is_correction else 'approve'
-        if self.approval_requested and not request.is_file() and self.app.active!=active_command:
+        if self.approval_requested and not request.is_file() and not self.app._action_active(active_command):
             self.approval_requested=False;self._approval_state(self.row)
             self.feedback.configure(text='Chưa lưu được duyệt correction.' if self.is_correction
                                     else 'Chưa lưu được yêu cầu duyệt. Anh có thể bấm thử lại.')
