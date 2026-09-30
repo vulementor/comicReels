@@ -115,6 +115,28 @@ _CRITICAL_RULES = """\
 16. **Review before upscale** — ALWAYS run `/fk-review-video` (light mode) after video generation, before upscaling. Scenes scoring < 7.5 get `video_prompt` updated from review errors, then regen video. Max 2 review-regen cycles.
 """
 
+_DEVELOPMENT_EXECUTION_POLICY = """\
+## Development execution rule
+
+Owner directive updated 2026-09-30. This rule overrides older local-first,
+per-checkpoint-test, and Remote-Desktop validation instructions wherever they conflict.
+
+1. **Finish the complete approved development plan in canonical GitHub source first.**
+2. **Development is one forward coding pass.** Do not alternate code with local/runtime tests,
+   rebuilds, launch checks, or fix loops after each phase.
+3. **Do not use Remote Desktop Commander directly at any stage.** It is not an approved surface
+   for coding, editing, testing, rebuilding, launching, inspecting, or repairing this project.
+4. **Validation starts only after development is 100% complete.** Use GitHub/CI or another
+   explicitly approved non-Remote-Desktop mechanism for tests and runtime validation.
+5. **Fixes found during validation go back to GitHub source first.** Never hotfix Stable,
+   AppData, deployed runtime files, or ad-hoc local source.
+6. **Keep development completion, validation findings, and validation acceptance separate.**
+   A development checkpoint is not a runtime PASS claim.
+7. **Safety gates remain active during both passes.** Paid effects, unknown-effect replay,
+   credential/profile mutation, and production-data reset still require their own explicit gate.
+
+"""
+
 _BROWSER_FIRST_MIGRATION = """\
 ## Browser-First Flow Refactor Contract
 
@@ -128,14 +150,13 @@ Mandatory invariants:
 1. **Preserve FlowKit creative/scenario capabilities.** Do not remove or simplify
    `fk-create-project`, scene chains, transition prompts, `fk-creative-mix`,
    `fk-pipeline`, `fk-gen-videos`, review/regen, TTS/concat/branding, Gallery/Logs/Guide/Settings.
-2. **LOCAL-SOURCE-FIRST.** Develop, debug and test in the canonical local source repository on
-   VULE-PC. Deploy/sync from that source for live validation; never develop in AppData runtime.
-   GitHub records coherent checkpoints, not every small fix. Push after tests and evidence are
-   ready; merge only after explicit owner confirmation. Validate the exact merged revision.
-3. **Checkpoint discipline.** Follow
-   `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md`. Complete regression + live
-   evidence, update `docs/comicreels/CHECKPOINTS.md`, then obtain explicit owner confirmation
-   before advancing to the next FBR checkpoint.
+2. **GITHUB DEVELOPMENT FIRST.** Implement the complete coding plan on GitHub before starting
+   regression, build/runtime validation, live evidence, or any fix loop. Runtime/AppData/StableApp
+   are never development sources of truth.
+3. **Development-plan completion gate.** Follow
+   `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md` as a forward coding pass. Required
+   tests/live-evidence sections are deferred until all FBR coding checkpoints are complete.
+   Remote Desktop Commander is not an approved validation mechanism.
 4. **Session continuity is mandatory.** Reuse one persistent signed-in Flow profile with an
    explicit lease/lock. Never clear cookies/storage, sign out, silently switch profiles, or commit
    browser profile data/tokens/cookies.
@@ -221,6 +242,7 @@ def _agents_md_body(skills, title):
         f"# Must return: {{\"extension_connected\": true}}\n"
         f"```\n\n"
         f"{_CRITICAL_RULES}\n"
+        f"{_DEVELOPMENT_EXECUTION_POLICY}\n"
         f"{_BROWSER_FIRST_MIGRATION}\n"
         f"{_PIPELINE_OVERVIEW}\n"
         f"{_BATCH_API}\n"
