@@ -54,7 +54,7 @@ class FailedAnalysisMigrationTests(unittest.TestCase):
             "schema_version": 1, "stage": "analysis", "source_sha256": self.sha,
             "request_sha256": digest(canonical(self.old_request)), "state": "FAILED",
             "progress": {"conversation_url": "https://chatgpt.com/c/bound"},
-            "result": {"state": "qa_failed", "reason": "STORY_DIALOGUE_TOO_LONG"}})
+            "result": {"state": "invalid_source", "reason": "STORY_DIALOGUE_TOO_LONG"}})
         self.upload = [{"name": self.source.name, "path": str(self.source),
                         "size_bytes": self.source.stat().st_size, "sha256": self.sha}]
         write_json(self.receipts / "analysis-prompt.json",
@@ -143,6 +143,7 @@ class FailedAnalysisMigrationTests(unittest.TestCase):
         self.assertEqual(new_source.read_bytes(), self.source.read_bytes())
         stage = json.loads((target / "analysis.json").read_text(encoding="utf-8"))
         self.assertEqual(stage["state"], "FAILED")
+        self.assertEqual(stage["result"], {"state": "invalid_source", "reason": "STORY_DIALOGUE_TOO_LONG"})
         self.assertEqual(stage["request_sha256"],
                          digest(canonical({"source": str(new_source), "source_sha256": self.sha})))
         self.assertEqual(json.loads((target / "analysis-prompt.json").read_text())["text"], "frozen prompt")
