@@ -375,9 +375,12 @@ class ShopeeCatalogProvider:
         path, expected_hash = self._intent
         receipt = json.loads(path.read_text(encoding='utf-8'))
         intent = receipt.get('intent', {})
+        catalog_offer = product.metadata.get('offer_url')
         if (receipt.get('state') != 'intent' or receipt.get('intent_sha256') != expected_hash
                 or _intent_hash(intent) != expected_hash or intent.get('effect') != 'resolve_link'
-                or (intent.get('shop_id'), intent.get('product_id')) != (product.shop_id, product.product_id)):
+                or (intent.get('shop_id'), intent.get('product_id')) != (product.shop_id, product.product_id)
+                or intent.get('catalog_offer') != catalog_offer
+                or offer_identity(catalog_offer) != product.product_id):
             raise ValueError('catalog_link_intent_invalid')
 
     @staticmethod
