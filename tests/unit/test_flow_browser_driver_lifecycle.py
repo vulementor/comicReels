@@ -114,9 +114,10 @@ def test_default_provider_uses_existing_profile_and_canonical_readonly_auth_prob
     assert constructed[0][1]['auth_probe'] is observe_flow_account
     report = driver.health()
     assert report['session_ready'] is True
-    assert report['ready'] is False  # Project/media operations are not wired in code-1.
+    assert report['ready'] is True  # Code-2 exposes only the bounded project/read transport.
+    assert report['operations_implemented'] is False
     assert report['paid_dispatch_enabled'] is False
-    assert report['error'] == 'BROWSER_CAPABILITIES_PENDING'
+    assert report['error'] is None
     assert not path.exists(), 'an empty read must not manufacture a journal'
     driver.close()
     driver.close()
@@ -255,14 +256,13 @@ def test_uncertain_close_retains_provider_until_explicit_close_retry(rig, during
     assert [name for name, _ in provider.calls].count('close') == 2
 
 
-def test_operations_remain_explicitly_unimplemented_without_receipts_or_effects(rig):
+def test_unsupported_execute_stays_fail_closed_without_receipts_or_effects(rig):
     driver, provider, _, path, _, _ = rig
     driver.start()
-    for report in (driver.execute(object(), 30), driver.open_project(PROJECT)):
-        assert report == {'status': 501, 'error': 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
-                          'effect': 'not_submitted'}
-    with pytest.raises(BrowserCommandError, match='^BROWSER_CAPABILITY_NOT_IMPLEMENTED$'):
-        driver.ensure_session_project('story', False)
+    assert driver.execute(object(), 30) == {
+        'status': 501, 'error': 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
+        'effect': 'not_submitted',
+    }
     assert not path.exists()
     driver.close()
     assert all(name in {'open', 'passive', 'capture', 'close'} for name, _ in provider.calls)
@@ -293,9 +293,10 @@ async def test_backend_default_import_instantiates_real_driver_on_one_owner_thre
     try:
         await backend.start()  # Deliberately no driver_factory injection.
         assert isinstance(backend._driver, FlowBrowserDriver)
-        assert backend.ready is False and backend.paid_dispatch_enabled is False
+        assert backend.ready is True and backend.paid_dispatch_enabled is False
         report = await backend.check_readiness()
-        assert report['ready'] is False
+        assert report['ready'] is True
+        assert report['operations_implemented'] is False
     finally:
         await backend.close()
     threads = {owner for _, owner in provider.calls}
