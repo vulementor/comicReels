@@ -196,7 +196,8 @@ def snapshot_failed_analysis_resume(source_root, destination_home, job_id, *,
                  and stage.get("stage") == "analysis" and stage.get("state") == "FAILED"
                  and stage.get("source_sha256") == expected_source_sha256
                  and stage.get("request_sha256") == _hash(_json_bytes(old_request))
-                 and isinstance(stage.get("result"), dict) and stage["result"].get("state") == "qa_failed",
+                 and isinstance(stage.get("result"), dict)
+                 and stage["result"].get("state") in {"qa_failed", "invalid_source"},
                  "STAGE_INTENT_CHANGED")
         attachment = {"path": str(old_source), "sha256": expected_source_sha256}
         expected_upload = [dict(attachment, name=old_source.name, size_bytes=len(source_bytes))]
