@@ -64,7 +64,11 @@ def parse_price(value):
 
 
 def parse_observed_sold(text):
-    matches = list(re.finditer(r'(?<![\w.,])([\d]+(?:[.,]\d+)?)\s*([kKmM]?)\s*(\+?)\s+lượt bán', text))
+    matches = list(re.finditer(
+        r'(?<![\\w.,])([\\d]+(?:[.,]\\d+)?)\\s*([kKmM]?)\\s*(\\+?)\\s*(?:lượt\\s*bán|sold)',
+        str(text),
+        re.IGNORECASE,
+    ))
     if len(matches) != 1:
         return None
     match = matches[0]
@@ -86,7 +90,8 @@ def parse_observed_commission(text):
     without upgrading the claim to cross-channel proof.
     """
     matches = list(re.finditer(
-        r'(?<!\w)tỉ\s*lệ\s*hoa\s*hồng\s*(\d+(?:[.,]\d+)?)\s*%',
+        r'(?<!\\w)(?:t(?:ỉ|ỷ)\\s*lệ\\s*hoa\\s*hồng|comm(?:ission)?\\s*rate)\\s*'
+        r'(\\d+(?:[.,]\\d+)?)\\s*%',
         str(text),
         re.IGNORECASE,
     ))
@@ -136,12 +141,30 @@ def _component(cell):
 
 
 def channel_rates(rows):
-    """Parse exactly two component cells; the final money column is not a rate."""
-    if not rows or rows[0] != ['Loại kênh', 'Loại nội dung', '', 'Hoa hồng từ Shopee', 'Hoa hồng ước tính']:
+    """Parse the two observed commission components for social + Reels placements."""
+    if not rows or len(rows[0]) < 4:
         raise ValueError('commission_header_changed')
-    other = [row for row in rows[1:] if len(row) == 5
-             and row[0].splitlines()[0].strip() == 'Mạng xã hội' and row[1].strip() == 'Nội dung khác']
-    reels = [row for row in rows[1:] if len(row) == 4 and row[0].strip() == REELS]
+    header = ' '.join(str(cell).strip().casefold() for cell in rows[0])
+    if 'hoa hồng' not in header and 'commission' not in header:
+        raise ValueError('commission_header_changed')
+
+    social_labels = {'mạng xã hội', 'social media'}
+    other_labels = {'nội dung khác', 'other content'}
+    reels_labels = {
+        'reels trên facebook/instagram',
+        'reels on facebook/instagram',
+        'facebook/instagram reels',
+    }
+    other = [
+        row for row in rows[1:]
+        if len(row) == 5
+        and row[0].splitlines()[0].strip().casefold() in social_labels
+        and row[1].strip().casefold() in other_labels
+    ]
+    reels = [
+        row for row in rows[1:]
+        if len(row) == 4 and row[0].strip().casefold() in reels_labels
+    ]
     if len(other) != 1 or len(reels) != 1:
         raise ValueError('commission_placement_ambiguous')
     result = {}
@@ -263,9 +286,16 @@ class ShopeeCatalogProvider:
                     } catch (_) {return false;}
                 });
                 const rows=[...document.querySelectorAll('tr')].map(n=>[...n.querySelectorAll('td,th')].map(c=>c.innerText.trim()));
-                const loaded=label=>rows.some(r=>r.length>=4 && r[0].split('\n')[0]===label
-                    && r.slice(1,-1).some(c=>c.includes('%')) && /^₫[\d.,]+$/.test(r[r.length-1]));
-                return product && loaded('Mạng xã hội') && loaded('Shopee Live') && loaded('Shopee Video');
+                const first = r => (r[0] || '').split('\n')[0].trim().toLocaleLowerCase();
+                const second = r => (r[1] || '').trim().toLocaleLowerCase();
+                const ready = r => r.some(c=>c.includes('%')) && /^₫[\d.,]+$/.test(r[r.length-1] || '');
+                const social = rows.some(r=>r.length===5
+                    && ['mạng xã hội','social media'].includes(first(r))
+                    && ['nội dung khác','other content'].includes(second(r)) && ready(r));
+                const reels = rows.some(r=>r.length===4
+                    && ['reels trên facebook/instagram','reels on facebook/instagram','facebook/instagram reels'].includes(first(r))
+                    && ready(r));
+                return product && social && reels;
             }''', arg=product.product_id, timeout=20000)
         except Exception:
             self._guard(page)
@@ -287,7 +317,9 @@ class ShopeeCatalogProvider:
         if self._enriched:
             return products
         cap = request.selection.price_max
-        minimum = request.context.get('affiliate_min_sold')
+        minimum = request.selection.sold_min
+        if minimum is None:
+            minimum = request.context.get('affiliate_min_sold')
         if cap is None or type(minimum) is not int:
             raise ValueError('catalog_selection_bounds_required')
         eligible = [p for p in products if p.price.current is not None and 0 < p.price.current <= cap
