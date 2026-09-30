@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import shutil
-import time
 import uuid
 from pathlib import Path
 
@@ -43,23 +41,20 @@ def failure_message(stage,record):
 
 
 
-def retry_failed(settings,*,now=None,sleep=time.sleep):
-    """Retry the failed-story snapshot once each, respecting the global failure cooldown.
+def retry_failed(settings,*,now=None,sleep=None):
+    """Retry the current failed/stuck snapshot once each as an explicit owner action.
 
-    The snapshot is captured before any retry starts so a story that fails again during
-    this batch is never appended and retried forever.
+    Manual retries do not inherit scheduler pause, quota, or cooldown policy. Saved
+    receipts remain authoritative, so uncertain/quarantined effects reconcile instead
+    of blindly resubmitting.
     """
     from .production_queue import ProductionQueue,local_now
     settings=Settings.load(settings.directory) if settings.path.exists() else settings
     now=now or (lambda:local_now(settings))
     queue=ProductionQueue(settings)
-    job_ids=[a['job_id'] for a in queue.attempts() if a['status']=='failed']
-    results=[]
-    for job_id in job_ids:
-        remaining=queue.cooldown_remaining(now())
-        if remaining>0:
-            sleep(remaining)
-        results.append(retry_story(settings,job_id,now=now))
+    retryable={'failed','blocked','unknown','quarantined'}
+    job_ids=[a['job_id'] for a in queue.attempts() if a['status'] in retryable]
+    results=[retry_story(settings,job_id,now=now) for job_id in job_ids]
     return {'state':'retry_batch_finished','requested':len(job_ids),
             'processed':len(results),'results':results}
 
@@ -76,14 +71,9 @@ def retry_story(settings,job_id,*,producer_factory=None,now=None):
         base={'job_id':job_id}
         if job['state'] in {'video_ready','awaiting_approval','published','publishing','wrong_media_blocked'}:
             return dict(base,state='retry_not_needed')
-        if not settings.enabled:return dict(base,state='retry_paused')
         attempt=next((a for a in q.attempts() if a['job_id']==job_id),None)
         if not attempt or attempt['status'] not in {'failed','blocked','unknown','quarantined'}:
             return dict(base,state='retry_rejected')
-        remaining=q.cooldown_remaining(stamp)
-        if remaining>0:return dict(base,state='retry_cooldown',seconds=math.ceil(remaining))
-        if q.summary(stamp)['completed']>=settings.daily_production_limit:
-            return dict(base,state='retry_quota_reached')
         directory=settings.data/'production'/job_id
         records={}
         try:
@@ -110,7 +100,7 @@ def retry_story(settings,job_id,*,producer_factory=None,now=None):
         q.finish(job_id,'blocked',stamp,'owner_requested_resume')
         q.campaign.update(job_id,'production_pending',manual_retry=str(audit))
         producer=producer_factory(q.campaign)
-        try:state,_=q.produce_one(stamp,producer,now,resume_job_id=job_id)
+        try:state,_=q.produce_one(stamp,producer,now,resume_job_id=job_id,ignore_cooldown=True)
         finally:
             close=getattr(producer,'close',None)
             if callable(close):close()

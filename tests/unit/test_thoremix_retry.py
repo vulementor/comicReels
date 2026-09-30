@@ -48,7 +48,8 @@ def test_retry_reconciles_failed_stage_without_resending_and_keeps_original_audi
     assert calls==['closed'] and Path(j['source']).is_file()
     audits=list((directory/'manual-retries').glob('*/analysis.json'))
     assert len(audits)==1 and audits[0].read_bytes()==original
-    assert retry_story(s,j['id'],producer_factory=lambda c:pytest.fail('60s cooldown'),now=lambda:NOW)['state']=='retry_cooldown'
+    assert retry_story(s,j['id'],producer_factory=Producer,now=lambda:NOW)['state']=='retry_failed'
+    assert calls==['closed','closed']
 
 
 def test_retry_unknown_preserves_effect_and_only_reconciles(tmp_path):
@@ -87,11 +88,11 @@ def test_failed_row_exposes_reason_and_retry_button(tmp_path):
     import tkinter as tk
     s,q,j,directory,request=failed_story(tmp_path)
     snapshot=build_snapshot(s);row=snapshot['rows'][0]
-    assert row['retry_label']=='Thử lại sản xuất' and '10 giây' in row['failure_message']
+    assert row['retry_label']=='Reset & chạy lại' and '10 giây' in row['failure_message']
     root=tk.Tk();app=DesktopWindow(s,window=root,poll=False)
     calls=[];app.launch=lambda *args:calls.append(args) or True
     try:
-        root.update();app.retry_button.invoke()
+        root.update();assert app.retry_button.cget('text')=='Reset & chạy lại';assert app.retry_all_button.cget('text')=='Reset & thử lại tất cả lỗi/kẹt';app.retry_button.invoke()
         assert calls==[('retry-production',j['id'])]
         assert str(app.retry_button.cget('state'))=='disabled'
         app.retry_button.invoke();assert len(calls)==1
@@ -124,15 +125,37 @@ def test_successful_retry_keeps_completed_images_and_is_idempotent(tmp_path,monk
     assert retry_story(s,j['id'],producer_factory=lambda c:pytest.fail('already completed'),now=lambda:NOW)['state']=='retry_not_needed'
 
 
-def test_retry_respects_pause_and_daily_quota_before_touching_receipts(tmp_path,monkeypatch):
+def test_manual_retry_runs_while_automation_is_paused(tmp_path):
     from dataclasses import replace
     from agent.thoremix.retry import retry_story
-    s,q,j,directory,request=failed_story(tmp_path);original=(directory/'analysis.json').read_bytes()
+    s,q,j,directory,request=failed_story(tmp_path)
     replace(s,enabled=False).save()
-    assert retry_story(s,j['id'],producer_factory=lambda c:pytest.fail('paused'),now=lambda:NOW)['state']=='retry_paused'
-    s.save();monkeypatch.setattr(ProductionQueue,'summary',lambda *args,**kw:{'completed':5})
-    assert retry_story(s,j['id'],producer_factory=lambda c:pytest.fail('quota'),now=lambda:NOW)['state']=='retry_quota_reached'
-    assert (directory/'analysis.json').read_bytes()==original
+    class Producer:
+        def __init__(self,campaign):pass
+        def close(self):pass
+        def run(self,job_id):
+            return {'state':'qa_failed','reason':'analysis'}
+    result=retry_story(s,j['id'],producer_factory=Producer,now=lambda:NOW)
+    assert result['state']=='retry_failed'
+    assert result.get('stage')=='analysis'
+
+
+def test_manual_retry_ignores_daily_scheduler_quota(tmp_path,monkeypatch):
+    from agent.thoremix.retry import retry_story
+    s,q,j,directory,request=failed_story(tmp_path)
+    original_summary=ProductionQueue.summary
+    def summary(self,stamp,*args,**kwargs):
+        result=original_summary(self,stamp,*args,**kwargs)
+        result['completed']=s.daily_production_limit
+        return result
+    monkeypatch.setattr(ProductionQueue,'summary',summary)
+    class Producer:
+        def __init__(self,campaign):pass
+        def close(self):pass
+        def run(self,job_id):
+            return {'state':'qa_failed','reason':'analysis'}
+    result=retry_story(s,j['id'],producer_factory=Producer,now=lambda:NOW)
+    assert result['state']=='retry_failed'
 
 
 def test_retry_all_snapshots_only_failed_stories_and_waits_after_each_failure(tmp_path,monkeypatch):
@@ -148,9 +171,12 @@ def test_retry_all_snapshots_only_failed_stories_and_waits_after_each_failure(tm
         calls.append(job_id);q.finish(job_id,'failed',clock[0]);return {'state':'retry_failed','job_id':job_id}
     def sleep(seconds):waits.append(seconds);clock[0]+=timedelta(seconds=seconds)
     monkeypatch.setattr(retry,'retry_story',one)
+    with q.campaign.connect() as db:
+        db.execute("UPDATE production_attempts SET status='quarantined' WHERE job_id=?",(second['id'],))
+    q.campaign.update(second['id'],'production_quarantined')
     result=retry.retry_failed(s,now=lambda:clock[0],sleep=sleep)
     assert result['state']=='retry_batch_finished' and set(calls)=={j['id'],second['id']}
-    assert result['processed']==2 and sum(waits)==60
+    assert result['processed']==2 and waits==[]
 
 
 def test_video_filters_and_production_sort_do_not_use_last_approval_time():

@@ -194,8 +194,8 @@ class ProductionQueue:
         atomic_json(self.settings.data / 'production-status.json', result)
         return result
 
-    def produce_one(self, stamp, producer, now, *, resume_job_id=None):
-        if self.cooldown_remaining(stamp) > 0:
+    def produce_one(self, stamp, producer, now, *, resume_job_id=None, ignore_cooldown=False):
+        if not ignore_cooldown and self.cooldown_remaining(stamp) > 0:
             return 'failure_cooldown', None
         blocked = next((a for a in self.attempts() if a['status'] == 'blocked'
                         and (resume_job_id is None or a['job_id'] == resume_job_id)), None)

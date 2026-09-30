@@ -237,7 +237,7 @@ def build_snapshot(settings: Settings) -> dict:
         from .retry import failure_message
         retry_label=''
         if not manifest and not receipt and job.get('id'):
-            if job.get('state')=='production_failed':retry_label='Thử lại sản xuất'
+            if job.get('state')=='production_failed':retry_label='Reset & chạy lại'
             elif job.get('state') in {'production_pending','production_quarantined','reserved'}:
                 retry_label='Đối soát & tiếp tục' if saved_stage.get('state') in {'UNKNOWN','SUBMITTING'} else 'Tiếp tục sản xuất'
         attempt = attempts.get(job.get('id'), {})
