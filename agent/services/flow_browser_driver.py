@@ -2,7 +2,8 @@
 
 FBR-2-code-1 established lifecycle/state ownership. FBR-2-code-2 adds the
 bounded project open/resume/create-session path plus project/media reads.
-Upload, operation reconciliation and every paid capability remain fail-closed.
+FBR-2-code-3a connects durable uploads through the existing shared uploader.
+Operation reconciliation and every paid capability remain fail-closed.
 No browser is constructed at import time or in the driver constructor.
 """
 from __future__ import annotations
@@ -21,6 +22,7 @@ from agent.services.flow_browser_contract import (
 )
 from agent.services.flow_browser_session import FlowBrowserSessionProvider, FlowProfileConfig
 from agent.services.flow_browser_state import BrowserStateStore
+from agent.services.flow_browser_upload import execute_upload
 
 # Only fixed, non-sensitive codes may cross the driver boundary. Do not forward
 # arbitrary browser exceptions, account observations, paths or raw state data.
@@ -38,6 +40,8 @@ _PUBLIC_CODES = frozenset({
     'PROJECT_OPEN_FAILED', 'PROJECT_RECEIPT_UNVERIFIED',
     'RPC_READ_FAILED', 'RPC_NOT_ALLOWED', 'RECIPE_UNVERIFIED',
     'SESSION_UNVERIFIED', 'HTTP_REJECTED', 'BODY_INCOMPLETE', 'BODY_BUDGET',
+    'IMAGE_CONTENT_INVALID', 'IMAGE_MIME_MISMATCH', 'UPLOAD_FAILED',
+    'UPLOAD_RECEIPT_UNVERIFIED', 'UPLOAD_RECONCILIATION_REQUIRED',
     'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
 })
 
@@ -161,7 +165,7 @@ class FlowBrowserDriver:
             'project_media_read': True,
             'media_read': True,
             'operation_reconcile': False,
-            'upload': False,
+            'upload': True,
             'paid_dispatch': False,
         }
         report = {
@@ -171,7 +175,7 @@ class FlowBrowserDriver:
             'lease_held': False if self._phase in {'new', 'closed', 'failed'} else None,
             'authentication': 'unknown', 'semantic_node_count': 0,
             'observed_at': None, 'session_ready': False,
-            'ready': False, 'readiness_scope': 'project_read',
+            'ready': False, 'readiness_scope': 'project_read_upload',
             'operations_implemented': False, 'capabilities': capabilities,
             'paid_dispatch_enabled': False,
             'has_saved_project': None, 'pending_intents': None,
@@ -414,19 +418,30 @@ class FlowBrowserDriver:
                 return {'status': 502, 'error': 'RPC_READ_FAILED', 'effect': 'unknown'}
         return {**response, 'effect': 'completed'}
 
+    def _execute_upload(self, command) -> dict:
+        self._require_session()
+        return execute_upload(
+            self._provider.session, command, self._store,
+            require_lease=self._require_lease, prepare=self._open_project_page,
+        )
+
     def execute(self, command, timeout=300) -> dict:
         self._check_thread()
+        capability = getattr(command, 'capability', None)
         try:
-            if getattr(command, 'capability', None) == 'read':
+            if capability == 'read':
                 return self._execute_read(command, timeout)
+            if capability == 'upload':
+                return self._execute_upload(command)
             # Session-project creation uses ensure_session_project so a durable
-            # intent key exists before the effect. Raw create/upload remain off.
+            # intent key exists before the effect. Raw create and paid RPCs stay off.
             return {'status': 501, 'error': 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
                     'effect': 'not_submitted'}
         except Exception as error:
             return {
                 'status': 409,
-                'error': _public_error(error, 'RPC_READ_FAILED'),
+                'error': _public_error(error, 'UPLOAD_FAILED' if capability == 'upload'
+                                       else 'RPC_READ_FAILED'),
                 'effect': 'not_submitted',
             }
 
