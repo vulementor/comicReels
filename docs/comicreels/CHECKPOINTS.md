@@ -1,5 +1,27 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## Chỉ đạo thực thi hiện hành — 2026-09-30
+
+**GITHUB DEVELOPMENT FIRST / TEST-FIX AFTER DEVELOPMENT COMPLETE.**
+
+Chỉ đạo này ghi đè các đoạn cũ nói LOCAL-SOURCE-FIRST, test theo từng checkpoint,
+hoặc dùng Remote Desktop để test khi có xung đột.
+
+- Code, docs, migration và integration phải được hoàn tất trên GitHub trước.
+- Đi hết 100% development plan theo chiều coding; checkpoint trong giai đoạn này chỉ xác nhận
+  phạm vi code đã thực hiện và phần code còn lại, không yêu cầu regression/runtime evidence.
+- Chỉ sau coding phase cuối cùng mới bắt đầu validation pass: test → fix trên GitHub → test lại →
+  build/runtime/live validation.
+- Tuyệt đối không dùng Remote Desktop Commander trực tiếp để code, sửa file, test, rebuild,
+  launch, inspect hay repair application.
+- StableApp/AppData/local runtime không phải source of truth.
+- Các safety gate về paid effect, unknown-effect replay, credential/profile mutation và reset
+  production data vẫn giữ nguyên.
+
+Các checkpoint lịch sử bên dưới được giữ làm evidence; workflow cũ trong chúng không còn là
+chỉ đạo thực thi hiện hành.
+
+
 ## Thỏ Remix finishing, direct review and resumed production — 2026-09-28 10:31 +07:00
 
 Owner's advisory-QA policy is installed. c367,69e2,333a and now e9cc are completed automatic
