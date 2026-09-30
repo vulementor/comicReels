@@ -139,23 +139,71 @@ def test_selection_preserved_across_refresh_and_falls_back_only_when_removed():
     assert selected_key([], 'b') is None
 
 
-def test_ui_reserves_before_thread_start_and_blocks_other_command(tmp_path, monkeypatch):
+def test_ui_action_groups_allow_safe_control_but_block_conflicting_runner(tmp_path, monkeypatch):
     from agent.thoremix import desktop
     app = object.__new__(desktop.DesktopWindow)
-    app.active, app.status, app.progress = None, Mock(), Mock()
+    app.active, app.active_groups, app.status, app.progress = None, {}, Mock(), Mock()
     app.settings = Settings(root=str(tmp_path))
     seen = []
     class Thread:
         def __init__(self, **kwargs):
-            seen.append(app.active)
+            seen.append(dict(app.active_groups))
         def start(self):
-            seen.append(app.active)
+            seen.append(dict(app.active_groups))
     monkeypatch.setattr(desktop.threading, 'Thread', Thread)
-    app.launch('login')
-    app.launch('publish', 'package')
-    assert seen == ['login', 'login'] and app.active == 'login'
+
+    assert app.launch('login') is True
+    assert app.launch('status', '--probe') is True
+    assert app.launch('publish', 'package') is False
+
+    assert app.active == 'login'
+    assert app.active_groups == {'browser': 'login', 'inspect': 'status'}
+    assert len(seen) == 4
     assert not list(tmp_path.iterdir())
 
+
+def test_finishing_and_retry_buttons_only_follow_their_conflicting_action_group(tmp_path):
+    from agent.thoremix import desktop
+    app = object.__new__(desktop.DesktopWindow)
+    app.active, app.active_groups = 'status', {'inspect': 'status'}
+
+    assert app._action_busy('retry-failed') is False
+    assert app._action_busy('retry-production') is False
+    assert app._action_busy('finish-unpublished') is False
+    assert app._action_busy('publish') is False
+
+    app.active, app.active_groups = 'login', {'browser': 'login'}
+    assert app._action_busy('publish') is True
+    assert app._action_busy('retry-production') is True
+
+
+def test_finishing_inspection_group_keeps_browser_group_active():
+    from agent.thoremix import desktop
+    app = object.__new__(desktop.DesktopWindow)
+    app.active_groups = {'browser': 'login', 'inspect': 'status'}
+    app.active = 'login'
+
+    app._release_action('status')
+
+    assert app.active_groups == {'browser': 'login'}
+    assert app.active == 'login'
+
+
+
+def test_status_cli_is_read_only_and_does_not_take_campaign_lock(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from agent.thoremix import cli
+    settings = Settings(root=str(tmp_path/'app'), input_dir=str(tmp_path/'input'))
+    Path(settings.input_dir).mkdir(parents=True)
+    settings.save()
+
+    @contextmanager
+    def forbidden_campaign_lock(*args, **kwargs):
+        pytest.fail('read-only status must not take the campaign runner lock')
+        yield
+
+    monkeypatch.setattr(cli, 'campaign_operation', forbidden_campaign_lock)
+    assert cli.main(['--root', str(settings.directory), 'status']) == 0
 
 def test_close_never_terminates_owned_child():
     from agent.thoremix.desktop import DesktopWindow
