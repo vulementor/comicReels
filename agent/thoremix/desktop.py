@@ -23,7 +23,7 @@ def readable_result(command: str, result: dict) -> str:
     result = mapping(result)
     if command=='retry-failed':
         if result.get('state') == 'retry_batch_finished':
-            return (f"Đã xử lý {result.get('processed',0)}/{result.get('requested',0)} video lỗi. "
+            return (f"Đã xử lý {result.get('processed',0)}/{result.get('requested',0)} lỗi/kẹt. "
                     "Danh sách đã được làm mới; video vẫn lỗi sẽ còn trong bộ lọc Đang lỗi.")
         return str(result.get('reason') or 'Chưa chạy được thử lại hàng loạt; xem Diagnostics.')
     if command=='retry-production':
@@ -337,7 +337,7 @@ class DesktopWindow:
                                  values=tuple(VIDEO_ORDERS), state='readonly', width=20)
         order_box.pack(side='left')
         order_box.bind('<<ComboboxSelected>>', self._video_view_changed)
-        self.retry_all_button = self.button(toolbar, 'Thử lại tất cả video lỗi',
+        self.retry_all_button = self.button(toolbar, 'Reset & thử lại tất cả lỗi/kẹt',
                                             self.retry_failed_production)
         self.retry_all_button.pack(side='right')
         if self.active is not None:
@@ -474,7 +474,7 @@ class DesktopWindow:
             self.status.configure(text='Một lệnh đang chạy; chờ hoàn tất rồi thử lại các video lỗi.')
             return
         if self.launch('retry-failed'):
-            self.status.configure(text='Đang thử lại lần lượt các video lỗi; mỗi lỗi được xử lý tối đa một lần trong lượt này.')
+            self.status.configure(text='Đang reset và thử lại từng lỗi/kẹt từ receipt đã lưu; trạng thái chưa rõ sẽ đối soát trước.')
             if hasattr(self, 'retry_all_button'):
                 self.retry_all_button.configure(state='disabled')
 
