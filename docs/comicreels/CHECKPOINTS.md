@@ -1,11 +1,30 @@
 # CHECKPOINTS | Trạng thái triển khai ComicReels
 
+## Chỉ đạo thực thi hiện hành — 2026-09-30
+
+**GITHUB DEVELOPMENT FIRST / TEST-FIX ONLY AFTER DEVELOPMENT COMPLETE.**
+
+Chỉ đạo này ghi đè các đoạn cũ nói LOCAL-SOURCE-FIRST, test theo từng checkpoint,
+hoặc dùng Remote Desktop để validation/observation khi có xung đột.
+
+- Hoàn tất 100% development plan trên GitHub trước.
+- Trong development pass không xen kẽ local/runtime test, rebuild, launch, inspect hoặc fix loop.
+- Chỉ sau coding phase cuối cùng mới bắt đầu validation pass; defect phải fix lại trên GitHub.
+- **Không dùng Remote Desktop Commander trực tiếp ở bất kỳ stage nào**, kể cả validation.
+- Stable/AppData/runtime không phải source of truth.
+- Các safety gate về paid effect, unknown-effect replay, credential/profile mutation và
+  production-data reset vẫn giữ nguyên.
+- Checkpoint development chỉ xác nhận code scope; không được diễn giải thành runtime PASS.
+
+Các checkpoint lịch sử bên dưới được giữ làm evidence; workflow cũ trong chúng không còn là
+chỉ đạo thực thi hiện hành khi mâu thuẫn với phần này.
+
 
 ## Shopee Affiliate catalog-first — DEVELOPMENT COMPLETE — 2026-09-30
 
 Owner reasserted the execution rule: finish the complete GitHub development plan before any
-local/runtime testing or test-driven repair. Remote Desktop is validation/observation only and
-must never be used to edit source.
+local/runtime testing or test-driven repair. Remote Desktop Commander is not used directly at
+any stage.
 
 Canonical development is complete for the Shopee Affiliate catalog-first scope:
 
