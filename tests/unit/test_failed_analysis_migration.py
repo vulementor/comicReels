@@ -62,7 +62,7 @@ class FailedAnalysisMigrationTests(unittest.TestCase):
         write_json(self.receipts / "analysis-provider.json", {
             "state": "verified", "conversation_url": "https://chatgpt.com/c/bound",
             "conversation_id": "bound", "assistant_message_id": "exact-message",
-            "text": "unchanged reply", "attachments": [str(self.source)],
+            "text": "unchanged reply", "attachments": [self.source.name],
             "attachment_receipts": self.upload,
             "submitted_prompt_sha256": None, "submit_boundary_crossed": None})
         self.campaign = self.root / "data/campaign.sqlite3"
