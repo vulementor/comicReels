@@ -153,11 +153,11 @@ def test_ui_action_groups_allow_safe_control_but_block_conflicting_runner(tmp_pa
     monkeypatch.setattr(desktop.threading, 'Thread', Thread)
 
     assert app.launch('login') is True
-    assert app.launch('configure-facebook', '--name', 'ThoRemixOfficial') is True
+    assert app.launch('status', '--probe') is True
     assert app.launch('publish', 'package') is False
 
     assert app.active == 'login'
-    assert app.active_groups == {'browser': 'login', 'control': 'configure-facebook'}
+    assert app.active_groups == {'browser': 'login', 'inspect': 'status'}
     assert len(seen) == 4
     assert not list(tmp_path.iterdir())
 
@@ -165,7 +165,7 @@ def test_ui_action_groups_allow_safe_control_but_block_conflicting_runner(tmp_pa
 def test_finishing_and_retry_buttons_only_follow_their_conflicting_action_group(tmp_path):
     from agent.thoremix import desktop
     app = object.__new__(desktop.DesktopWindow)
-    app.active, app.active_groups = 'configure-facebook', {'control': 'configure-facebook'}
+    app.active, app.active_groups = 'status', {'inspect': 'status'}
 
     assert app._action_busy('retry-failed') is False
     assert app._action_busy('retry-production') is False
@@ -177,17 +177,33 @@ def test_finishing_and_retry_buttons_only_follow_their_conflicting_action_group(
     assert app._action_busy('retry-production') is True
 
 
-def test_finishing_one_action_group_keeps_other_group_active():
+def test_finishing_inspection_group_keeps_browser_group_active():
     from agent.thoremix import desktop
     app = object.__new__(desktop.DesktopWindow)
-    app.active_groups = {'browser': 'login', 'control': 'configure-facebook'}
+    app.active_groups = {'browser': 'login', 'inspect': 'status'}
     app.active = 'login'
 
-    app._release_action('configure-facebook')
+    app._release_action('status')
 
     assert app.active_groups == {'browser': 'login'}
     assert app.active == 'login'
 
+
+
+def test_status_cli_is_read_only_and_does_not_take_campaign_lock(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from agent.thoremix import cli
+    settings = Settings(root=str(tmp_path/'app'), input_dir=str(tmp_path/'input'))
+    Path(settings.input_dir).mkdir(parents=True)
+    settings.save()
+
+    @contextmanager
+    def forbidden_campaign_lock(*args, **kwargs):
+        pytest.fail('read-only status must not take the campaign runner lock')
+        yield
+
+    monkeypatch.setattr(cli, 'campaign_operation', forbidden_campaign_lock)
+    assert cli.main(['--root', str(settings.directory), 'status']) == 0
 
 def test_close_never_terminates_owned_child():
     from agent.thoremix.desktop import DesktopWindow
