@@ -23,6 +23,21 @@ These are internal selection criteria, not claims of market-wide best price or t
 All AI must use gpt_fullproxy. Deterministic SDK/CLI toolkit, never an agent loop.
 Preserve the spoken script and no-bubble requirement.
 
+## Execution policy update — 2026-09-30
+
+This plan uses two separate passes and the first pass has priority:
+
+1. **Development pass:** implement every remaining code/integration item on GitHub until the
+   complete Thỏ Remix development plan is 100% coded. Do not interleave tests, Stable rebuilds,
+   runtime inspection, launch checks, or fix loops between coding phases.
+2. **Validation pass:** only after development completion, execute Task 5 and all accumulated
+   regression/build/runtime/live checks. Defects found there are fixed back on GitHub.
+3. **Remote Desktop Commander is prohibited for this workflow at every stage**, including
+   coding, testing, rebuilding, launching, inspecting, or repairing.
+4. Development checkpoints describe code scope only. They are not runtime PASS claims.
+
+This policy overrides older local-first or per-checkpoint-test instructions where they conflict.
+
 ## Design and global constraints
 
 - Source belongs in canonical ComicReels, under agent/thoremix; existing unfinished FBR-2
