@@ -242,3 +242,17 @@ class OwnedGPTClient:
             )
             api = client.chat.open(conversation) if namespace == "conversation" else getattr(client, namespace)
             return getattr(api, method)(*args, **kwargs)
+
+
+def configuration_file(name: str) -> Path:
+    """Per-instance editable configuration; installed package defaults stay immutable.
+
+    The final cutover (or explicit fresh-instance setup) seeds these files. Missing
+    configuration is not silently recreated over an interrupted migration.
+    """
+    if name not in {"models.json", "providers.json"}:
+        raise PrivateRuntimeError("UNKNOWN_CONFIGURATION_FILE")
+    runtime = current_runtime()
+    if runtime is None:
+        return Path(__file__).parent / name
+    return runtime.data_path(runtime.home / "config" / name)

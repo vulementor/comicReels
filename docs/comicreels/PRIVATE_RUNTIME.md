@@ -82,3 +82,29 @@ Regression cases are authored but not executed under the user's code-first
 instruction. No live browser/model, package install, authentication/profile move,
 publication or paid generation has been performed by this change. Installed
 acceptance and one-time coordinated migration remain pending.
+
+## Catalogued application entry and wheel
+
+The Hatch project builds the agent package as comicreels-app. setup.py remains
+its existing AI-tool configuration utility and is not used as a wheel builder.
+Dependencies at runtime still come from an explicit complete offline wheel set.
+
+Copy deployment/stable_runtime/entry.py into the immutable entries declared by
+the build plan. Comic accepts server; ThoRemix accepts tick, dispatch, status.
+Each app has its own declaration under apps/<name>/instances/<id>/instance.json.
+Settings require chat_profile_name, api_port, websocket_port and optionally
+flow_profile_config (relative to instance home) and visible. Model identifiers
+whisper-small and omnivoice are explicitly pinned by runtime-models.json.
+
+Editable models.json and providers.json belong in <instance-home>/config. The
+operator seeds them from the preserved existing configuration during final
+cutover, or explicitly from packaged defaults for a fresh instance. Missing
+files fail instead of recreating state. Model/provider APIs and Omni Flash read
+the same files, so UI settings cannot mutate the immutable app release.
+
+The Comic server entry binds before importing agent.config, runs one existing
+ASGI app, reports backend connectivity separately, and requests Uvicorn shutdown
+when drained. The existing app lifespan drains its workers and closes its
+backend. ThoRemix finite results are recorded per unique launch, preserving
+existing enabled/publication/receipt semantics. Desktop child-command integration
+is a separate required item; these finite entries do not claim to implement it.

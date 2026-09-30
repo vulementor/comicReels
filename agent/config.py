@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 
-from agent.private_runtime import current_runtime
+from agent.private_runtime import configuration_file, current_runtime
 
 _PRIVATE_RUNTIME = current_runtime()
 
@@ -69,7 +69,7 @@ MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "5"))  #
 STALE_PROCESSING_TIMEOUT = int(os.environ.get("STALE_PROCESSING_TIMEOUT", "600"))  # 10 min
 
 # ─── Model Keys (loaded from models.json for easy updates) ──
-_MODELS_FILE = Path(__file__).parent / "models.json"
+_MODELS_FILE = configuration_file("models.json")
 with open(_MODELS_FILE) as _f:
     _MODELS = json.load(_f)
 
@@ -102,7 +102,7 @@ REVIEW_SHEET_COLS = int(os.environ.get("REVIEW_SHEET_COLS", "3"))
 REVIEW_SHEET_ROWS = int(os.environ.get("REVIEW_SHEET_ROWS", "3"))
 
 # ─── CLI Providers (video review vision analysis) ────────────
-_PROVIDERS_FILE = Path(__file__).parent / "providers.json"
+_PROVIDERS_FILE = configuration_file("providers.json")
 with open(_PROVIDERS_FILE) as _pvf:
     CLI_PROVIDERS = json.load(_pvf)  # mutable dict, hot-reloaded like VIDEO_MODELS
 REVIEW_CLI_TIMEOUT_S = float(os.environ.get("REVIEW_CLI_TIMEOUT_S", "120"))
