@@ -226,12 +226,11 @@ def _new_receipt(product, rate, now, *, effect, existing_url=None):
     selection = _catalog_selection_evidence(product)
     if selection is not None:
         intent['catalog_selection'] = selection
-        if product.metadata.get('commission_basis') == 'product_offer_card_display':
-            offer = product.metadata.get('offer_url')
-            from .catalog import offer_identity
-            if offer_identity(offer) != product.product_id:
-                raise ValueError('invalid catalog offer')
-            intent['catalog_offer'] = _canonical_source(offer)
+        offer = product.metadata.get('offer_url')
+        from .catalog import offer_identity
+        if offer_identity(offer) != product.product_id:
+            raise ValueError('invalid catalog offer')
+        intent['catalog_offer'] = _canonical_source(offer)
     if effect == 'verify_existing_link':
         if not _safe_url(existing_url, affiliate=True):
             raise ValueError('invalid existing link')
