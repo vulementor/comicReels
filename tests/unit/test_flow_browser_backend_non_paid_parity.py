@@ -1,8 +1,6 @@
 """FBR-2-code-3c authored facade/restart requirements; not executed during coding."""
-import hashlib
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
