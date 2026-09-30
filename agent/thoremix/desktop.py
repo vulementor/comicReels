@@ -128,6 +128,26 @@ VIDEO_ORDERS = {'Mới sản xuất trước': 'newest', 'Cũ sản xuất trư�
 ACTIVITY_FILTERS = {'Tất cả': 'all', 'Lỗi & cần xử lý': 'attention',
                     'Sản xuất': 'production', 'Sửa video': 'repair', 'Đăng kênh': 'publishing'}
 
+ACTION_GROUPS = {
+    'status': 'inspect',
+    'login': 'browser', 'auth-status': 'browser', 'affiliate': 'browser',
+    'publish': 'browser', 'publish-platform': 'browser', 'cleanup-tiktok-stale-editor': 'browser',
+    'retry-failed': 'production', 'retry-production': 'production',
+    'produce-ahead': 'production', 'dispatch': 'production', 'tick': 'production',
+    'produce-one': 'production', 'reconcile-production': 'production',
+    'finish-unpublished': 'production', 'repair-audio': 'production',
+    'repair-audio-all': 'production', 'repair-source-text': 'production',
+    'prepare-media-correction': 'production', 'finalize': 'production',
+    'prepare-package': 'production', 'reconcile-package': 'production',
+    'import-source': 'production',
+}
+ACTION_CONFLICTS = {
+    'inspect': {'inspect'},
+    'browser': {'browser', 'production'},
+    'production': {'browser', 'production'},
+    'control': {'control'},
+}
+
 
 class DesktopWindow:
     """A passive viewer until the user explicitly invokes a command."""
@@ -150,6 +170,7 @@ class DesktopWindow:
         self.video_order = tk.StringVar(self.window, value='Mới sản xuất trước')
         self.activity_filter = tk.StringVar(self.window, value='Tất cả')
         self.active = None
+        self.active_groups = {}
         self.review = None
         self.retry_job_id = None
         self.retry_feedback = {}
@@ -203,6 +224,47 @@ class DesktopWindow:
         widget.bind('<Enter>', lambda _: widget.configure(bg=hover) if str(widget.cget('state'))!='disabled' else None)
         widget.bind('<Leave>', lambda _: widget.configure(bg=bg) if str(widget.cget('state'))!='disabled' else None)
         return widget
+
+    @staticmethod
+    def _action_group(command):
+        return ACTION_GROUPS.get(command, 'production')
+
+    def _ensure_action_state(self):
+        if not hasattr(self, 'active_groups') or not isinstance(self.active_groups, dict):
+            self.active_groups = {}
+
+    def _sync_active(self):
+        self._ensure_action_state()
+        for group in ('production', 'browser', 'inspect', 'control'):
+            if group in self.active_groups:
+                self.active = self.active_groups[group]
+                return
+        self.active = None
+
+    def _action_busy(self, command):
+        self._ensure_action_state()
+        group = self._action_group(command)
+        conflicts = ACTION_CONFLICTS.get(group, {group})
+        return any(active_group in conflicts for active_group in self.active_groups)
+
+    def _action_active(self, command):
+        self._ensure_action_state()
+        group = self._action_group(command)
+        return self.active_groups.get(group) == command
+
+    def _reserve_action(self, command):
+        if self._action_busy(command):
+            return False
+        self.active_groups[self._action_group(command)] = command
+        self._sync_active()
+        return True
+
+    def _release_action(self, command):
+        self._ensure_action_state()
+        group = self._action_group(command)
+        if self.active_groups.get(group) == command:
+            self.active_groups.pop(group, None)
+        self._sync_active()
 
     def _shell(self):
         side = tk.Frame(self.window, bg=SIDE, width=196)
@@ -340,7 +402,7 @@ class DesktopWindow:
         self.retry_all_button = self.button(toolbar, 'Reset & thử lại tất cả lỗi/kẹt',
                                             self.retry_failed_production)
         self.retry_all_button.pack(side='right')
-        if self.active is not None:
+        if self._action_busy('retry-failed'):
             self.retry_all_button.configure(state='disabled')
         self.video_panes = tk.PanedWindow(self.content, orient='horizontal', bg='#e0e5ef',
                                         sashwidth=6, bd=0, sashrelief='flat')
@@ -420,7 +482,7 @@ class DesktopWindow:
         self.label(detail, row['title'], size=13, bold=True, wraplength=280).pack(fill='x')
         self.label(detail, row['state'], color=ACCENT, size=9, wraplength=270).pack(fill='x', pady=(6, 10))
         if row.get('retry_label'):
-            busy=self.active=='retry-production' and self.retry_job_id==row['job_id']
+            busy=self._action_active('retry-production') and self.retry_job_id==row['job_id']
             self.retry_button=self.button(detail,'Đang tiếp tục…' if busy else row['retry_label'],
                 lambda:self.retry_production(row),primary=True)
             self.retry_button.pack(fill='x',pady=(0,10))
@@ -470,8 +532,8 @@ class DesktopWindow:
             self.button(detail, 'Mở ảnh nguồn', lambda: self.open_local(row['original'])).pack(fill='x', pady=4)
 
     def retry_failed_production(self):
-        if self.active is not None:
-            self.status.configure(text='Một lệnh đang chạy; chờ hoàn tất rồi thử lại các video lỗi.')
+        if self._action_busy('retry-failed'):
+            self.status.configure(text='Nhóm sản xuất/đăng đang chạy; chờ hoàn tất rồi reset các lỗi/kẹt.')
             return
         if self.launch('retry-failed'):
             self.status.configure(text='Đang reset và thử lại từng lỗi/kẹt từ receipt đã lưu; trạng thái chưa rõ sẽ đối soát trước.')
@@ -479,8 +541,8 @@ class DesktopWindow:
                 self.retry_all_button.configure(state='disabled')
 
     def retry_production(self,row):
-        if self.active is not None:
-            self.status.configure(text='Một lệnh đang chạy; chờ hoàn tất rồi tiếp tục truyện khác.')
+        if self._action_busy('retry-production'):
+            self.status.configure(text='Nhóm sản xuất/đăng đang chạy; chờ hoàn tất rồi tiếp tục truyện này.')
             return
         queued=self.launch('retry-production',row['job_id'])
         if queued:
@@ -524,10 +586,10 @@ class DesktopWindow:
             size=10,color=MUTED,wraplength=780).pack(anchor='w',pady=(0,24))
         actions=tk.Frame(frame,bg='white');actions.pack(fill='x')
         self.save_finish_button=self.button(actions,'Lưu cài đặt',self.save_finishing,primary=True);self.save_finish_button.pack(side='left')
-        self.finish_apply_button=self.button(actions,'Đang xử lý…' if self.active=='finish-unpublished'
+        self.finish_apply_button=self.button(actions,'Đang xử lý…' if self._action_active('finish-unpublished')
             else 'Áp dụng cho clip chưa đăng',self.apply_finishing)
         self.finish_apply_button.pack(side='left',padx=10)
-        if self.active=='finish-unpublished':self.finish_apply_button.configure(state='disabled')
+        if self._action_active('finish-unpublished'):self.finish_apply_button.configure(state='disabled')
         self.finish_feedback=self.label(frame,'Cài đặt áp dụng cho clip sản xuất tiếp theo. Clip đã đăng được giữ nguyên.',color=MUTED,wraplength=780)
         self.finish_feedback.pack(anchor='w',pady=16)
 
@@ -552,8 +614,8 @@ class DesktopWindow:
             return False
 
     def apply_finishing(self):
-        if self.active:
-            self.finish_feedback.configure(text='Đang có một lệnh chạy. Chờ hoàn tất để xử lý các clip đã lưu.');return
+        if self._action_busy('finish-unpublished'):
+            self.finish_feedback.configure(text='Nhóm sản xuất/đăng đang chạy. Chờ hoàn tất để xử lý các clip đã lưu.');return
         if not self.save_finishing():return
         if self.review:self.review.close()
         self.finish_feedback.configure(text='Đang xử lý các clip chưa đăng…')
@@ -847,21 +909,19 @@ class DesktopWindow:
             self.launch('configure-facebook', '--name', value.strip())
 
     def launch(self, command, *arguments):
-        if self.active is not None:
-            if command=='approve':
-                from .sdk import ThoRemixClient
-                from .core import RunnerBusyError
-                try:
-                    result=ThoRemixClient(self.settings.directory).request_approval(arguments[0],arguments[2])
-                    self.status.configure(text=readable_result(command,result))
-                    return True
-                except (ValueError,OSError,RunnerBusyError):
-                    self.status.configure(text='Chưa lưu được yêu cầu duyệt; làm mới và xem lại hồ sơ.')
-                    return False
-            self.status.configure(text='Một lệnh đang chạy; chờ hoàn tất trước khi chạy lệnh tiếp theo.')
-            return
-        # Reserve on the Tk thread BEFORE starting the worker; one UI-owned command.
-        self.active = command
+        if command=='approve':
+            from .sdk import ThoRemixClient
+            from .core import RunnerBusyError
+            try:
+                result=ThoRemixClient(self.settings.directory).request_approval(arguments[0],arguments[2])
+                self.status.configure(text=readable_result(command,result))
+                return True
+            except (ValueError,OSError,RunnerBusyError):
+                self.status.configure(text='Chưa lưu được yêu cầu duyệt; làm mới và xem lại hồ sơ.')
+                return False
+        if not self._reserve_action(command):
+            self.status.configure(text='Hành động cùng nhóm đang chạy; các nút đọc/cấu hình an toàn vẫn dùng được.')
+            return False
         self.status.configure(text='Đang mở trình duyệt đăng nhập; đóng trình duyệt khi xong.' if command == 'login' else f'Đang chạy {command}… Có thể tiếp tục xem dữ liệu đã lưu.')
         self.progress.pack(fill='x', pady=(8, 0))
         self.progress.start(14)
@@ -904,9 +964,10 @@ class DesktopWindow:
         try:
             while True:
                 command, code, data = self.events.get_nowait()
-                self.active = None
-                self.progress.stop()
-                self.progress.pack_forget()
+                self._release_action(command)
+                if not self.active_groups:
+                    self.progress.stop()
+                    self.progress.pack_forget()
                 self.diagnostics = data
                 try:
                     self.activity = readable_result(command, mapping(json.loads(data)))
