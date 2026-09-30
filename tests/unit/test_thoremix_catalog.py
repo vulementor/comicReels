@@ -118,9 +118,12 @@ def test_identity_requires_one_exact_shop_item():
 
 
 class Locator:
-    def __init__(self, page, selector):
-        self.page, self.selector = page, selector
+    def __init__(self, page, selector, index=None):
+        self.page, self.selector, self.index = page, selector, index
         self.first = self
+
+    def nth(self, index):
+        return Locator(self.page, self.selector, index=index)
 
     def wait_for(self, **kwargs):
         if self.selector == '.AffiliateItemCard':
@@ -130,20 +133,13 @@ class Locator:
         return self.page.guard_text
 
     def count(self):
-        if self.selector.startswith(".AffiliateItemCard:has(a[href*='/offer/product_offer/"):
-            product_id = self.selector.split('/offer/product_offer/', 1)[1].split("']", 1)[0]
-            return sum(product_id in card.get('href', '') for card in self.page.cards)
         if self.selector == '.AffiliateItemCard':
-            return len(self.page.cards)
+            return 1 if self.index is not None else len(self.page.cards)
         return self.page.dialog_count if 'dialog' in self.selector else 1
 
     def evaluate(self, script):
-        if self.selector.startswith(".AffiliateItemCard:has(a[href*='/offer/product_offer/"):
-            product_id = self.selector.split('/offer/product_offer/', 1)[1].split("']", 1)[0]
-            matches = [card for card in self.page.cards if product_id in card.get('href', '')]
-            if len(matches) != 1:
-                raise AssertionError('card is not unique')
-            return matches[0]
+        if self.selector == '.AffiliateItemCard' and self.index is not None:
+            return self.page.cards[self.index]
         raise AssertionError(self.selector)
 
     def get_by_role(self, role, **kwargs):
