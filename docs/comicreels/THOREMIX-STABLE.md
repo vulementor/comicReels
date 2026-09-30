@@ -43,14 +43,26 @@ Link phải đúng sản phẩm và không mang dữ liệu phiên. Theo yêu c�
 ứng dụng không tự chèn câu về tiếp thị liên kết/hoa hồng vào caption, mô tả hoặc bình luận.
 Trường disclosure trong hồ sơ chỉ giữ thông tin nội bộ; nội dung đăng lấy từ văn bản đã chốt.
 
-Đã kiểm chứng bộ đọc danh mục Shopee Affiliate trực tiếp bằng profile KDVT. Mỗi lượt đọc
-tối đa 20 thẻ sản phẩm trên trang đầu, lọc giá/lượng bán, rồi kiểm tra tối đa 12 bảng hoa hồng.
-Lấy tỷ lệ thấp hơn giữa “Nội dung khác” và “Reels trên Facebook/Instagram” để xếp hạng cho
-chiến dịch ba kênh; lưu riêng cả hai tỷ lệ. Sản phẩm thiếu bảng tương ứng bị loại kèm lý do.
-Phạm vi này chưa tìm theo các từ khóa `affiliate_queries`; các giá trị đó được giữ để tương
-thích cấu hình, không được trình bày như kết quả tìm kiếm từ khóa hay toàn thị trường.
+Luồng source hiện chuyển sang **catalog-first**: mỗi lượt đọc tối đa 20 thẻ Product Offer
+trên trang đầu và lấy trực tiếp tên, giá, lượng bán cùng commission đang hiển thị trên thẻ
+(`Tỉ lệ/Tỷ lệ hoa hồng` hoặc `Comm Rate/Commission Rate`; `lượt bán` hoặc `sold`).
+Nếu có thẻ đủ bằng chứng, việc xếp hạng dùng trực tiếp tỷ lệ này và không mở trang chi tiết
+(`detail_count=0`). Chỉ khi toàn bộ nhóm đủ điều kiện không có tỷ lệ đọc được, hệ thống mới
+fallback có giới hạn sang tối đa 12 bảng chi tiết để tránh mất hoàn toàn khả năng chọn sản phẩm.
 
-Live test 27/09/2026: 20 thẻ, 4 trang chi tiết; chọn sản phẩm `11074180896` của shop
+Sau khi chọn, intent khóa đúng `catalog_offer`/product ID và thao tác “Lấy link” quay lại đúng
+thẻ Product Offer; không cần mở detail chỉ để bấm link. Short link chỉ được chấp nhận sau khi
+redirect trình duyệt xác minh đúng product ID; `shop_id` được học từ destination thật, không
+được suy đoán từ card. Phạm vi này chưa tìm theo các từ khóa `affiliate_queries`; các giá trị đó
+được giữ để tương thích cấu hình, không được trình bày như kết quả tìm kiếm từ khóa hay toàn thị trường.
+
+KAT là contract generic cho Product Offer/parser/filter; ThoRemix giữ adapter riêng cho durable intent,
+receipt và reconciliation của mutation production. `Build-Stable.ps1` kiểm tra KAT local phải có
+`SelectionPolicy.sold_min/commission_min`, `catalog_first=True`, legacy public-search fallback
+mặc định tắt và đúng Product Offer surface trước khi cho phép promote bundle. Vì vậy khi triển khai,
+phải cập nhật/merge KAT trước rồi mới build source comicReels/ThoRemix.
+
+Live test 27/09/2026 là baseline của luồng detail-first cũ: 20 thẻ, 4 trang chi tiết; chọn sản phẩm `11074180896` của shop
 `579713807`, giá 130.000đ, lượng bán hiển thị 6.000+, tỷ lệ 17,5% / Facebook Reels 20%.
 Một lần tạo link được đối soát về đúng sản phẩm; biên nhận `data/task-7-live-acquisition.json`.
 Lần tạo chưa rõ kết quả không được lặp lại. Nếu đã nhận URL nhưng chưa xác minh đích,

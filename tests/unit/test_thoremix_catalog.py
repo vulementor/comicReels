@@ -11,7 +11,8 @@ from kabin_affiliate_toolkit.models import ProductRecommendRequest
 from kabin_affiliate_toolkit.providers.shopee import ShopeeProviderConfig
 from agent.thoremix import affiliate
 from agent.thoremix.catalog import (CATALOG_URL, ShopeeCatalogProvider, channel_rates,
-                                   parse_card, parse_observed_sold, parse_price, product_identity)
+                                   parse_card, parse_observed_commission, parse_observed_sold,
+                                   parse_price, product_identity)
 from agent.thoremix.config import Settings
 
 
@@ -27,8 +28,14 @@ def test_observed_price_forms(raw, expected):
     assert parse_price(raw) == expected
 
 
-@pytest.mark.parametrize('raw, amount, lower', [('10k+ lượt bán', 10000, True), ('600k+ lượt bán', 600000, True),
-                                              ('155 lượt bán', 155, False), ('1,5k+ lượt bán', 1500, True)])
+@pytest.mark.parametrize('raw, amount, lower', [
+    ('10k+ lượt bán', 10000, True),
+    ('600k+ lượt bán', 600000, True),
+    ('155 lượt bán', 155, False),
+    ('1,5k+ lượt bán', 1500, True),
+    ('600k+ sold', 600000, True),
+    ('155 sold', 155, False),
+])
 def test_observed_sold_is_explicit_lower_bound(raw, amount, lower):
     parsed = parse_observed_sold(raw)
     assert parsed['sold'] == amount and parsed['is_lower_bound'] is lower
@@ -40,12 +47,33 @@ def test_unknown_and_ambiguous_sold_are_not_zero():
     assert parse_observed_sold('10 lượt bán 100 lượt bán') is None
 
 
+@pytest.mark.parametrize('raw, expected', [
+    ('Tỉ lệ hoa hồng 12,5%', .125),
+    ('Tỷ lệ hoa hồng 17.5%', .175),
+    ('TỈ LỆ HOA HỒNG 17.5%', .175),
+    ('Comm Rate 12,5%', .125),
+    ('Commission Rate 17.5%', .175),
+    ('Tỉ lệ hoa hồng 0%', 0.0),
+])
+def test_product_offer_card_commission_is_parsed_as_listing_evidence(raw, expected):
+    parsed = parse_observed_commission(raw)
+    assert parsed['effective_rate'] == expected
+    assert parsed['display_text'] == raw
+
+
+def test_missing_or_ambiguous_card_commission_stays_unknown():
+    assert parse_observed_commission('Không hiển thị hoa hồng') is None
+    assert parse_observed_commission('Tỉ lệ hoa hồng 12,5% / Tỉ lệ hoa hồng 5%') is None
+
+
 def test_live_card_fixture_projects_source_and_lower_bound():
     p = parse_card(DETAIL['selected_card'], observed_at=NOW)
     assert p.product_id == '2931643720' and p.price.current == 120000
     assert p.sold == 10000 and p.metadata['sold_evidence']['is_lower_bound']
     assert p.metadata['sold_evidence']['source'] == CATALOG_URL
-    assert not p.commission.verified  # headline percentage is not channel proof
+    assert p.metadata['catalog_commission']['effective_rate'] == .125
+    assert p.metadata['catalog_commission']['source'] == CATALOG_URL
+    assert not p.commission.verified  # listing rate remains separate from per-placement proof
 
 
 def test_observed_internal_offer_trace_is_validated_then_removed():
@@ -74,6 +102,17 @@ def test_channel_totals_are_percentages_and_do_not_sum_money_column():
     assert min(r['effective_rate'] for r in rates.values()) == .125
 
 
+def test_english_detail_labels_use_the_same_cross_channel_contract():
+    rows = [
+        ['Channel Type', 'Content Type', '', 'Commission from Shopee', 'Estimated Commission'],
+        ['Social Media\nMost Used Channel', 'Other Content', '10% (₫12.000)', '2,5% (₫3.000)', '₫15.000'],
+        ['Reels on Facebook/Instagram', '10% (₫12.000)', '5% (₫6.000)', '₫18.000'],
+    ]
+    rates = channel_rates(rows)
+    assert rates['other_social']['effective_rate'] == .125
+    assert rates['facebook_reels']['effective_rate'] == .15
+
+
 @pytest.mark.parametrize('row, column, replacement', [(1, 2, '--'), (1, 3, ''), (2, 1, '10% total 15%'),
                                                      (2, 2, 'unknown'), (2, 3, '15%')])
 def test_unknown_components_or_total_column_reject(row, column, replacement):
@@ -99,9 +138,12 @@ def test_identity_requires_one_exact_shop_item():
 
 
 class Locator:
-    def __init__(self, page, selector):
-        self.page, self.selector = page, selector
+    def __init__(self, page, selector, index=None):
+        self.page, self.selector, self.index = page, selector, index
         self.first = self
+
+    def nth(self, index):
+        return Locator(self.page, self.selector, index=index)
 
     def wait_for(self, **kwargs):
         if self.selector == '.AffiliateItemCard':
@@ -111,7 +153,18 @@ class Locator:
         return self.page.guard_text
 
     def count(self):
+        if self.selector == '.AffiliateItemCard':
+            return 1 if self.index is not None else len(self.page.cards)
         return self.page.dialog_count if 'dialog' in self.selector else 1
+
+    def evaluate(self, script):
+        if self.selector == '.AffiliateItemCard' and self.index is not None:
+            return self.page.cards[self.index]
+        raise AssertionError(self.selector)
+
+    def get_by_role(self, role, **kwargs):
+        assert role == 'button' and kwargs == {'name': 'Lấy link', 'exact': True}
+        return Button(self.page)
 
     def evaluate_all(self, script):
         if self.selector == '.AffiliateItemCard':
@@ -221,11 +274,14 @@ def settings(tmp_path):
 
 
 def request():
-    return ProductRecommendRequest(query='gia dụng', selection={'price_max': 200000},
-                                    context={'affiliate_min_sold': 1000})
+    return ProductRecommendRequest(
+        query='gia dụng',
+        selection={'price_max': 200000, 'sold_min': 1000},
+        context={},
+    )
 
 
-def test_prefilter_before_bounded_detail_reads_and_cache_across_queries():
+def test_catalog_card_rates_avoid_detail_reads_and_cache_across_queries():
     page = CatalogPage(CARDS)
     provider = ShopeeCatalogProvider(Browser(page), config=ShopeeProviderConfig(enrich_limit=2))
     detailed = []
@@ -237,22 +293,30 @@ def test_prefilter_before_bounded_detail_reads_and_cache_across_queries():
     enriched = provider.enrich(found, request())
     provider.enrich(provider.search(request()), request())
     assert len(found) == 20 and provider.observed_count == 20
-    assert detailed == ['7988383802', '2931643720']
-    assert len(page.visited) == 1 and provider.detail_count == 2
-    assert sum(p.commission.verified for p in enriched) == 2
+    assert detailed == []
+    assert len(page.visited) == 1 and provider.detail_count == 0
+    verified = [p for p in enriched if p.commission.verified]
+    assert verified
+    assert all(p.metadata['commission_basis'] == 'product_offer_card_display' for p in verified)
 
 
-def test_default_is_qualified_catalog_with_one_activation_and_lower_bound_comment(settings):
+def test_default_is_catalog_first_with_one_activation_and_lower_bound_comment(settings):
     page = CatalogPage()
     result = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
     assert result['state'] == 'verified'
     assert result['product']['commission']['effective_rate'] == .125
-    assert result['product']['commission']['placement_rates']['facebook_reels']['effective_rate'] == .15
+    assert result['product']['commission']['basis'] == 'product_offer_card_display'
+    assert 'placement_rates' not in result['product']['commission']
     assert 'ít nhất 10000' in result['comment']
-    assert result['selection_evidence']['detail_count'] == 1
+    assert result['selection_evidence']['detail_count'] == 0
+    assert result['selection_evidence']['rate_basis'] == 'product_offer_card_display'
     assert result['candidate_count'] == 1 and page.presses == 1
+    assert page.visited == [CATALOG_URL, CATALOG_URL]
     receipt = json.loads(next((settings.data / 'affiliate').glob('*.json')).read_text(encoding='utf-8'))
     assert receipt['resolved_url'] == result['url']
+    assert receipt['resolved_product_id'] == '2931643720'
+    assert receipt['resolved_identity'] == ['252432728', '2931643720']
+    assert receipt['intent']['catalog_offer'] == DETAIL['selected_card']['href']
     assert receipt['intent']['sold_is_lower_bound'] is True
 
 
@@ -324,24 +388,17 @@ def test_provider_cannot_activate_without_durable_intent():
     assert page.presses == 0
 
 
-def test_missing_reels_row_excludes_only_that_product_and_freezes_safe_reason(settings):
-    missing = json.loads((FIXTURES / 'thoremix_shopee_missing_reels.json').read_text(encoding='utf-8'))
-    bad = DETAIL['selected_card'] | {'href': f"{CATALOG_URL}/{missing['product_id']}"}
-    class MixedPage(CatalogPage):
-        def goto(self, url, **kwargs):
-            super().goto(url, **kwargs)
-            unsupported = url.endswith('/' + missing['product_id'])
-            self.rows = missing['rows'] if unsupported else DETAIL['rows']
-            self.product_links = [f"https://shopee.vn/product/252432728/{missing['product_id']}"] if unsupported else DETAIL['product_links']
-    page = MixedPage([bad, DETAIL['selected_card']])
+def test_card_commission_selection_does_not_depend_on_detail_reels_table(settings):
+    lower = DETAIL['selected_card'].copy()
+    lower['href'] = f"{CATALOG_URL}/2338530731"
+    lower['text'] = lower['text'].replace('Tỉ lệ hoa hồng 12,5%', 'Tỉ lệ hoa hồng 5%')
+    page = CatalogPage([lower, DETAIL['selected_card']])
     result = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
     assert result['state'] == 'verified' and result['candidate_count'] == 2
     assert result['product']['product_id'] == '2931643720' and page.presses == 1
-    expected = [{'product_id': '2338530731', 'reason': 'catalog_cross_channel_commission_unavailable',
-                 'stage': 'commission_table'}]
-    assert result['selection_evidence']['excluded_details'] == expected
-    receipt = json.loads(next((settings.data / 'affiliate').glob('*.json')).read_text(encoding='utf-8'))
-    assert receipt['intent']['catalog_selection']['excluded_details'] == expected
+    assert result['selection_evidence']['detail_count'] == 0
+    assert result['selection_evidence']['excluded_details'] == []
+    assert result['selection_evidence']['rate_basis'] == 'product_offer_card_display'
 
 
 @pytest.mark.parametrize('guard, reason', [('Đăng nhập', 'shopee_affiliate_auth_required'),
@@ -366,6 +423,10 @@ def test_header_only_table_is_not_enough_wait_for_product_and_populated_rows(set
             self.product_links = DETAIL['product_links']
             self.rows = DETAIL['rows']
             super().wait_for_function(script, **kwargs)
-    page = HydratingPage()
+    card = DETAIL['selected_card'].copy()
+    card['text'] = card['text'].replace('Tỉ lệ hoa hồng 12,5%\n', '')
+    page = HydratingPage([card])
     result = affiliate.acquire_affiliate(settings, session_provider=Browser(page))
     assert result['state'] == 'verified' and page.waited_detail and page.presses == 1
+    assert result['selection_evidence']['detail_count'] == 1
+    assert result['selection_evidence']['rate_basis'] == 'minimum_other_social_and_facebook_reels_fallback'

@@ -10,3 +10,4 @@ faster-whisper==1.2.1
 aiosqlite==0.22.1
 ffpyplayer==4.5.3
 # Build-Stable.ps1 additionally packages local KRP and KAT wheel snapshots.
+# KAT must provide the catalog-first Product Offer contract; the build fails closed on older KAT.

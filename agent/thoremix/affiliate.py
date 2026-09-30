@@ -78,8 +78,21 @@ def _number(value):
 
 def _eligibility(product, settings, now, *, native=False):
     """Return a rate and a stable safe reason; never turn unknown into zero."""
-    if (product.provider != 'shopee_vn' or not product.shop_id
-            or _identity(product.product_url) != (product.shop_id, product.product_id)):
+    if product.provider != 'shopee_vn':
+        return None, 'product_identity_unverified'
+    catalog_basis = product.metadata.get('commission_basis') == 'product_offer_card_display'
+    if catalog_basis:
+        from .catalog import offer_identity
+        offer = product.metadata.get('offer_url')
+        if offer_identity(offer) != product.product_id:
+            return None, 'product_identity_unverified'
+        if product.shop_id:
+            if _identity(product.product_url) != (product.shop_id, product.product_id):
+                return None, 'product_identity_unverified'
+        elif product.product_url != offer:
+            return None, 'product_identity_unverified'
+    elif (not product.shop_id
+          or _identity(product.product_url) != (product.shop_id, product.product_id)):
         return None, 'product_identity_unverified'
     price = product.price
     if (price.currency != 'VND' or not _number(price.current) or price.current <= 0
@@ -144,33 +157,41 @@ def _native_sold_evidence(products, now):
             }
 
 
-def _verified_destination(context, url, expected):
+def _destination_identity(context, url, expected):
+    """Return the browser-observed Shopee identity, allowing unknown shop pre-link."""
     if not _safe_url(url, affiliate=True) or urlsplit(url).hostname == 'affiliate.shopee.vn':
-        return False
-    # Observe the final destination. Never trust the status label or an arbitrary
-    # metadata URL alone. Unsupported tracking query forms fail closed.
+        return None
+    expected_shop, expected_product = expected
     page = context.new_page()
     try:
         page.goto(url, wait_until='domcontentloaded', timeout=30000)
         for attempt in range(13):
-            # Only browser-observed destinations may have tracking query data
-            # removed. The public affiliate URL itself stays unchanged.
             parsed = urlsplit(page.url)
             if (parsed.scheme != 'https' or parsed.hostname not in {'shopee.vn', 'www.shopee.vn'}
                     or parsed.username is not None or parsed.password is not None
                     or parsed.port not in (None, 443) or '\\' in page.url):
-                return False
+                return None
             canonical = urlunsplit(('https', parsed.hostname, parsed.path, '', ''))
             identity = _identity(canonical)
             if identity is not None:
-                return identity == expected
+                if identity[1] != expected_product:
+                    return None
+                if expected_shop is not None and identity[0] != expected_shop:
+                    return None
+                return identity
             intermediate = re.fullmatch(r'/opaanlp/(\d+)/(\d+)/?', parsed.path)
-            if not intermediate or (intermediate[1], intermediate[2]) != expected or attempt == 12:
-                return False
+            if (not intermediate or intermediate[2] != expected_product
+                    or (expected_shop is not None and intermediate[1] != expected_shop)
+                    or attempt == 12):
+                return None
             page.wait_for_timeout(500)
-        return False
+        return None
     finally:
         page.close()
+
+
+def _verified_destination(context, url, expected):
+    return _destination_identity(context, url, expected) is not None
 
 
 def _receipt_path(settings, profile, identity):
@@ -205,6 +226,11 @@ def _new_receipt(product, rate, now, *, effect, existing_url=None):
     selection = _catalog_selection_evidence(product)
     if selection is not None:
         intent['catalog_selection'] = selection
+        offer = product.metadata.get('offer_url')
+        from .catalog import offer_identity
+        if offer_identity(offer) != product.product_id:
+            raise ValueError('invalid catalog offer')
+        intent['catalog_offer'] = _canonical_source(offer)
     if effect == 'verify_existing_link':
         if not _safe_url(existing_url, affiliate=True):
             raise ValueError('invalid existing link')
@@ -236,8 +262,11 @@ def _catalog_selection_evidence(product):
                 raise ValueError('invalid catalog exclusion stage')
             item['stage'] = entry['stage']
         safe.append(item)
+    basis = selection.get('rate_basis')
+    if basis not in {'product_offer_card_display', 'minimum_other_social_and_facebook_reels_fallback'}:
+        raise ValueError('invalid catalog rate basis')
     return {key: selection[key] for key in ('scope', 'observed_card_count', 'detail_count')} | {
-        'rate_basis': 'minimum_other_social_and_facebook_reels', 'excluded_details': safe}
+        'rate_basis': basis, 'excluded_details': safe}
 
 
 def _pack(product, rate, url, count):
@@ -261,6 +290,9 @@ def _pack(product, rate, url, count):
     price_text = f'{price:,.0f}'.replace(',', '.')
     lower_bound = product.metadata['sold_evidence'].get('is_lower_bound') is True
     safe_product['sold_evidence']['is_lower_bound'] = lower_bound
+    basis = product.metadata.get('commission_basis')
+    if basis in {'product_offer_card_display', 'minimum_other_social_and_facebook_reels_fallback'}:
+        safe_product['commission']['basis'] = basis
     placements = product.metadata.get('placement_rates')
     if isinstance(placements, dict) and set(placements) == {'other_social', 'facebook_reels'}:
         safe_rates = {}
@@ -327,7 +359,8 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
             candidates = {}
             for query in queries:
                 request = ProductRecommendRequest(query=query, selection={'top_k': 100, 'resolve_links': 0,
-                                                                          'price_max': settings.affiliate_max_price},
+                                                                          'price_max': settings.affiliate_max_price,
+                                                                          'sold_min': settings.affiliate_min_sold},
                                                   context={'affiliate_min_sold': settings.affiliate_min_sold},
                                                   caller={'harness': 'thoremix'})
                 products = provider.search(request)
@@ -354,7 +387,7 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                         result['selection_evidence'] = selection
                 return result
             selected, rate = min(eligible, key=lambda row: (
-                -row[1], row[0].price.current, -row[0].sold, row[0].shop_id, row[0].product_id))
+                -row[1], row[0].price.current, -row[0].sold, row[0].shop_id or '', row[0].product_id))
             expected = (selected.shop_id, selected.product_id)
             receipt_path = _receipt_path(settings, profile, expected)
             if receipt_path.exists():
@@ -377,7 +410,8 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                     atomic_json(receipt_path, receipt)
                 elif (receipt.get('state') in {'intent', 'incomplete'}
                       and intent.get('effect') == 'resolve_link'
-                      and receipt.get('resolved_identity') == list(expected)
+                      and (receipt.get('resolved_product_id') == selected.product_id
+                           or receipt.get('resolved_identity') == list(expected))
                       and _safe_url(receipt.get('resolved_url'), affiliate=True)):
                     url = receipt['resolved_url']
                     receipt.update(state='intent', last_stage='resolved_link_reverification')
@@ -401,10 +435,16 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                 # Snapshot identity before calling a provider that may mutate the
                 # same Pydantic model in place. One call only, even after timeout.
                 resolved = provider.resolve_links([selected.model_copy(deep=True)], 1)
-                if (len(resolved) != 1 or (resolved[0].shop_id, resolved[0].product_id) != expected
-                        or _identity(resolved[0].product_url) != expected):
+                if len(resolved) != 1 or resolved[0].product_id != selected.product_id:
                     raise ValueError('identity')
                 linked = resolved[0]
+                if expected[0] is not None:
+                    if ((linked.shop_id, linked.product_id) != expected
+                            or _identity(linked.product_url) != expected):
+                        raise ValueError('identity')
+                elif linked.shop_id is not None:
+                    # A catalog resolver must not invent shop identity before redirect verification.
+                    raise ValueError('identity')
                 if linked.affiliate.status not in {'verified', 'resolved'}:
                     raise ValueError('status')
                 url = linked.affiliate.url
@@ -416,15 +456,26 @@ def acquire_affiliate(settings, *, session_provider=None, provider_factory=None)
                     return _stop('affiliate_evidence_changed_during_link_resolution',
                                  state='blocked', candidate_count=count)
                 if _safe_url(url, affiliate=True):
-                    receipt.update(resolved_url=url, resolved_identity=list(expected),
-                                   resolved_at=datetime.now(timezone.utc).isoformat())
+                    update = {'resolved_url': url, 'resolved_product_id': selected.product_id,
+                              'resolved_at': datetime.now(timezone.utc).isoformat()}
+                    if expected[0] is not None:
+                        update['resolved_identity'] = list(expected)
+                    receipt.update(**update)
                     atomic_json(receipt_path, receipt)
             phase = 'destination_verification'
-            if not _verified_destination(context, url, expected):
+            destination_identity = _destination_identity(context, url, expected)
+            if destination_identity is None:
                 if receipt is not None and receipt.get('state') == 'intent':
                     receipt.update(state='incomplete', last_stage=phase)
                     atomic_json(receipt_path, receipt)
                 return _stop('affiliate_link_destination_unverified', state='blocked', candidate_count=count)
+            if selected.shop_id is None:
+                selected.shop_id = destination_identity[0]
+                selected.product_url = f'https://shopee.vn/product/{destination_identity[0]}/{destination_identity[1]}'
+            if receipt is not None and receipt.get('state') == 'intent':
+                receipt.update(resolved_identity=list(destination_identity),
+                               resolved_product_id=selected.product_id)
+                atomic_json(receipt_path, receipt)
             # Browser work may take long enough to expire eligibility.
             rate, reason = _eligibility(selected, settings, datetime.now(timezone.utc), native=native)
             if reason:
