@@ -27,7 +27,7 @@ def entry_report(context, deployment):
             missing_files.append(name)
     domain_entries = ["server"]
     if value["name"] == "thoremix":
-        domain_entries = ["campaign-status", "tick", "dispatch"]
+        domain_entries = ["campaign-status", "tick", "dispatch", "desktop", "desktop-smoke", "desktop-command"]
     return {
         "schema": f"stable.{value['kind']}.entry.v1",
         value["kind"]: value["name"], "kind": value["kind"], "name": value["name"],
@@ -38,7 +38,8 @@ def entry_report(context, deployment):
                    "CONFIGURATION_REQUIRED" if missing_settings or missing_files else "DECLARED"),
         "execution_readiness": "NOT_CHECKED", "domain_state": "NOT_READ",
         "supported_entries": ["help", "status", *domain_entries],
-        "unsupported_entries": {"desktop": "BOUND_CHILD_LAUNCH_UNAVAILABLE"},
+        "unsupported_entries": ({"desktop": "UNSUPPORTED_TOOLKIT_DESKTOP"}
+                                if value["kind"] == "service" else {}),
         "missing_settings": missing_settings, "missing_config_files": missing_files,
         "profile_roles": sorted(deployment.profiles),
     }
@@ -51,10 +52,11 @@ def write_result(context, result):
 
 
 def inspect_entry(context, deployment):
-    if context.entrypoint in {"help", "status", "desktop"}:
+    if (context.entrypoint in {"help", "status"}
+            or context.entrypoint == "desktop" and deployment.as_dict()["kind"] == "service"):
         result = entry_report(context, deployment)
         if context.entrypoint == "desktop":
-            result.update(status="UNSUPPORTED", error="BOUND_CHILD_LAUNCH_UNAVAILABLE")
+            result.update(status="UNSUPPORTED", error="UNSUPPORTED_TOOLKIT_DESKTOP")
         write_result(context, result)
         return 2 if context.entrypoint == "desktop" else 0
     return None
@@ -116,16 +118,53 @@ async def serve_comicreels(context):
         await asyncio.gather(monitor, return_exceptions=True)
 
 
+_DLL_HANDLES = []
+
+
+def prepare_private_dependencies(context):
+    """Only add catalogued release payloads; never ambient/legacy Python paths."""
+    import os
+    import sys
+    from stable_toolkit_runtime.registry import RegistryError
+
+    def optional(relative):
+        try:
+            return context.release_path(relative)
+        except RegistryError as error:
+            if error.code != "DEPENDENCY_UNAVAILABLE":
+                raise
+            return None
+
+    thirdparty = optional("native/thirdparty")
+    if thirdparty is not None:
+        if not thirdparty.is_dir():
+            raise ValueError("INVALID_PRIVATE_DEPENDENCIES")
+        if str(thirdparty) not in sys.path:
+            sys.path.append(str(thirdparty))
+    if os.name == "nt":
+        for relative in ("native/media/ffpyplayer/ffmpeg/bin", "native/media/ffpyplayer/sdl/bin"):
+            directory = optional(relative)
+            if directory is not None:
+                _DLL_HANDLES.append(os.add_dll_directory(str(directory)))
+
+
 def main(context):
     deployment = deployment_for_entry(context)
     inspected = inspect_entry(context, deployment)
     if inspected is not None:
         return inspected
     consumer_name = deployment.as_dict()["name"]
-    allowed = {"server"} if consumer_name == "comicreels" else {"tick", "dispatch", "campaign-status"}
+    allowed = ({"server"} if consumer_name == "comicreels" else
+               {"tick", "dispatch", "campaign-status", "desktop", "desktop-smoke", "desktop-command"})
     if context.entrypoint not in allowed:
         raise ValueError("UNSUPPORTED_COMICREELS_ENTRY")
+    prepare_private_dependencies(context)
     binding = binding_from_context(context)
+    if context.entrypoint in {"desktop", "desktop-smoke", "desktop-command"}:
+        from agent.thoremix.managed_desktop import run_child_command, run_managed_desktop
+        if context.entrypoint == "desktop-command":
+            return run_child_command(context, binding)
+        return run_managed_desktop(context, binding, smoke=context.entrypoint == "desktop-smoke")
     if binding.consumer_kind == "service" and context.entrypoint == "server":
         from agent.private_runtime import install_private_runtime
         install_private_runtime(binding)
@@ -137,5 +176,6 @@ def main(context):
     result = run_thoremix(context, binding, operation=operation, job_id="operation")
     write_result(context, result)
     return 0
+
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 import threading
 from ctypes import wintypes
@@ -92,12 +93,24 @@ class DesktopTray:
             self.thread.join(timeout=2)
 
 
+def instance_names(namespace=None):
+    """Keep legacy identity; private instances get deterministic distinct names."""
+    if namespace is None:
+        suffix = ""
+    elif not isinstance(namespace, str) or not namespace:
+        raise ValueError("INVALID_DESKTOP_NAMESPACE")
+    else:
+        suffix = "-" + hashlib.sha256(namespace.encode("utf-8")).hexdigest()[:24]
+    return (r"Local\ThoRemixDesktop" + suffix, r"Local\ThoRemixDesktopActivate" + suffix)
+
+
 class DesktopInstance:
     """One desktop per Windows session, with a kernel event to reopen a hidden one."""
     MUTEX = 'Local\\ThoRemixDesktop'
     ACTIVATE = 'Local\\ThoRemixDesktopActivate'
 
-    def __init__(self):
+    def __init__(self, *, namespace=None):
+        self.MUTEX, self.ACTIVATE = instance_names(namespace)
         self.kernel = ctypes.WinDLL('kernel32', use_last_error=True) if os.name == 'nt' else None
         self.mutex = self.event = None
         self.primary = True
@@ -138,3 +151,4 @@ class DesktopInstance:
             if handle:
                 self.kernel.CloseHandle(handle)
                 setattr(self, name, None)
+

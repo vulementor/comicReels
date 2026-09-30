@@ -149,12 +149,22 @@ ACTION_CONFLICTS = {
 }
 
 
+def _validate_command_runner(command_runner):
+    from agent.private_runtime import current_runtime, require_standalone_desktop
+    if current_runtime() is not None:
+        if not callable(command_runner):
+            require_standalone_desktop()
+    elif command_runner is not None:
+        raise ValueError("PRIVATE_DESKTOP_RUNNER_REQUIRES_BINDING")
+
+
 class DesktopWindow:
     """A passive viewer until the user explicitly invokes a command."""
 
-    def __init__(self, settings: Settings, *, window=None, poll=True, snapshot_loader=build_snapshot):
-        from agent.private_runtime import require_standalone_desktop
-        require_standalone_desktop()
+    def __init__(self, settings: Settings, *, window=None, poll=True, snapshot_loader=build_snapshot,
+                 command_runner=None):
+        _validate_command_runner(command_runner)
+        self.command_runner = command_runner
         self.settings, self.load_snapshot = settings, snapshot_loader
         self.window = window or tk.Tk()
         self.window.title('Thỏ Remix — Toolkit')
@@ -915,7 +925,7 @@ class DesktopWindow:
             self.launch('configure-facebook', '--name', value.strip())
 
     def launch(self, command, *arguments):
-        if command=='approve':
+        if command=='approve' and getattr(self, 'command_runner', None) is None:
             from .sdk import ThoRemixClient
             from .core import RunnerBusyError
             try:
@@ -933,6 +943,10 @@ class DesktopWindow:
         self.progress.start(14)
         def worker():
             try:
+                if self.command_runner is not None:
+                    code, data = self.command_runner(command, *arguments)
+                    self.events.put((command, code, data))
+                    return
                 logs = self.settings.directory / 'logs'
                 logs.mkdir(parents=True, exist_ok=True)
                 python = Path(sys.executable).with_name('python.exe') if os.name == 'nt' else Path(sys.executable)
@@ -1013,22 +1027,46 @@ class DesktopWindow:
         self.window.destroy()
 
 
-def run_desktop(settings: Settings) -> None:
-    from agent.private_runtime import require_standalone_desktop
-    require_standalone_desktop()
+def run_desktop(settings: Settings, *, command_runner=None, instance_namespace=None,
+                on_ready=None, is_draining=None) -> bool:
+    _validate_command_runner(command_runner)
     from .tray import DesktopInstance
 
-    instance = DesktopInstance()
+    instance = DesktopInstance(namespace=instance_namespace)
     app = None
+    callback_errors = []
     try:
         if not instance.primary:
-            return
-        app = DesktopWindow(settings)
+            return False
+        app = DesktopWindow(settings, command_runner=command_runner)
         if os.name == 'nt':
             app.enable_tray(instance)
+        def lifecycle():
+            if not app.alive:
+                return
+            if is_draining is not None and is_draining():
+                app.quit()
+                return
+            app.window.after(250, lifecycle)
+
+        def ready():
+            try:
+                on_ready(app)
+            except Exception as error:
+                callback_errors.append(error)
+                app.quit()
+
+        if on_ready is not None:
+            app.window.after_idle(ready)
+        if is_draining is not None:
+            app.window.after(250, lifecycle)
         app.window.mainloop()
+        if callback_errors:
+            raise callback_errors[0]
+        return True
     finally:
         if app and app.tray:
             app.tray.stop()
         instance.close()
+
 

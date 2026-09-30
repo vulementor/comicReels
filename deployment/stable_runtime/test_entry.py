@@ -69,7 +69,8 @@ class EntrySmoke(unittest.TestCase):
                             self.assertEqual(result["supported_entries"], ["help", "status", "server"])
                         else:
                             self.assertEqual(result["supported_entries"],
-                                             ["help", "status", "campaign-status", "tick", "dispatch"])
+                                             ["help", "status", "campaign-status", "tick", "dispatch",
+                                              "desktop", "desktop-smoke", "desktop-command"])
 
     def test_enabled_declaration_with_missing_config_does_not_claim_ready(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -80,13 +81,12 @@ class EntrySmoke(unittest.TestCase):
                 self.assertTrue(result["missing_settings"])
                 self.assertFalse(home.exists())
 
-    def test_private_desktop_is_explicitly_unsupported_before_business_imports(self):
+    def test_toolkit_desktop_is_rejected_before_business_imports(self):
         with tempfile.TemporaryDirectory() as directory:
-            for kind, name in DEPLOYMENTS:
-                code, result, home = self.invoke(Path(directory), kind, name, "desktop")
-                self.assertEqual(code, 2)
-                self.assertEqual(result["error"], "BOUND_CHILD_LAUNCH_UNAVAILABLE")
-                self.assertFalse(home.exists())
+            code, result, home = self.invoke(Path(directory), "service", "comicreels", "desktop")
+            self.assertEqual(code, 2)
+            self.assertEqual(result["error"], "UNSUPPORTED_TOOLKIT_DESKTOP")
+            self.assertFalse(home.exists())
 
     def test_legacy_identity_wrong_kind_and_cross_workflow_entries_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -104,3 +104,4 @@ class EntrySmoke(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

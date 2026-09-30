@@ -70,10 +70,10 @@ ThoRemix campaign-status retains its durable context.job scope. Existing
 authorization, enabled/paused gates, journals, leases and uncertainty handling
 remain authoritative. Administrative status does not run campaign-status.
 
-Private desktop returns UNSUPPORTED / BOUND_CHILD_LAUNCH_UNAVAILABLE before
-business imports. The legacy standalone ThoRemix desktop remains available;
-its raw Python children cannot inherit private bindings and leases. A verified
-bound-child launch contract is required before enabling private desktop commands.
+ThoRemix private desktop uses a retained managed child host for each CLI command.
+See [managed desktop](DESKTOP.md) for desktop, desktop-command and finite desktop-smoke.
+The raw legacy child path remains available only for an unbound standalone desktop.
+ComicReels does not expose the ThoRemix desktop.
 
 ## Light smoke
 
@@ -83,3 +83,4 @@ python -B deployment/stable_runtime/test_entry.py -v
 
 These temporary-directory checks guard against business imports. They do not
 constitute workflow, provider, browser, model or production acceptance.
+
