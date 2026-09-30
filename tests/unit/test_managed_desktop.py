@@ -216,3 +216,70 @@ def test_existing_desktop_activation_cannot_pass_smoke(host, monkeypatch):
     assert managed.run_managed_desktop(context, binding) == 0
     result = json.loads((context.instance_dir / "app-result.json").read_text())
     assert result["status"] == "EXISTING_DESKTOP_ACTIVATED"
+
+def test_runner_retries_verified_observation_without_restarting_child(host, monkeypatch):
+    context, state, _ = host
+    api = managed._platform()
+    observed = []
+    waits = []
+    def inspect(root, child_id):
+        observed.append((root, child_id))
+        if len(observed) == 1:
+            raise RegistryError("UNVERIFIED_ARTIFACT")
+        return api[4](root, child_id)
+    monkeypatch.setattr(managed, "_platform", lambda: (*api[:4], inspect, *api[5:]))
+    monkeypatch.setattr(managed.time, "sleep", waits.append)
+    runner = managed.ManagedCommandRunner(context)
+    assert runner("status") == (0, '{"enabled":false}')
+    assert state["starts"] == 1
+    assert len(observed) == 2 and observed[0] == observed[1]
+    assert waits == [0.1]
+    assert runner.last_result["status"] == "STOPPED"
+    assert runner.last_result["observation_retries"] == 1
+
+
+def test_observation_exhaustion_retains_uncertain_child_without_relaunch(host, monkeypatch):
+    context, state, _ = host
+    api = managed._platform()
+    observed = []
+    waits = []
+    def inspect(root, child_id):
+        observed.append((root, child_id))
+        raise RegistryError("UNVERIFIED_ARTIFACT")
+    monkeypatch.setattr(managed, "_platform", lambda: (*api[:4], inspect, *api[5:]))
+    monkeypatch.setattr(managed.time, "sleep", waits.append)
+    runner = managed.ManagedCommandRunner(context)
+    code, output = runner("status")
+    assert code == 2
+    result = json.loads(output)
+    assert result["state"] == "needs_input"
+    assert result["reason"] == "DESKTOP_CHILD_OBSERVATION_UNAVAILABLE"
+    assert result["child_launch_id"] == state["child_id"]
+    assert result["action_retry_allowed"] is False
+    assert state["starts"] == 1 and len(observed) == 5 and len(set(observed)) == 1
+    assert waits == [0.1] * 4
+    assert runner.last_result["status"] == "OBSERVATION_UNAVAILABLE"
+    assert "result" not in runner.last_result
+    retained = json.loads((context.instance_dir / "desktop-commands" / (state["child_id"] + ".json")).read_text())
+    assert retained == runner.last_result
+
+
+@pytest.mark.parametrize("failure", ["unsafe", "identity"])
+def test_observation_retry_never_bypasses_path_or_identity_validation(host, monkeypatch, failure):
+    context, state, _ = host
+    api = managed._platform()
+    count = []
+    def inspect(root, child_id):
+        count.append(child_id)
+        if failure == "unsafe":
+            raise RegistryError("UNSAFE_PATH")
+        if len(count) == 1:
+            raise RegistryError("UNVERIFIED_ARTIFACT")
+        return {**api[4](root, child_id), "release_id": "b" * 64}
+    monkeypatch.setattr(managed, "_platform", lambda: (*api[:4], inspect, *api[5:]))
+    monkeypatch.setattr(managed.time, "sleep", lambda _: None)
+    with pytest.raises((RegistryError, ValueError),
+                       match="UNSAFE_PATH" if failure == "unsafe" else "DESKTOP_CHILD_IDENTITY_MISMATCH"):
+        managed.ManagedCommandRunner(context)("status")
+    assert state["starts"] == 1
+    assert len(count) == (1 if failure == "unsafe" else 2)
