@@ -115,6 +115,33 @@ _CRITICAL_RULES = """\
 16. **Review before upscale** — ALWAYS run `/fk-review-video` (light mode) after video generation, before upscaling. Scenes scoring < 7.5 get `video_prompt` updated from review errors, then regen video. Max 2 review-regen cycles.
 """
 
+_DEVELOPMENT_EXECUTION_POLICY = """\
+## Development Execution Policy
+
+Owner directive dated 2026-09-30. This policy overrides older local-first, per-checkpoint-test,
+and Remote-Desktop-testing instructions wherever they conflict.
+
+1. **GitHub is the development surface.** Implement code, docs, migrations and integration changes
+   on GitHub branches/PRs. Do not edit source directly through Remote Desktop, StableApp, AppData,
+   or an ad-hoc local checkout.
+2. **Finish the development plan before testing.** Work forward through every coding phase until
+   the approved development plan is 100% implemented. Do not stop after each code checkpoint to
+   run local tests, rebuild Stable, probe the runtime, or enter a fix loop.
+3. **Testing is a separate reverse pass.** Only after development completion may testing begin.
+   Then validate the completed plan from broad/static checks down to integration/runtime/live
+   evidence, fixing discovered defects on GitHub and repeating the validation pass as needed.
+4. **No direct Remote Desktop execution.** Do not use Remote Desktop Commander to code, edit,
+   test, rebuild, launch, inspect or repair the application. Use GitHub/CI or other explicitly
+   approved non-Remote-Desktop mechanisms for later validation.
+5. **Checkpoint meaning.** During development, checkpoints report implemented code scope and
+   remaining plan items only. A development checkpoint does not require test evidence. Do not
+   claim runtime correctness until the separate validation pass has actually run.
+6. **Preserve safety invariants while coding.** Paid/external effects, unknown-effect replay,
+   credential/profile mutation, and production-data resets remain prohibited unless their own
+   explicit authorization gate has been satisfied.
+
+"""
+
 _BROWSER_FIRST_MIGRATION = """\
 ## Browser-First Flow Refactor Contract
 
@@ -128,14 +155,15 @@ Mandatory invariants:
 1. **Preserve FlowKit creative/scenario capabilities.** Do not remove or simplify
    `fk-create-project`, scene chains, transition prompts, `fk-creative-mix`,
    `fk-pipeline`, `fk-gen-videos`, review/regen, TTS/concat/branding, Gallery/Logs/Guide/Settings.
-2. **LOCAL-SOURCE-FIRST.** Develop, debug and test in the canonical local source repository on
-   VULE-PC. Deploy/sync from that source for live validation; never develop in AppData runtime.
-   GitHub records coherent checkpoints, not every small fix. Push after tests and evidence are
-   ready; merge only after explicit owner confirmation. Validate the exact merged revision.
-3. **Checkpoint discipline.** Follow
-   `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md`. Complete regression + live
-   evidence, update `docs/comicreels/CHECKPOINTS.md`, then obtain explicit owner confirmation
-   before advancing to the next FBR checkpoint.
+2. **GITHUB DEVELOPMENT FIRST.** Source-of-truth development happens on GitHub. Finish every
+   coding phase in the approved development plan before starting regression, local/runtime
+   validation, deployment, or fix loops. Do not use Remote Desktop as a direct coding or testing
+   surface. Runtime/AppData/StableApp are never development sources of truth.
+3. **Development-plan completion gate.** Follow
+   `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md`, but treat code implementation
+   as one forward pass: complete all planned coding checkpoints first. Only after the final coding
+   checkpoint is complete may the project enter the test/fix/validation pass, update
+   `docs/comicreels/CHECKPOINTS.md`, and request owner acceptance for runtime/live validation.
 4. **Session continuity is mandatory.** Reuse one persistent signed-in Flow profile with an
    explicit lease/lock. Never clear cookies/storage, sign out, silently switch profiles, or commit
    browser profile data/tokens/cookies.
@@ -221,6 +249,7 @@ def _agents_md_body(skills, title):
         f"# Must return: {{\"extension_connected\": true}}\n"
         f"```\n\n"
         f"{_CRITICAL_RULES}\n"
+        f"{_DEVELOPMENT_EXECUTION_POLICY}\n"
         f"{_BROWSER_FIRST_MIGRATION}\n"
         f"{_PIPELINE_OVERVIEW}\n"
         f"{_BATCH_API}\n"
