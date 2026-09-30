@@ -113,7 +113,9 @@ class FlowBrowserDriver:
         self._check_thread()
         report = {
             'backend_kind': 'browser', 'profile': self.config.profile_logical_name,
-            'state': self._phase, 'lease_held': False,
+            'state': self._phase,
+            # In particular, CLOSE_UNCERTAIN is not evidence of a released lease.
+            'lease_held': False if self._phase in {'new', 'closed', 'failed'} else None,
             'authentication': 'unknown', 'semantic_node_count': 0,
             'observed_at': None, 'session_ready': False,
             'ready': False, 'readiness_scope': 'session_only',
