@@ -93,7 +93,7 @@ def host(tmp_path, monkeypatch):
         return {**child, "status": "STOPPED", "process_alive": False}
 
     monkeypatch.setattr(managed, "_platform", lambda: (
-        write, Deployment, prepare, start, inspect, lambda root: root, canonical, read))
+        write, Deployment, prepare, start, inspect, lambda root: root, canonical, read, RegistryError))
     return context, state, write
 
 

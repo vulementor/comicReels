@@ -43,9 +43,9 @@ def _platform():
     from stable_toolkit_runtime.instances import Deployment, prepare_deployment
     from stable_toolkit_runtime.launcher import start_host
     from stable_toolkit_runtime.lifecycle import inspect_instance
-    from stable_toolkit_runtime.registry import Registry, canonical, json_bytes
+    from stable_toolkit_runtime.registry import Registry, RegistryError, canonical, json_bytes
     return (atomic_json, Deployment, prepare_deployment, start_host,
-            inspect_instance, Registry, canonical, json_bytes)
+            inspect_instance, Registry, canonical, json_bytes, RegistryError)
 
 
 def desktop_namespace(binding):
@@ -65,7 +65,7 @@ class ManagedCommandRunner:
         arguments = validate_command(command, arguments)
         if self.context.is_draining():
             raise ValueError("DESKTOP_DRAINING")
-        (write, Deployment, prepare, start, inspect, Registry, canonical, read) = _platform()
+        (write, Deployment, prepare, start, inspect, Registry, canonical, read, RegistryError) = _platform()
         value = self.deployment.as_dict()
         if value["entries"].get("desktop-command") != "desktop-command":
             raise ValueError("DESKTOP_CHILD_ENTRY_REQUIRED")
@@ -100,7 +100,26 @@ class ManagedCommandRunner:
             self.last_result = receipt
             return 2, json.dumps({"state": "needs_input", "reason": "DESKTOP_CHILD_START_FAILED"})
         while True:
-            observed = inspect(self.deployment.root, child_id)
+            # Mutable host receipts are atomically replaced. Windows may briefly
+            # deny a read; retry only the verified observation of this same child.
+            for attempt in range(5):
+                try:
+                    observed = inspect(self.deployment.root, child_id)
+                    break
+                except RegistryError as error:
+                    if error.code != "UNVERIFIED_ARTIFACT":
+                        raise
+                    if attempt == 4:
+                        receipt.update(status="OBSERVATION_UNAVAILABLE",
+                                       error="DESKTOP_CHILD_OBSERVATION_UNAVAILABLE")
+                        write(path, receipt)
+                        self.last_result = receipt
+                        return 2, json.dumps({
+                            "state": "needs_input", "reason": receipt["error"],
+                            "child_launch_id": child_id, "action_retry_allowed": False,
+                        })
+                    receipt["observation_retries"] = receipt.get("observation_retries", 0) + 1
+                    time.sleep(0.1)
             if (observed.get("instance_id") != child_id
                     or observed.get("release_id") != value["release_id"]):
                 raise ValueError("DESKTOP_CHILD_IDENTITY_MISMATCH")
@@ -304,6 +323,3 @@ def run_managed_desktop(context, binding, *, smoke=False):
         result.update(status="FAILED", error="SMOKE_INTERRUPTED")
     write(context.instance_dir / "app-result.json", result)
     return 2 if failed else 0
-
-
-
