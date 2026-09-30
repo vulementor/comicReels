@@ -6,27 +6,41 @@ Architecture authority: `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`
 
 ## Global execution rules
 
-These rules apply to every checkpoint:
+Owner execution directive updated 2026-09-30. These rules override older local-first,
+per-checkpoint-test, and Remote-Desktop-testing instructions.
 
-1. **LOCAL-SOURCE-FIRST (owner update 27/09).** Implement/debug/test directly in the canonical local source checkout on VULE-PC, on a checkpoint branch. GitHub is durable checkpoint history; do not push every small fix.
-2. **Source-to-runtime validation.** Deploy/sync the actual local source through supported tooling, then run the checkpoint's bounded live validation. Dirty local source is allowed; regression must cover those exact bytes.
-3. **No runtime-only fixes.** AppData runtime is a deployment target, never source development. Fix source and deploy again.
-4. **One checkpoint at a time.** Do not mix FBR scopes.
-5. **Regression before live.** Unit/integration/build/lint must pass before browser live validation.
-6. **Sanitized evidence only.** Never commit cookies, tokens, browser profile contents or raw auth.
-7. **No paid generation as diagnostics.** Paid calls exist only at the explicit paid checkpoint.
-8. **No uncertain resend.** Unknown paid outcome must be reconciled before any retry.
-9. **Preserve FlowKit creative capabilities.** Do not remove or rewrite scenario/creative/pipeline skills merely because transport changes.
-10. **Owner confirmation required.** After a coherent checkpoint passes, update docs, commit and push its branch, review the diff, and wait for explicit owner confirmation before merge. Sync and verify the exact merged revision, close out, then stop for separate permission before the next checkpoint. Never merge BLOCKED.
+1. **GITHUB DEVELOPMENT FIRST.** Implement every FBR coding checkpoint on GitHub branches/PRs.
+   GitHub is the source of truth for development.
+2. **Complete the coding plan before testing.** Work forward through FBR-0 → FBR-6 code scope
+   without running local regression, runtime rebuilds, browser live validation, or fix loops between
+   checkpoints. A code checkpoint may be reviewed/merged as code, but it is not runtime-accepted.
+3. **No direct Remote Desktop execution.** Remote Desktop Commander is not a coding, testing,
+   rebuild, launch, inspection, or repair surface for this plan.
+4. **Keep checkpoint scope boundaries.** Do not mix unrelated FBR scopes even though validation is
+   deferred. Record what code is complete and what coding remains.
+5. **Validation is a separate pass after FBR-6 code complete.** All sections titled
+   "Required tests", "live evidence", regression, build/lint, and runtime acceptance are accumulated
+   requirements for the final test/fix/validation pass. They do not gate advancing the coding pass.
+6. **Fixes discovered during validation go back to GitHub.** Do not patch deployed/runtime files.
+7. **Sanitized evidence only.** Never commit cookies, tokens, browser profile contents or raw auth.
+8. **No paid generation as diagnostics.** Paid calls exist only at the explicit paid validation gate.
+9. **No uncertain resend.** Unknown paid outcome must be reconciled before any retry.
+10. **Preserve FlowKit creative capabilities.** Do not remove or rewrite scenario/creative/pipeline
+    skills merely because transport changes.
+11. **Owner checkpoint confirmation remains useful for code direction**, but confirmation during the
+    development pass accepts code scope only. Runtime/live acceptance occurs only after the final
+    validation pass.
 
 ## Checkpoint status vocabulary
 
-- `PLANNED` — scope documented, no code accepted.
-- `IN_PROGRESS` — local implementation exists but checkpoint not yet validated; a GitHub push is not required for local iteration.
-- `LOCAL_PASS` — regression + VULE-PC non-paid live test pass.
-- `LIVE_PASS` — required external live behavior is proven.
-- `BLOCKED` — stop condition hit; do not advance.
-- `ACCEPTED` — owner explicitly accepts checkpoint.
+- `PLANNED` — scope documented, coding not started.
+- `CODE_IN_PROGRESS` — GitHub implementation is underway; no test claim is implied.
+- `CODE_COMPLETE` — checkpoint coding scope is implemented on GitHub; validation is deferred.
+- `VALIDATION_IN_PROGRESS` — final post-development test/fix pass has started.
+- `LOCAL_PASS` — required non-paid regression/runtime validation passed during the final pass.
+- `LIVE_PASS` — required external live behavior is proven during the final pass.
+- `BLOCKED` — safety/architecture stop condition hit.
+- `ACCEPTED` — owner explicitly accepts the relevant code or validation milestone.
 - `ROLLED_BACK` — checkpoint reverted to recorded rollback revision.
 
 Each closeout record must include:
