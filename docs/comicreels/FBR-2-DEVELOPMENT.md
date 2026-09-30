@@ -104,3 +104,93 @@ move denial; it does not justify resuming the stale A3.9 rebuild sequence.
 
 Rollback: main is unchanged. Leave this unmerged development branch unused;
 no runtime/profile/data rollback or destructive reset is needed.
+
+
+## FBR-2-code-2 — session project and non-paid read wiring
+
+Status: **CODE_COMPLETE for this bounded slice on the development branch only**.
+Overall FBR-2 remains **CODE_IN_PROGRESS**; upload, operation reconciliation and
+facade parity are deliberately deferred to the next coding slices.
+
+Authored project/read coverage: `9f1f75ccf67e6ca45766910f92a997ec6bb13638`.
+Project/read implementation: `b9590c4a9cadf3088602ce5e669a420ec1699fd4`.
+Lifecycle coverage alignment: `db33b754a5ec2e92e5f191bdb9eca80bb084bb36`.
+
+### Project lifecycle
+
+- `ensure_session_project()` reuses the persisted project id when one exists,
+  opens that exact `https://flow.google.com/project/<uuid>` route and requires
+  fresh authenticated session evidence after navigation.
+- If the active-project pointer was not persisted but a completed create receipt
+  exists, the driver recovers the pointer from that immutable receipt without
+  resubmitting a remote create effect.
+- New session-project creation validates the existing Flow `jHPbke` contract,
+  writes a SUBMITTING intent before browser evaluation, verifies the returned
+  project UUID/title, writes the completed receipt, then stores the active
+  project pointer.
+- Ambiguous/unverified create outcomes become UNKNOWN and block later creation
+  with `RECONCILIATION_REQUIRED`; they are never retried automatically.
+- `force_new=True` gets a distinct deterministic create-intent ordinal after
+  prior completed creates. Existing pending/unknown create intents stop the new
+  mutation first.
+- Raw generic create RPC execution remains disabled in `execute()` because the
+  current batch_rpc call surface does not carry a caller idempotency identity.
+  The durable session-project method is the only create seam in this slice.
+
+### Read operations
+
+- Reuse the existing validated `flow_browser_rpc.js`; do not add selectors or
+  copy Flow request construction.
+- `Zzl0ze` project-media reads navigate to and bind the exact requested project.
+- `as29s` media reads require the persisted session project and run from that
+  verified project page.
+- Completed full-body read responses are shape-checked through the existing
+  `flow_batch.first_payload` parser before returning to the business layer.
+  Existing bounded `match` reads keep their intentionally partial response.
+- Reads may continue when the journal contains unrelated pending/unknown intents;
+  those intents remain visible as `reconciliation_required` and still block
+  mutations that could duplicate an effect.
+- `jwpduf` operation reconciliation is still unavailable in code-2 because it
+  must be bound to the durable operation/project journal in the next slice.
+- Upload and every paid RPC remain explicit 501 / not_submitted capabilities.
+
+### Readiness contract
+
+A freshly authenticated/leased browser session now reports transport
+`ready=True` for the implemented project/read subset, with
+`readiness_scope=project_read`. The capability map explicitly reports:
+
+- project open/resume: available;
+- durable session-project create: available;
+- project-media read: available;
+- media read: available;
+- operation reconciliation: unavailable;
+- upload: unavailable;
+- paid dispatch: unavailable.
+
+`operations_implemented` remains false so this partial source cannot be mistaken
+for all of FBR-2 parity. Extension selection/default behavior is unchanged.
+
+### Authored coverage, NOT executed
+
+`tests/unit/test_flow_browser_driver_project_read.py` covers saved-project
+resume, pre-effect create intent persistence, receipt-to-pointer recovery,
+unknown-outcome no-replay, exact project-media route binding, saved-project media
+reads, explicit operation/upload/raw-create blocking and capability reporting.
+
+The earlier lifecycle coverage was edited only where code-2 intentionally changes
+readiness/operation availability. No pytest, workflow, import/compile, lint,
+browser session, build or runtime command was executed. These tests are authored
+requirements for the later validation pass, not PASS evidence.
+
+No source outside this development branch was changed; no merge/PR was created.
+No Remote Desktop, Stable, profile, paid generation, social, scheduler or process
+action occurred.
+
+### Next coding slice
+
+**FBR-2-code-3:** wire upload intent/receipt handling and read-only operation
+reconciliation into this same driver/state boundary; complete capability/facade
+integration and restart/resume authored coverage. Keep paid dispatch false and
+extension selectable. After FBR-2 code closure, continue forward through the
+remaining approved FBR-3/FBR-4/FBR-5 coding scopes before starting validation.
