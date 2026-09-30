@@ -1,0 +1,24 @@
+name: Private sibling access probe
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/private-sibling-access-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Probe KAT checkout with current repository token
+        uses: actions/checkout@v4
+        with:
+          repository: vulementor/kabin_affiliate_toolkit
+          path: _probe_kat
+          token: ${{ github.token }}
+          persist-credentials: false
