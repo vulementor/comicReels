@@ -352,3 +352,67 @@ their execution to the dedicated validation phase.
 authored tests with the final non-paid capability contract. Keep extension fallback
 selectable and paid dispatch false. After that, continue the remaining approved
 FBR-3/FBR-4/FBR-5 coding scopes before starting build/EXE validation.
+
+
+## FBR-2-code-3c — facade/readiness/restart integration
+
+Date: 2026-09-30.
+Status: **CODE_COMPLETE for this bounded integration slice; NOT VALIDATED**.
+Overall FBR-2 source implementation is now at the end of the planned non-paid
+parity coding scope, but validation remains deferred and no runtime PASS is claimed.
+
+Source commits:
+- Authored facade/restart requirements:
+  `f5fbcc8140109c234d36a2362c51f30f6babe574`.
+- Shared backend protocol completion:
+  `79d8e7cbbbe593fbc0b5d64309a21310e70885cd`.
+- Pending-reconciliation readiness projection:
+  `f5dbfaa62477ca322a5df4acd3443e39b62a7b6d`.
+- Lifecycle coverage alignment:
+  `495b197453e46701d16546470f3b92540b6331f2`.
+- Project/read coverage alignment:
+  `100dac1b5175cad866217d2281452717a8d48161`.
+- Coverage import cleanup:
+  `3328012f70d3b6eb507643bbd954028bceaa2485`,
+  `78dcf77e188fdd80a13e1783ef667106643bc675`.
+
+### Implemented integration
+
+- `FlowBackend` now declares `ensure_session_project()` so browser project
+  lifecycle is part of the shared transport boundary rather than a browser-only
+  undocumented method.
+- Extension fallback remains selectable and explicitly returns a non-submitted
+  501 result for session-project lifecycle instead of pretending to implement it.
+- Browser health keeps `ready=True` when the authenticated leased session is
+  healthy even if durable journal entries require reconciliation. The same health
+  payload exposes `reconciliation_required=True` and
+  `error=RECONCILIATION_REQUIRED`, allowing safe reads/reconciliation while
+  still surfacing that mutation replay is blocked.
+- Final browser capability projection is
+  `readiness_scope=non_paid_parity`, `operations_implemented=True`, with
+  project open/resume/create-session, project/media reads, upload and operation
+  reconciliation available. `paid_dispatch_enabled=False` remains invariant.
+- Authored facade coverage records clean close/new-backend restart behavior using
+  the same owner-key derivation and durable state path, including saved project
+  resume and paid-dispatch-disabled continuity.
+- Historical lifecycle/project-read tests were updated from intermediate
+  code-1/code-2 expectations to the accumulated FBR-2 non-paid contract.
+  Dedicated upload and operation-reconciliation suites remain separate.
+
+### Validation boundary
+
+Tests executed: **none**. No pytest/import/compile/lint/build/workflow dispatch,
+browser/profile launch, EXE launch, Stable update or Remote Desktop action occurred.
+The branch therefore has authored validation requirements but no PASS evidence.
+
+Ruling: pending/UNKNOWN intents do not make the browser transport itself unavailable.
+They block only mutations whose replay could duplicate an effect; health stays ready
+for safe project/media reads and explicit reconciliation while surfacing the warning.
+
+### Exact next coding task
+
+Proceed to the separately scoped **FBR-3 coding preparation** from the approved
+browser-first plan: add the one-shot paid submission/idempotency boundary in source
+while keeping dispatch disabled until the later explicit paid validation gate.
+Do not perform a paid call during coding. FBR-4 parity-matrix source integration and
+FBR-5 default-cutover source changes follow before the final build/EXE validation pass.
