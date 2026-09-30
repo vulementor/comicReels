@@ -14,6 +14,70 @@ if (-not $LockCheckOnly -and $destination -ne 'D:\StableApp\ThoRemix') {
     throw 'This deployment is scoped to D:\StableApp\ThoRemix.'
 }
 
+function Get-UpgradePathObservation {
+    param([string]$Path)
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        return [ordered]@{
+            path=$Path; state='present'; attributes=$item.Attributes.ToString()
+            is_container=[bool]$item.PSIsContainer
+        }
+    } catch [System.Management.Automation.ItemNotFoundException] {
+        return [ordered]@{path=$Path; state='missing'}
+    } catch {
+        # An inaccessible metadata lookup is not proof that the path is absent.
+        return [ordered]@{path=$Path; state='unreadable'; error_type=$_.Exception.GetType().FullName}
+    }
+}
+
+function Write-UpgradeMoveDiagnostic {
+    param(
+        [Parameter(Mandatory=$true)][System.Management.Automation.ErrorRecord]$Failure,
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$true)][string]$Destination,
+        [Parameter(Mandatory=$true)][string]$Label,
+        [Parameter(Mandatory=$true)][int]$Attempt
+    )
+    $observedAt = [DateTime]::UtcNow.ToString('o')
+    $chain = @()
+    $exception = $Failure.Exception
+    while ($null -ne $exception -and $chain.Count -lt 6) {
+        $bits = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$exception.HResult), 0)
+        $derivedCode = $null
+        # Only HRESULT_FROM_WIN32 values encode a Win32 code in the low word.
+        # A managed IOException's generic HRESULT must NOT be called native errno.
+        # https://learn.microsoft.com/windows/win32/api/winerror/nf-winerror-hresult_from_win32
+        if (($bits -band [uint32]4294901760) -eq [uint32]2147942400) {
+            $derivedCode = [int]($bits -band 65535)
+        }
+        $nativeCode = $null
+        if ($exception -is [System.ComponentModel.Win32Exception]) {
+            $nativeCode = $exception.NativeErrorCode
+        }
+        $message = [regex]::Replace([string]$exception.Message, '\s+', ' ')
+        if ($message.Length -gt 600) { $message = $message.Substring(0, 600) }
+        $chain += [ordered]@{
+            type=$exception.GetType().FullName; hresult=('0x{0:X8}' -f $bits)
+            hresult_win32_code=$derivedCode; native_win32_code=$nativeCode; message=$message
+        }
+        $exception = $exception.InnerException
+    }
+    $diagnostic = [ordered]@{
+        schema_version=1; event='upgrade_move_failure'; utc=$observedAt
+        pid=$PID; powershell_version=$PSVersionTable.PSVersion.ToString()
+        process_cwd=[Environment]::CurrentDirectory; powershell_cwd=(Get-Location).Path
+        label=$Label; attempt=$Attempt; max_attempts=8
+        error_id=$Failure.FullyQualifiedErrorId; category=$Failure.CategoryInfo.Category.ToString()
+        exceptions=$chain; exception_chain_truncated=($null -ne $exception)
+        source=(Get-UpgradePathObservation -Path $Source)
+        destination=(Get-UpgradePathObservation -Path $Destination)
+    }
+    # One JSON line per failure goes to the existing durable build stderr/log.
+    # Do not scan processes, dump environment/command lines, change ACLs, or use
+    # GetLastWin32Error here: a cmdlet exception does not preserve that native slot.
+    [Console]::Error.WriteLine('THOREMIX_MOVE_FAILURE ' + ($diagnostic | ConvertTo-Json -Depth 7 -Compress))
+}
+
 function Move-UpgradePart {
     param(
         [Parameter(Mandatory=$true)][string]$Source,
@@ -27,6 +91,12 @@ function Move-UpgradePart {
             return
         } catch {
             $lastError = $_.Exception
+            try {
+                Write-UpgradeMoveDiagnostic -Failure $_ -Source $Source -Destination $Destination -Label $Label -Attempt $attempt
+            } catch {
+                # Logging must never replace the original failure or prevent rollback.
+                try { [Console]::Error.WriteLine('THOREMIX_MOVE_DIAGNOSTIC_UNAVAILABLE') } catch {}
+            }
             $retryable = ($lastError -is [System.IO.IOException]) -or
                          ($lastError -is [System.UnauthorizedAccessException])
             if (-not $retryable -or $attempt -eq 8 -or -not (Test-Path -LiteralPath $Source) -or
