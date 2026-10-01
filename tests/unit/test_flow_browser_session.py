@@ -469,6 +469,58 @@ def test_explicit_reconcile_detects_marker_race_and_does_not_acquire(config, mon
     assert not list(config.user_data_dir.glob('.flow-browser-lease.reconciled-*'))
 
 
+def test_new_marker_records_current_process_creation_identity(config):
+    m = implementation()
+    observed = m._observe_process(m.os.getpid())
+    assert observed.state == 'alive' and observed.started_at
+    with m.FlowProfileLease(config):
+        marker = json.loads((config.user_data_dir / '.flow-browser-lease.json').read_text())
+        assert marker['schema_version'] == 2
+        assert marker['pid'] == m.os.getpid()
+        assert marker['pid_started_at'] == observed.started_at
+
+
+def test_windows_process_observation_uses_creation_identity_for_real_pid():
+    m = implementation()
+    if m.os.name != 'nt':
+        pytest.skip('Windows creation identity contract')
+    current = m._observe_process(m.os.getpid())
+    assert current.state == 'alive'
+    assert current.started_at and current.started_at.startswith('windows-filetime:')
+    child = subprocess.Popen([sys.executable, '-c', 'pass'])
+    child.wait(timeout=15)
+    assert m._observe_process(child.pid).state == 'dead'
+
+
+def test_windows_native_profile_probe_detects_delete_denial(config):
+    m = implementation()
+    if m.os.name != 'nt':
+        pytest.skip('Windows native profile lock contract')
+    import ctypes
+    from ctypes import wintypes
+
+    lock = config.user_data_dir / 'parent.lock'
+    lock.touch()
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                            ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+                            wintypes.HANDLE]
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    handle = create_file(str(lock), 0x80000000, 0x00000001 | 0x00000002,
+                         None, 3, 0x00000080, None)
+    assert handle != ctypes.c_void_p(-1).value
+    try:
+        assert m._native_profile_available(config) is False
+    finally:
+        close_handle(handle)
+    assert m._native_profile_available(config) is True
+
+
 def test_passive_health_does_not_reuse_cached_authenticated_readiness(config):
     m = implementation()
     with m.FlowBrowserSessionProvider(config, context_factory=factory(config, []),
