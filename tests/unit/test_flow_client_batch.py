@@ -362,6 +362,9 @@ class TestRefreshProjectUrls:
 
         assert result["found"] == 3, "the CAMS id is not a media id and is skipped"
         assert result["refreshed"] == 3
+        media_calls = [call for call in client.calls if call["rpcid"] == fb.RPC_MEDIA]
+        assert len(media_calls) == 3
+        assert all(call["project_id"] == PROJECT for call in media_calls)
         written = {(table, tuple(kw)[0]) for table, _, kw in db["writes"]}
         assert written == {
             ("scene", "vertical_image_url"),
