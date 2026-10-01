@@ -13,6 +13,11 @@ args = sys.argv[1:] or ['desktop']
 if args[0] in {'-h', '--help'}:
     from agent.thoremix.cli import main
     raise SystemExit(main(['--root', str(root), *args]))
+if args[0] in {'smoke', '--smoke'}:
+    args[0] = 'smoke'
+    sys.dont_write_bytecode = True
+    from agent.thoremix.cli import main
+    raise SystemExit(main(['--root', str(root), *args]))
 args[0] = args[0].removeprefix('--')
 (root / 'logs').mkdir(exist_ok=True)
 with (root / 'logs' / 'launcher.log').open('a', encoding='utf-8', buffering=1) as log:

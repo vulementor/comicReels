@@ -7,11 +7,11 @@ import sys
 from pathlib import Path
 
 from .config import Settings, atomic_json, change_settings
-from .core import Campaign, RunnerBusyError, campaign_operation, root_operation
-from .producer import FlowKitProducer
 
 
 def status(settings: Settings, *, probe: bool = False) -> dict:
+    from .core import Campaign
+
     campaign = Campaign(settings)
     rows = campaign.jobs()
     result = {'root': settings.root, 'input_dir': settings.input_dir, 'output_dir': str(settings.output),
@@ -33,17 +33,21 @@ def status(settings: Settings, *, probe: bool = False) -> dict:
         except (OSError, ValueError):
             pass
     if probe:
+        from .producer import FlowKitProducer
         result['flowkit'] = FlowKitProducer(campaign).status()
     return result
 
 
 def publish(settings: Settings, package: Path) -> dict:
+    from .core import campaign_operation
+
     with campaign_operation(settings):
         return _publish(settings, package)
 
 
 def _publish(settings: Settings, package: Path, *, only_platforms=None,
              stop_after_publication: bool = False) -> dict:
+    from .core import Campaign
     from .publishing import publish_package
 
     if not settings.publication_authorized:
@@ -100,6 +104,7 @@ def main(argv=None) -> int:
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('init')
     commands.add_parser('desktop')
+    commands.add_parser('smoke')
     s = commands.add_parser('status')
     s.add_argument('--probe', action='store_true')
     commands.add_parser('login')
@@ -166,6 +171,18 @@ def main(argv=None) -> int:
     prepare.add_argument('--metadata', type=Path, required=True)
     prepare.add_argument('--frame', type=Path, action='append', default=[])
     args = parser.parse_args(argv)
+    if args.command == 'smoke':
+        try:
+            from .smoke import smoke_bundle
+            print(json.dumps(smoke_bundle(args.root), ensure_ascii=False))
+            return 0
+        except Exception as exc:  # smoke errors are fixed local contract codes only.
+            print(json.dumps({'state': 'needs_input', 'error_type': type(exc).__name__}, ensure_ascii=False))
+            return 2
+
+    # Import effect-capable runtime modules only after the side-effect-free smoke path.
+    from .core import Campaign, RunnerBusyError, campaign_operation, root_operation
+    from .producer import FlowKitProducer
     try:
         if args.command=='retry-production':
             from .retry import retry_story
