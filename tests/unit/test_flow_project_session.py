@@ -145,3 +145,17 @@ async def test_local_session_state_is_projection_not_remote_create_authority(tmp
     assert resolved["project_id"] == PROJECT_A
     assert fps.current_session_project()["project_id"] == PROJECT_A
     assert client.calls == [{"title": "Current", "force_new": False}]
+
+
+@pytest.mark.asyncio
+async def test_reused_backend_project_preserves_original_local_created_at(tmp_path, monkeypatch):
+    monkeypatch.setattr(fps, "_STATE_PATH", tmp_path / "lease.json")
+    monkeypatch.setattr(fps, "FLOW_SESSION_PROJECT_IDLE_S", 7200.0)
+    client = FakeClient()
+
+    await fps.ensure_session_project(client, title="Session A")
+    before = fps._read_state()["created_at"]
+    await fps.ensure_session_project(client, title="Ignored")
+    after = fps._read_state()["created_at"]
+
+    assert after == before
