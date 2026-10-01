@@ -9,6 +9,7 @@ from agent.config import (
     FLOW_UNUSUAL_ACTIVITY_COOLDOWN_S,
 )
 from agent.services.flow_client import get_flow_client
+from agent.services.flow_backend_status import read_backend_status
 from agent.services.flow_project_session import current_session_project, ensure_session_project
 from agent.services.omni_flash import (
     check_omni_flash_status,
@@ -129,6 +130,14 @@ class UpscaleImageRequest(BaseModel):
     quality: Literal["2k", "4k"] = "2k"
 
 
+async def _require_browser_session(client) -> dict:
+    """Require fresh browser-session readiness without authorizing paid effects."""
+    status = await read_backend_status()
+    if status.get("backend_ready") is not True:
+        raise HTTPException(503, "Browser session not ready")
+    return status
+
+
 async def _resolve_direct_project(client, project_id: str) -> str:
     pid = str(project_id or "").strip()
     if pid:
@@ -147,8 +156,7 @@ async def _resolve_direct_project(client, project_id: str) -> str:
 async def rotate_session_project():
     """Create and pin a fresh Flow session project without submitting generation."""
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     try:
         return await ensure_session_project(client, force_new=True)
     except Exception as exc:
@@ -156,26 +164,25 @@ async def rotate_session_project():
 
 
 @router.get("/status")
-async def extension_status():
-    """Extension health.
-
-    `flow_key_present: false` is expected, not a fault: batchexecute
-    authenticates in the page and there is no bearer token to capture.
-    """
+async def flow_status():
+    """Browser-only Flow status. This endpoint never authorizes paid effects."""
     client = get_flow_client()
+    backend_status = await read_backend_status()
     return {
-        "connected": client.connected,
-        "extension_connected": client.extension_connected,
-        "backend_kind": client.backend_kind,
-        "backend_ready": client.connected,
-        "paid_dispatch_enabled": client.paid_dispatch_enabled,
-        # One transport now. The key stays so the documented pre-flight check
-        # (CLAUDE.md) keeps reading {"transport": "batch", ...}.
-        "transport": "batch",
+        "connected": backend_status.get("backend_ready") is True,
+        "transport": "browser",
+        "backend_kind": "browser",
+        "backend_ready": backend_status.get("backend_ready"),
+        "browser_session_ready": backend_status.get("session_ready"),
+        "authentication": backend_status.get("authentication"),
+        "lease_held": backend_status.get("lease_held"),
+        "reconciliation_required": backend_status.get("reconciliation_required"),
+        "pending_intents": backend_status.get("pending_intents"),
+        "paid_dispatch_enabled": backend_status.get("paid_dispatch_enabled"),
+        "preflight": backend_status.get("preflight"),
+        "backend_error": backend_status.get("error"),
         "flow_project_id": FLOW_PROJECT_ID or None,
         "allow_degraded": FLOW_ALLOW_DEGRADED,
-        "flow_key_present": client._flow_key is not None,
-        "extension_session": client.ws_stats,
         "generation_throttle": {
             "min_interval_s": FLOW_GENERATION_MIN_INTERVAL_S,
             "max_concurrent": FLOW_GENERATION_MAX_CONCURRENT,
@@ -190,8 +197,7 @@ async def extension_status():
 async def get_credits():
     """Get user credits from Google Flow."""
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     result = await client.get_credits()
     if result.get("error"):
         raise HTTPException(502, result["error"])
@@ -202,8 +208,7 @@ async def get_credits():
 async def generate_image(body: GenerateImageRequest):
     """Generate 1-4 images with an explicit Flow image model."""
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     project_id = await _resolve_direct_project(client, body.project_id)
     data = body.model_dump(exclude={"reference_media_ids"})
     data["project_id"] = project_id
@@ -228,8 +233,7 @@ async def generate_video(body: GenerateVideoRequest):
     ``flowkitPolling.mode=batch_operation`` and are polled through ``/check-status``.
     """
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     project_id = await _resolve_direct_project(client, body.project_id)
 
     if body.model_family == "omni_flash":
@@ -275,8 +279,7 @@ async def generate_video_refs(body: GenerateVideoRefsRequest):
     poll its operations through ``/check-status``.
     """
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     project_id = await _resolve_direct_project(client, body.project_id)
 
     if body.model_family == "omni_flash":
@@ -310,8 +313,7 @@ async def generate_video_omni_text(body: GenerateOmniFlashTextVideoRequest):
     Durations 4/6/8/10 seconds map to Flow's ``abra_t2v_<N>s`` models.
     """
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     project_id = await _resolve_direct_project(client, body.project_id)
     try:
         payload = body.model_dump()
@@ -337,8 +339,7 @@ async def generate_video_omni(body: GenerateOmniFlashVideoRequest):
     workflow/media polling path.
     """
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     project_id = await _resolve_direct_project(client, body.project_id)
     try:
         payload = body.model_dump()
@@ -355,8 +356,7 @@ async def generate_video_omni(body: GenerateOmniFlashVideoRequest):
 async def upscale_video(body: UpscaleVideoRequest):
     """Submit video upscale (returns operations for polling)."""
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     result = await client.upscale_video(**body.model_dump())
     if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
@@ -371,8 +371,7 @@ async def check_status(body: CheckStatusRequest):
     Omni Flash: pass ``workflows`` from submit ``flowkitPolling.workflows``.
     """
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
 
     if body.workflows:
         try:
@@ -401,8 +400,7 @@ async def check_status(body: CheckStatusRequest):
 async def check_omni_status(body: CheckOmniStatusRequest):
     """Poll Gemini Omni Flash jobs via workflow primary media IDs."""
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     try:
         return await check_omni_flash_status(
             body.workflows,
@@ -419,8 +417,7 @@ async def check_omni_status(body: CheckOmniStatusRequest):
 async def refresh_project_urls(project_id: str):
     """Bulk refresh all media URLs for a project via per-media get_media calls."""
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     result = await client.refresh_project_urls(project_id)
     if result.get("error"):
         raise HTTPException(502, result["error"])
@@ -435,8 +432,7 @@ async def get_media(media_id: str):
     workflow-backed video generations.
     """
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     result = await client.get_media(media_id)
     if result.get("error"):
         raise HTTPException(502, result["error"])
@@ -450,8 +446,7 @@ async def get_media(media_id: str):
 async def edit_image(body: EditImageRequest):
     """Edit an existing image using the current Flow BASE_IMAGE wire input."""
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     result = await client.edit_image(
         body.prompt,
         body.source_media_id,
@@ -476,8 +471,7 @@ async def export_image(body: UpscaleImageRequest):
     import binascii
 
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     result = await client.upscale_image(
         body.media_id,
         body.project_id,
@@ -506,8 +500,7 @@ async def upload_image(body: UploadImageRequest):
     """Upload a local image file to Google Flow and get a media_id."""
     import base64, mimetypes
     client = get_flow_client()
-    if not client.connected:
-        raise HTTPException(503, "Extension not connected")
+    await _require_browser_session(client)
     project_id = await _resolve_direct_project(client, body.project_id)
     try:
         with open(body.file_path, "rb") as f:
