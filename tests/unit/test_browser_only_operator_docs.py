@@ -29,7 +29,8 @@ def test_generated_agents_source_is_browser_only():
     assert 'Chrome-extension/WebSocket Flow transport' not in source
     assert 'Do not delete the extension early' not in source
     assert 'extension backend' not in source
-    assert 'persistent signed-in Flow browser profile' in source
+    assert 'FlowKit uses one Flow transport' in source
+    assert 'persistent signed-in browser profile' in source
 
 
 def test_checked_in_agents_and_claude_preflight_are_browser_only():
