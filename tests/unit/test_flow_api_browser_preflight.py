@@ -135,3 +135,22 @@ def test_direct_endpoints_use_browser_session_preflight_helper():
     source = inspect.getsource(api)
     assert source.count('await _require_browser_session(client)') >= 10
     assert 'if not client.connected' not in source
+
+
+def test_direct_video_request_schemas_can_carry_idempotency_without_paid_authorization():
+    for model in (
+        api.GenerateVideoRequest,
+        api.GenerateVideoRefsRequest,
+        api.GenerateOmniFlashVideoRequest,
+        api.GenerateOmniFlashTextVideoRequest,
+    ):
+        assert "idempotency_key" in model.model_fields
+        assert "paid_authorization" not in model.model_fields
+
+
+def test_direct_video_endpoints_forward_idempotency_but_never_authorization():
+    source = inspect.getsource(api)
+    assert "idempotency_key" in source
+    assert "paid_authorization=" not in source
+    assert "build_paid_video_validation_session" not in source
+    assert "flow_paid_video_validation" not in source
