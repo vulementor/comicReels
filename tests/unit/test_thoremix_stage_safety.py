@@ -6,12 +6,19 @@ from pathlib import Path
 
 import pytest
 
-from agent.thoremix.config import Settings, isolated_stage_settings
+from agent.thoremix import config as thoremix_config
+from agent.thoremix.config import Settings
 from agent.thoremix.story_operations import StoryOperations
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 START_PY = REPO_ROOT / "deployment" / "thoremix" / "start.py"
+
+
+def _isolated_settings(stage: Path):
+    helper = getattr(thoremix_config, "isolated_stage_settings", None)
+    assert callable(helper), "isolated_stage_settings must exist for StageOnly bundles"
+    return helper(stage)
 
 
 def _fake_bundle(tmp_path: Path) -> Path:
@@ -70,7 +77,7 @@ def test_installed_entrypoint_keeps_legacy_double_dash_desktop_compatibility(tmp
 def test_isolated_stage_settings_are_stage_local_disabled_and_paid_locked(tmp_path):
     stage = (tmp_path / "stage").resolve()
 
-    settings = isolated_stage_settings(stage)
+    settings = _isolated_settings(stage)
 
     assert settings.directory == stage
     assert Path(settings.input_dir).resolve().is_relative_to(stage)
@@ -92,7 +99,7 @@ def test_default_settings_preserve_non_stage_paid_semantics(tmp_path):
 @pytest.mark.parametrize("stage_name", ["images", "video", "highest"])
 def test_paid_story_stages_fail_closed_before_runtime_or_filesystem_use(tmp_path, stage_name):
     stage = (tmp_path / "stage").resolve()
-    settings = isolated_stage_settings(stage)
+    settings = _isolated_settings(stage)
     operations = StoryOperations(settings, runtime=object())
     work = tmp_path / "work"
 
