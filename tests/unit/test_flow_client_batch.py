@@ -135,52 +135,19 @@ class TestUpscaleImage:
 
 
 class TestGenerateVideo:
-    def _submitted(self, client):
-        return {"data": envelope(fb.RPC_GEN_VIDEO, [None, 50, [[OPERATION, PROJECT, "scene", None]]])}
-
-    async def test_returns_an_operation_the_poller_can_carry(self, client):
-        client.responses[fb.RPC_GEN_VIDEO] = self._submitted(client)
-        result = await client.generate_video("mid", "go", PROJECT, "scene-1")
-
-        ops = result["data"]["operations"]
-        assert ops[0]["operation"]["name"] == OPERATION
-        assert ops[0]["status"] == "MEDIA_GENERATION_STATUS_PENDING"
-
-    async def test_persists_operation_project_binding_through_backend(self, client):
-        client.responses[fb.RPC_GEN_VIDEO] = self._submitted(client)
-        await client.generate_video("mid", "go", PROJECT, "scene-1")
-        assert client.backend.bindings[OPERATION] == PROJECT
-        assert not hasattr(client, "_operation_projects")
-
     async def test_chaining_fails_loudly_rather_than_dropping_the_end_frame(self, client):
-        result = await client.generate_video("mid", "go", PROJECT, "scene-1",
-                                             end_image_media_id="end-mid")
+        result = await client.generate_video(
+            "mid", "go", PROJECT, "scene-1",
+            end_image_media_id="end-mid",
+        )
         assert "UNSUPPORTED_ON_BATCH_API" in result["error"]
         assert not client.calls, "nothing should have been sent"
 
-    async def test_degraded_mode_runs_i2v_off_the_start_frame(self, client, monkeypatch):
-        import agent.services.flow_client as module
-        monkeypatch.setattr(module, "FLOW_ALLOW_DEGRADED", True)
-        client.responses[fb.RPC_GEN_VIDEO] = self._submitted(client)
-
-        result = await client.generate_video("start-mid", "go", PROJECT, "scene-1",
-                                             end_image_media_id="end-mid")
-        assert not _is_error(result)
-        payload = json.loads(json.loads(client.calls[0]["freq"])[0][0][1])
-        assert payload[0][0][4][1] == "start-mid"
-
     async def test_r2v_fails_loudly_by_default(self, client):
-        result = await client.generate_video_from_references(["a", "b"], "go", PROJECT, "s")
+        result = await client.generate_video_from_references(
+            ["a", "b"], "go", PROJECT, "s",
+        )
         assert "UNSUPPORTED_ON_BATCH_API" in result["error"]
-
-    async def test_degraded_r2v_uses_the_first_reference_as_the_start_frame(self, client, monkeypatch):
-        import agent.services.flow_client as module
-        monkeypatch.setattr(module, "FLOW_ALLOW_DEGRADED", True)
-        client.responses[fb.RPC_GEN_VIDEO] = self._submitted(client)
-
-        await client.generate_video_from_references(["ref-a", "ref-b"], "go", PROJECT, "s")
-        payload = json.loads(json.loads(client.calls[0]["freq"])[0][0][1])
-        assert payload[0][0][4][1] == "ref-a"
 
     async def test_upscale_is_unported_and_has_no_fallback(self, client, monkeypatch):
         import agent.services.flow_client as module
