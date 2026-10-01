@@ -893,3 +893,93 @@ operation/media public response paths and restart/resume handoff against the Tas
 plan, remove stale extension-era assumptions/comments in this area, author the
 restart/resume contract, and then mark Task 5 source-complete. Do not enter Task 6
 validation or run build/Stable actions.
+
+
+## Browser-only Task 5c — response shape + restart/resume source closure
+
+Date: 2026-10-01.
+Status: **TASK 5 SOURCE_COMPLETE; NOT VALIDATED**.
+
+Source commits:
+- Authored restart/resume and response-shape contract:
+  `720a3fa4704987758c7b1084f610392544e68588`.
+- Sanitize restart poll diagnostics to fixed public codes:
+  `2fba6bd6db2b84ebcd8093d78f9f06a6802b3b74`.
+- Authored shared resume-guard requirement:
+  `a848c3a09f35847514c1c00faac1dcfec8e75309`.
+- Centralize durable operation resume guard in OperationService:
+  `9eb6235a4eedaf11d66a82ff58dbed3d59a55247`.
+
+### Public response-shape contract
+
+- Pending operations retain the existing structure:
+  `operation.name`, optional `operation.metadata.video.mediaId`,
+  `status=MEDIA_GENERATION_STATUS_PENDING`, optional fixed-code `complaint`.
+- Successful operations retain:
+  `operation.name`, `operation.metadata.video.mediaId`,
+  `operation.metadata.video.fifeUrl`, and
+  `status=MEDIA_GENERATION_STATUS_SUCCESSFUL`.
+- `check_video_status()` continues returning
+  `{"status": 200, "data": {"operations": [...]}}`; downstream SDK/worker
+  parsers do not need a transport-specific schema.
+- Poll exceptions and media-read failures no longer expose arbitrary exception
+  text through `complaint`. They are projected to bounded fixed codes such as
+  `POLL_READ_UNAVAILABLE`, `MEDIA_READ_UNAVAILABLE`,
+  `OPERATION_BINDING_REQUIRED` or `OPERATION_BINDING_CONFLICT`.
+
+### Restart/resume contract
+
+- SQLite `request.request_id` remains the durable business record of the remote
+  operation id.
+- Browser state `operation_projects` remains the durable mapping from that
+  remote operation id to its Flow project.
+- `OperationService._resume_saved_operation()` is now the shared guard for
+  scene-video, reference-video and upscale operation workflows.
+- If the request row already has a remote operation id, the service constructs
+  the historical pending-operation shape and sends it directly to the poller
+  **before any submit branch can execute**.
+- Process restart may reset a stale PROCESSING request to PENDING, but its
+  persisted remote operation id remains available. Reprocessing therefore
+  resumes polling instead of intentionally creating another operation.
+- Polling correctness itself is independent of process-local caches after Task
+  5b: durable binding + current project listing + current media read reconstruct
+  the state required after restart.
+- UNKNOWN/no-resend protection is unchanged. A binding write uncertainty or paid
+  UNKNOWN remains non-retryable and is never converted into permission to submit.
+- All browser reads continue through the same single-owner backend executor and
+  existing profile lease/session checks.
+- Production paid dispatch remains locked by default.
+
+### Task 5 source closure
+
+The Task 5 source obligations are now represented:
+1. submitted operation/project binding is persisted durably;
+2. poll/media lookup resolves the durable binding and uses the current leased
+   browser session/project route;
+3. existing pending/success business response shapes are preserved;
+4. restart/resume uses durable DB request id + browser journal rather than RAM
+   operation state.
+
+Ruling: restart correctness uses a DB/business record and browser transport
+journal as two complementary durable authorities. The DB tells the worker which
+remote operation to resume; the browser journal tells the browser which project
+owns it. Neither RAM cache is allowed to substitute for either. Cost if wrong:
+an inconsistent/corrupt durable pair fails closed into pending/reconciliation
+instead of guessing a project or resubmitting.
+
+### Deferred validation
+
+Tests executed: **none**. No pytest/import smoke/compile/lint/build, browser/profile
+launch, paid/CAPTCHA request, EXE launch, Stable/ThoRemix mutation or Remote
+Desktop action occurred. Source read-back is not runtime acceptance.
+
+External KAT/ThoRemix final acceptance from another conversation remains
+non-authoritative for this browser-only branch.
+
+### Next plan task
+
+Proceed to **Task 6 — remove extension-specific API/status/preflight surfaces**.
+Remove extension readiness/session/token fields and messages from Flow status,
+make browser session readiness the only transport preflight, and continue exposing
+reconciliation and paid-dispatch state independently. Source GitHub first; no
+tests/build/Stable until the complete browser-only source plan is finished.
