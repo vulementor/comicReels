@@ -7,11 +7,55 @@ from agent.services import flow_client as fc
 from agent.api import flow as flow_api
 
 
+class ThrottleBackend:
+    """Pure unit-test backend; never opens a real browser/profile."""
+
+    kind = "browser"
+    ready = True
+    paid_dispatch_enabled = False
+    session_owner_key = "unit-throttle"
+
+    async def execute(self, method, params, timeout=300):
+        raise AssertionError("throttle tests replace FlowClient._send")
+
+    async def start(self):
+        pass
+
+    async def close(self):
+        pass
+
+    async def check_readiness(self):
+        return {"ready": True}
+
+    async def open_project(self, project_id):
+        return {"status": 200, "data": {"projectId": project_id}}
+
+    async def ensure_session_project(self, *, title=None, force_new=False):
+        return {"status": 200}
+
+    async def submit_paid_image(self, *args, **kwargs):
+        raise AssertionError("paid image path is outside throttle unit scope")
+
+    async def submit_paid_video(self, *args, **kwargs):
+        raise AssertionError("paid video path is outside throttle unit scope")
+
+    async def bind_operation(self, operation_id, project_id):
+        return {"status": 200, "data": {"operationId": operation_id, "projectId": project_id}}
+
+    async def operation_project(self, operation_id):
+        return {"status": 409, "error": "OPERATION_BINDING_REQUIRED"}
+
+
+@pytest.fixture
+def throttle_client():
+    return fc.FlowClient(backend=ThrottleBackend())
+
+
 @pytest.mark.asyncio
-async def test_generation_rpc_is_globally_serialized(monkeypatch):
+async def test_generation_rpc_is_globally_serialized(monkeypatch, throttle_client):
     monkeypatch.setattr(fc, "FLOW_GENERATION_MAX_CONCURRENT", 1)
     monkeypatch.setattr(fc, "FLOW_GENERATION_MIN_INTERVAL_S", 0.0)
-    client = fc.FlowClient()
+    client = throttle_client
     active = 0
     max_active = 0
 
@@ -33,11 +77,11 @@ async def test_generation_rpc_is_globally_serialized(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_unusual_activity_opens_local_circuit_breaker(monkeypatch):
+async def test_unusual_activity_opens_local_circuit_breaker(monkeypatch, throttle_client):
     monkeypatch.setattr(fc, "FLOW_GENERATION_MAX_CONCURRENT", 1)
     monkeypatch.setattr(fc, "FLOW_GENERATION_MIN_INTERVAL_S", 0.0)
     monkeypatch.setattr(fc, "FLOW_UNUSUAL_ACTIVITY_COOLDOWN_S", 120.0)
-    client = fc.FlowClient()
+    client = throttle_client
     calls = 0
 
     async def fake_send(method, params, timeout=300):
@@ -61,8 +105,8 @@ async def test_unusual_activity_opens_local_circuit_breaker(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_non_generation_rpc_bypasses_generation_guard(monkeypatch):
-    client = fc.FlowClient()
+async def test_non_generation_rpc_bypasses_generation_guard(monkeypatch, throttle_client):
+    client = throttle_client
     client._generation_unusual_until = asyncio.get_running_loop().time() + 60
     calls = 0
 
@@ -117,3 +161,12 @@ async def test_flow_status_exposes_browser_readiness_reconciliation_and_paid_loc
     assert status["reconciliation_required"] is False
     assert status["paid_dispatch_enabled"] is False
     assert "extension_session" not in status
+
+
+def test_throttle_fixture_never_constructs_default_browser_backend(monkeypatch, throttle_client):
+    def fail():
+        raise AssertionError("real browser backend constructor must not run in throttle unit tests")
+
+    monkeypatch.setattr(fc, "FlowClient", fail)
+    assert throttle_client.backend.kind == "browser"
+    assert throttle_client.backend.session_owner_key == "unit-throttle"
