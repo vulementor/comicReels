@@ -152,11 +152,11 @@
 **Interfaces:**
 - Produces: browser-only status UX.
 
-- [ ] Remove extension-connected/disconnected wording from Flow status.
-- [ ] Show browser session readiness, reconciliation warning and paid-dispatch state.
-- [ ] Preserve independent dashboard WebSocket indicator if it is used only for dashboard events.
-- [ ] Do not label dashboard WS as Flow extension transport.
-- [ ] Update checkpoint docs.
+- [x] Remove extension-connected/disconnected wording from Flow status.
+- [x] Show browser session readiness, reconciliation warning and paid-dispatch state.
+- [x] Preserve independent dashboard WebSocket indicator if it is used only for dashboard events.
+- [x] Do not label dashboard WS as Flow extension transport.
+- [x] Update checkpoint docs.
 
 ### Task 8: Remove extension runtime package/code and stale docs
 
