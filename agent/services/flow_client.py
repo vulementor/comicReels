@@ -57,10 +57,6 @@ class FlowClient:
             backend = BrowserFlowBackend()
         self._backend = backend
 
-        # Compatibility sentinel only until Task 6 removes legacy status fields.
-        # It is never populated and cannot route transport.
-        self._flow_key = None
-
         # Existing business-level generation guards remain intact. They do not
         # authorize a paid browser effect; the paid gate remains separate.
         self._generation_slots = asyncio.Semaphore(FLOW_GENERATION_MAX_CONCURRENT)
@@ -73,11 +69,6 @@ class FlowClient:
     @property
     def connected(self) -> bool:
         return self._backend.ready
-
-    @property
-    def extension_connected(self) -> bool:
-        """Temporary read-only compatibility field; Flow extension is removed."""
-        return False
 
     @property
     def backend(self) -> FlowBackend:
@@ -115,21 +106,6 @@ class FlowClient:
             "cooldown_remaining_s": round(remaining, 3),
             "last_unusual_activity_at": self._generation_last_unusual_at,
             "last_unusual_activity_rpc": self._generation_last_unusual_rpc,
-        }
-
-    @property
-    def ws_stats(self) -> dict:
-        """Temporary legacy status shape with no extension transport behind it."""
-        return {
-            "connected": False,
-            "active_connections": 0,
-            "authenticated_connections": 0,
-            "extension_versions": [],
-            "flow_url_supported": None,
-            "connects": 0,
-            "disconnects": 0,
-            "uptime_s": None,
-            "transport_removed": True,
         }
 
     async def refresh_project_urls(self, project_id: str) -> dict:
