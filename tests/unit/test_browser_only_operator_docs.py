@@ -149,3 +149,17 @@ def test_legacy_plan_is_explicitly_historical_not_operator_authority():
     plan = text('PLAN.md')
     assert plan.startswith('# HISTORICAL / SUPERSEDED')
     assert '2026-10-01-flow-browser-only-cutover.md' in plan
+
+
+def test_additional_flow_skills_drop_extension_preflight():
+    for path in (
+        'skills/fk-gen-refs.md',
+        'skills/fk-monitor.md',
+        'skills/fk-refresh-urls.md',
+    ):
+        source = text(path)
+        assert 'extension_connected' not in source
+        assert 'flow_key_present' not in source
+        assert 'Extension not connected' not in source
+        assert 'NO_FLOW_TAB' not in source
+        assert 'browser' in source.lower()
