@@ -194,3 +194,15 @@ def test_all_generated_claude_flow_commands_have_no_stale_extension_preflight():
         source = path.read_text(encoding='utf-8')
         for marker in forbidden:
             assert marker not in source, f'{path.name}: {marker}'
+
+
+def test_current_vision_names_browser_only_flow_foundation():
+    vision = text('docs/comicreels/VISION.md')
+    assert 'FastAPI/React/Chrome Extension' not in vision
+    assert 'browser-only' in vision.lower()
+
+
+def test_segment1_architecture_is_marked_superseded_without_rewriting_history():
+    architecture = text('docs/comicreels/ARCHITECTURE.md')
+    assert 'HISTORICAL / SUPERSEDED' in architecture.splitlines()[0]
+    assert 'FLOW-BROWSER-FIRST-ARCHITECTURE.md' in architecture
