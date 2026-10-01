@@ -1,38 +1,51 @@
 # Flow Kit — Architecture
 
 ## Overview
-Standalone system for AI video production: Chrome extension talks to Google Flow API,
-Python agent manages data locally via SQLite and orchestrates everything.
 
-## Two Components
+Flow Kit is a standalone AI-video production system with a Python/FastAPI/SQLite
+business layer and one Flow transport: `BrowserFlowBackend`. The backend owns a
+leased persistent signed-in `flow.google.com` browser profile and executes
+validated Flow browser recipes through the pinned `kabin_browser_semantic`
+integration.
 
-### 1. Extension (Chrome)
-- Captures Google Flow bearer token (ya29.*) from aisandbox-pa.googleapis.com
-- Solves reCAPTCHA v2 (site key: 6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV)
-- Wraps ALL Google Flow API endpoints
-- Exposes to local agent via WebSocket
-- API methods:
-  - generate_image(prompt, characters[], orientation) → mediaId + imageUrl
-  - generate_video(mediaId, prompt, orientation, endSceneMediaGenId?) → mediaId + videoUrl
-  - upscale_video(mediaId, orientation, resolution) → mediaId + videoUrl
-  - generate_character_image(name, description) → mediaId + imageUrl
-  - get_request_status(requestId) → status + output
-  - get_credits() → remaining credits + tier
+The independent `/ws/dashboard` endpoint carries dashboard events only. It is
+not Flow transport and does not establish Flow readiness.
 
-### 2. Local Agent (Python + SQLite)
-- CRUD for projects, videos, scenes, characters
-- Track requests/jobs
-- Calls extension to gen image/video/upscale
-- Post-processing: trim, merge (ffmpeg), add music
-- Upload YouTube
+## Runtime components
+
+### 1. Browser Flow transport
+
+- `FlowClient` remains the business API.
+- `BrowserFlowBackend` is the sole Flow backend.
+- `FlowBrowserDriver` owns Flow-specific browser recipes.
+- `FlowBrowserSessionProvider` owns one existing persistent profile under an
+  explicit lease.
+- `BrowserStateStore` persists project/operation bindings and effect
+  intent/receipt state.
+- KBS provides generic browser semantics; Flow selectors/RPC meaning remain in
+  Flow Kit.
+- Browser readiness requires current session/authentication/lease evidence.
+- Paid dispatch is a separate explicit gate. A ready browser never grants paid
+  authorization.
+- Unknown paid outcomes are not automatically resent.
+
+### 2. Local agent
+
+- CRUD for projects, videos, scenes and entities.
+- Durable request/job tracking in SQLite.
+- Queue worker and restart/resume behavior.
+- Review/regeneration, post-processing, TTS, concat, branding and YouTube tools.
+- REST API on port 8100.
+- Independent dashboard event WebSocket at `/ws/dashboard`.
 
 ## Stack
-- Extension: Chrome Manifest V3, vanilla JS
-- Agent: Python 3.12+, FastAPI, SQLite
-- Communication: WebSocket (extension ↔ agent)
+
+- Agent: Python 3.10+, FastAPI, SQLite/aiosqlite.
+- Browser transport: persistent Camoufox/Firefox-compatible profile + KBS.
+- Dashboard: React/Vite.
+- Post-processing: ffmpeg/ffprobe.
 
 ---
-
 ## Database Schema
 
 ### character (STANDALONE — not owned by project)
@@ -239,76 +252,48 @@ Scene.generate_image()
 ---
 
 ## File Structure
+
 ```
-google-flow-agent/
-├── extension/
-│   ├── manifest.json
-│   ├── background.js
-│   ├── content.js
-│   ├── popup.html
-│   └── popup.js
+comicReels/
 ├── agent/
-│   ├── main.py
+│   ├── main.py                         # FastAPI + independent dashboard event WS
 │   ├── config.py
-│   ├── db/
-│   │   ├── __init__.py
-│   │   ├── schema.py
-│   │   └── crud.py
-│   ├── models/              ← Pydantic models (API layer)
-│   │   ├── project.py
-│   │   ├── video.py
-│   │   ├── scene.py
-│   │   ├── character.py
-│   │   ├── request.py
-│   │   └── enums.py
-│   ├── sdk/                 ← Video AI SDK
-│   │   ├── models/
-│   │   │   ├── base.py          (DomainModel with save/reload)
-│   │   │   ├── media.py         (MediaAsset, OrientationSlot, GenerationResult)
-│   │   │   ├── scene.py         (Scene — queue + direct execution)
-│   │   │   ├── character.py     (Character — queue + direct execution)
-│   │   │   ├── project.py       (Project — CRUD + relationships)
-│   │   │   └── video.py         (Video — scene management)
-│   │   ├── services/
-│   │   │   ├── operations.py    (OperationService — FlowClient bridge)
-│   │   │   └── result_handler.py (parse_result, apply_scene_result)
-│   │   └── persistence/
-│   │       ├── base.py          (Repository interface)
-│   │       └── sqlite_repository.py
-│   ├── api/
-│   │   ├── projects.py
-│   │   ├── videos.py
-│   │   ├── scenes.py
-│   │   ├── characters.py
-│   │   ├── requests.py
-│   │   └── flow.py
 │   ├── services/
-│   │   ├── flow_client.py
-│   │   ├── scene_chain.py
-│   │   └── post_process.py
+│   │   ├── flow_client.py              # business API
+│   │   ├── flow_browser_backend.py     # sole Flow backend
+│   │   ├── flow_browser_driver.py      # Flow browser recipes
+│   │   ├── flow_browser_session.py     # persistent profile + lease
+│   │   ├── flow_browser_state.py       # durable intent/receipt/bindings
+│   │   └── flow_browser_paid.py        # paid one-shot gate
+│   ├── sdk/
+│   ├── db/
+│   ├── api/
 │   └── worker/
-│       ├── processor.py     (thin dispatcher, uses OperationService)
-│       └── _parsing.py      (shared extraction helpers)
-├── skills/                  ← AI agent skills
-└── requirements.txt
+├── dashboard/                          # React ops console
+├── skills/                             # operator/agent workflows
+├── docs/
+└── requirements-flow-browser.txt       # pinned KBS dependency
 ```
 
----
+## Reference and transport authority
 
-## Reference Repos (READ ONLY)
-- /tmp/veogent-flow-connect/ — existing Chrome extension (study background.js for token capture + WS patterns)
-- /tmp/vgen-agent-backend/src/modules/scene/scene.d.ts — Scene TypeScript types
-- /tmp/vgen-agent-backend/src/modules/request/request.d.ts — Request DTOs with all input data types
-- /tmp/vgen-agent-video-processor/app/video/api_client.py — Google Flow API client (KEY FILE for API endpoints, auth, request/response)
-- /tmp/vgen-agent-video-processor/app/worker/ — Worker patterns
-- /tmp/vgen-agent-video-processor/app/image/ — Image generation patterns
-- /tmp/vgen-agent-video-processor/app/config.py — Config
+- Browser-only cutover plan:
+  `docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md`
+- Browser architecture:
+  `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`
+- Pinned KBS revision:
+  `requirements-flow-browser.txt`
+- Payload-capture guidance:
+  `docs/CAPTURE.md`
 
-## Key Google Flow API Details
-- Endpoint: aisandbox-pa.googleapis.com
-- Auth: Bearer ya29.* token (captured by extension from Google Labs session)
-- reCAPTCHA v2 enterprise required for most calls
-- Each generated asset gets a unique mediaId (base64-encoded protobuf)
-- Video generation is async: submit → poll → get result
-- Upscale also async with same pattern
-- endScene parameter chains video from previous scene's mediaId
+## Current Flow transport details
+
+- Origin: `https://flow.google.com`.
+- Flow calls execute inside the leased signed-in browser session.
+- Authentication/session state remains in the browser profile; credentials,
+  cookies and profile databases are never copied into repository state.
+- Read/poll RPCs may be replayed only through validated browser recipes.
+- Paid image generation uses durable intent/idempotency/receipt gates.
+- `effect=unknown` / reconciliation-required outcomes are non-retryable until
+  explicitly reconciled.
+- The removed Chrome Flow extension is not a fallback or rollback transport.
