@@ -175,6 +175,9 @@ class StoryOperations:
         return self._run(name, request, directory, progress, previous)
 
     def _run(self, name, req, directory, progress, previous=None):
+        if (name in {'images', 'video', 'highest'}
+                and getattr(self.settings, 'paid_operations_authorized', True) is not True):
+            return {'state': 'blocked', 'not_submitted': True, 'reason': 'PAID_OPERATIONS_LOCKED'}
         source = Path(req['source'])
         if name == 'analysis':
             from agent.comicreels.ai_provider import _analysis_prompt
