@@ -31,6 +31,7 @@ class Settings:
     production_mode: str = 'scheduled'
     daily_production_limit: int = 5
     publication_authorized: bool = True
+    paid_operations_authorized: bool = True
     flowkit_url: str = 'http://127.0.0.1:8100'
     social_profile: str = 'thoremix-social'
     affiliate_mode: str = 'required'
@@ -77,6 +78,8 @@ class Settings:
         ZoneInfo(self.timezone)
         if self.production_mode not in {'scheduled', 'ahead'}:
             raise ValueError('Chế độ sản xuất không hợp lệ.')
+        if type(self.paid_operations_authorized) is not bool:
+            raise ValueError('Quyền chạy tác vụ trả phí phải là true hoặc false.')
         if type(self.daily_production_limit) is not int or not 1 <= self.daily_production_limit <= 1000:
             raise ValueError('Hạn mức phải là số nguyên từ 1 đến 1000 clip hoàn thành mỗi ngày.')
         parsed = urlsplit(self.flowkit_url)
@@ -125,6 +128,22 @@ class Settings:
             settings = cls(**value)
         settings.validate()
         return settings
+
+
+def isolated_stage_settings(stage_root: Path | str) -> Settings:
+    """Return a self-contained, inert StageOnly configuration."""
+    root = Path(stage_root).resolve()
+    settings = Settings(
+        root=str(root),
+        input_dir=str(root / 'input'),
+        enabled=False,
+        publication_authorized=False,
+        paid_operations_authorized=False,
+        social_profile='thoremix-stage-only',
+        affiliate_profile_dir=str(root / 'profiles' / 'affiliate'),
+    )
+    settings.validate()
+    return settings
 
 
 def change_settings(root, **changes):

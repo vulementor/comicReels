@@ -566,7 +566,7 @@ from ffpyplayer.player import MediaPlayer
 from agent.services.flow_story_browser import FlowStoryBrowser
 from agent.thoremix.story_operations import StoryOperations
 from agent.thoremix import core, cli, sdk, desktop, producer, publishing, affiliate
-from agent.thoremix.config import Settings, atomic_json
+from agent.thoremix.config import Settings, atomic_json, isolated_stage_settings
 stage = pathlib.Path(os.environ['THOREMIX_BUILD_STAGE']).resolve()
 root = pathlib.Path(os.environ['THOREMIX_BUILD_ROOT']).resolve()
 runtime = (stage / 'runtime' / 'python').resolve()
@@ -600,10 +600,10 @@ assert kat_config.legacy_public_search_fallback is False, 'KAT legacy detail-fir
 assert ShopeeVNProvider.product_offer_url == 'https://affiliate.shopee.vn/offer/product_offer', 'KAT Product Offer surface mismatch'
 assert compileall.compile_dir(stage / 'source', quiet=1)
 if stage_only:
-    s = Settings(root=str(root))
+    s = isolated_stage_settings(stage)
 else:
     s = Settings.load(root) if (root / 'config/settings.json').exists() else Settings(root=str(root))
-if os.environ.get('THOREMIX_AFF_PROFILE'):
+if os.environ.get('THOREMIX_AFF_PROFILE') and not stage_only:
     s = replace(s, affiliate_profile_dir=os.environ['THOREMIX_AFF_PROFILE'])
 s.validate()
 atomic_json(stage / 'config/settings.json', asdict(s))
