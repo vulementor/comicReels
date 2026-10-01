@@ -21,6 +21,7 @@ from agent.services.flow_browser_contract import (
     uuid_value,
     validate_command,
 )
+from agent.services.flow_browser_paid import FlowPaidImageGate
 from agent.services.flow_browser_session import FlowBrowserSessionProvider, FlowProfileConfig
 from agent.services.flow_browser_state import BrowserStateStore
 from agent.services.flow_browser_upload import execute_upload
@@ -44,7 +45,13 @@ _PUBLIC_CODES = frozenset({
     'IMAGE_CONTENT_INVALID', 'IMAGE_MIME_MISMATCH', 'UPLOAD_FAILED',
     'UPLOAD_RECEIPT_UNVERIFIED', 'UPLOAD_RECONCILIATION_REQUIRED',
     'OPERATION_BINDING_REQUIRED', 'OPERATION_BINDING_CONFLICT',
-    'OPERATION_RECEIPT_UNVERIFIED', 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
+    'OPERATION_RECEIPT_UNVERIFIED', 'PAID_DISPATCH_DISABLED',
+    'PAID_AUTHORIZATION_REQUIRED', 'PAID_RECIPE_UNVERIFIED',
+    'PAID_IDEMPOTENCY_INVALID', 'PAID_IDEMPOTENCY_CONFLICT',
+    'PAID_RECONCILIATION_REQUIRED', 'PAID_RECEIPT_UNVERIFIED',
+    'PAID_BROWSER_RECIPE_UNAVAILABLE', 'CAPTCHA_CONFIG_UNVERIFIED',
+    'CAPTCHA_UNAVAILABLE', 'PAID_OUTCOME_UNKNOWN', 'PAID_NOT_SUBMITTED',
+    'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
 })
 
 
@@ -72,10 +79,9 @@ class FlowBrowserDriver:
     treated as permission to create duplicate remote projects.
     """
 
-    paid_dispatch_enabled = False
-
     def __init__(self, config: FlowProfileConfig, state_path: Path,
-                 owner_key: str, *, session_factory=None):
+                 owner_key: str, *, session_factory=None,
+                 paid_dispatch_enabled=False, paid_authorization=None):
         self.config = config
         self._store = BrowserStateStore(Path(state_path), owner_key)
         self._factory = session_factory or FlowBrowserSessionProvider
@@ -83,6 +89,8 @@ class FlowBrowserDriver:
         self._thread = None
         self._phase = 'new'
         self._error = None
+        self.paid_dispatch_enabled = paid_dispatch_enabled is True
+        self._paid_authorization = paid_authorization
 
     def _check_thread(self) -> None:
         if self._thread is not None and self._thread != threading.get_ident():
@@ -168,7 +176,7 @@ class FlowBrowserDriver:
             'media_read': True,
             'operation_reconcile': True,
             'upload': True,
-            'paid_dispatch': False,
+            'paid_dispatch': self.paid_dispatch_enabled,
         }
         report = {
             'backend_kind': 'browser', 'profile': self.config.profile_logical_name,
@@ -179,7 +187,7 @@ class FlowBrowserDriver:
             'observed_at': None, 'session_ready': False,
             'ready': False, 'readiness_scope': 'non_paid_parity',
             'operations_implemented': True, 'capabilities': capabilities,
-            'paid_dispatch_enabled': False,
+            'paid_dispatch_enabled': self.paid_dispatch_enabled,
             'has_saved_project': None, 'pending_intents': None,
             'reconciliation_required': None, 'error': self._error,
         }
@@ -456,6 +464,81 @@ class FlowBrowserDriver:
             require_lease=self._require_lease, prepare=self._open_project_page,
         )
 
+    def _paid_image_dispatch(self, page, script: str, command, timeout: float) -> dict:
+        """Execute one already-journaled paid image request on the owned page."""
+        self._require_lease()
+        current_page = self._require_session()
+        if current_page is not page:
+            raise BrowserCommandError('SESSION_UNVERIFIED')
+        try:
+            result = page.evaluate('mw:' + script, {
+                'projectId': command.project_id,
+                'freq': command.freq,
+                'timeoutMs': max(1000, min(int(float(timeout) * 1000), 120000)),
+            })
+        except Exception:
+            # page.evaluate can fail after fetch started. Never claim non-submission.
+            raise BrowserCommandError('PAID_RECONCILIATION_REQUIRED') from None
+        if not isinstance(result, dict):
+            raise BrowserCommandError('PAID_RECONCILIATION_REQUIRED')
+        return result
+
+    def submit_paid_image(self, params: dict, *, idempotency_key: str,
+                          authorization=None, timeout: float = 300) -> dict:
+        """Submit at most one paid image through the current leased Flow page.
+
+        Disabled/unauthorized calls return before navigation, journal mutation or
+        browser evaluation. On the explicitly enabled validation path, project
+        navigation and recipe loading happen before the durable intent; the gate
+        writes SUBMITTING before the callback can mint CAPTCHA or call fetch.
+        """
+        self._check_thread()
+        gate = FlowPaidImageGate(
+            self._store, lambda _command, _timeout: {
+                'status': 403, 'error': 'PAID_DISPATCH_DISABLED',
+                'effect': 'not_submitted',
+            },
+            dispatch_enabled=self.paid_dispatch_enabled,
+            authorization=self._paid_authorization,
+        )
+        if (not self.paid_dispatch_enabled or self._paid_authorization is None
+                or authorization is not self._paid_authorization):
+            return gate.submit(
+                params, idempotency_key=idempotency_key,
+                authorization=authorization, timeout=timeout,
+            )
+
+        try:
+            command = gate.validate(params)
+            page = self._require_session()
+            self._open_project_page(command.project_id)
+            script = Path(__file__).with_name(
+                'flow_browser_paid_image.js'
+            ).read_text(encoding='utf-8')
+        except BrowserCommandError as error:
+            return {
+                'status': 409,
+                'error': _public_error(error, 'PAID_RECIPE_UNVERIFIED'),
+                'effect': 'not_submitted',
+            }
+        except Exception:
+            return {
+                'status': 409,
+                'error': 'PAID_BROWSER_RECIPE_UNAVAILABLE',
+                'effect': 'not_submitted',
+            }
+
+        gate = FlowPaidImageGate(
+            self._store,
+            lambda cmd, wait: self._paid_image_dispatch(page, script, cmd, wait),
+            dispatch_enabled=True,
+            authorization=self._paid_authorization,
+        )
+        return gate.submit(
+            params, idempotency_key=idempotency_key,
+            authorization=authorization, timeout=timeout,
+        )
+
     def execute(self, command, timeout=300) -> dict:
         self._check_thread()
         capability = getattr(command, 'capability', None)
@@ -465,7 +548,8 @@ class FlowBrowserDriver:
             if capability == 'upload':
                 return self._execute_upload(command)
             # Session-project creation uses ensure_session_project so a durable
-            # intent key exists before the effect. Raw create and paid RPCs stay off.
+            # intent key exists before the effect. Raw create stays unavailable;
+            # paid image dispatch uses submit_paid_image(), never generic execute().
             return {'status': 501, 'error': 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
                     'effect': 'not_submitted'}
         except Exception as error:
