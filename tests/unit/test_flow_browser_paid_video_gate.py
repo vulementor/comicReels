@@ -143,6 +143,7 @@ def test_native_media_receipt_is_durable_and_reused_without_second_dispatch(tmp_
 
 def test_unknown_paid_video_intent_is_never_dispatched_again(tmp_path):
     state = BrowserStateStore(tmp_path / "state.json", "owner")
+    calls = []
     params = operation_params()
     digest = hashlib.sha256("video-unknown".encode()).hexdigest()
     gate = FlowPaidVideoGate(
