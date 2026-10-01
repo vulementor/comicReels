@@ -463,3 +463,80 @@ existing durable paid intent/receipt gate to the same leased browser session and
 route the business single-shot path through it without extension-era retry/cadence
 semantics. Paid dispatch remains disabled by default and unknown outcomes remain
 non-retryable until explicit reconciliation.
+
+
+## Browser-only Task 4a — paid gate to leased browser bridge
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; PAID DISPATCH DEFAULT OFF**.
+Parent task: browser-only Task 4 — concrete browser paid-dispatch integration.
+
+Source commits:
+- Authored leased paid bridge requirements:
+  `60c77d27c7c2a4ce1a46dd353c4012d70e0c700e`.
+- Single-shot browser paid image recipe:
+  `d93371c00b60d1dee3c3a54c0dfc9c4266b7bf9f`.
+- Driver bridge on the owned browser/profile lease:
+  `a610adc610a4de3ffa90e863d6abad826ca566d4a`.
+- Async backend bridge with default lock:
+  `6c09640f293e4f2a3c4cf60c85afc57a945ed92d`.
+- Stable backend protocol addition:
+  `cbc25b952b4031dd9dd175b65a14540ca3b94cdc`.
+- Paid-gate documentation alignment:
+  `e31db0dadb433073faf9f637d91751bf8da690ad`.
+
+### Source contract
+
+- Paid image submission is **not** routed through generic
+  `FlowBrowserDriver.execute()`. It has a dedicated
+  `submit_paid_image(..., idempotency_key=..., authorization=...)` boundary.
+- `BrowserFlowBackend` and `FlowBrowserDriver` both default
+  `paid_dispatch_enabled=False`. The normal application construction path does
+  not pass an enabling flag or authorization object.
+- Disabled calls return `PAID_DISPATCH_DISABLED` before project navigation,
+  journal creation or browser evaluation.
+- The explicitly constructed validation-only path requires exact in-memory
+  authorization-object identity; wrong/missing authorization cannot submit.
+- Before the durable paid gate is entered, the driver validates the one-shot
+  recipe, confirms the existing authenticated leased browser session, navigates
+  to the exact Flow project and loads the static browser recipe.
+- `FlowPaidImageGate` writes the paid `SUBMITTING` intent before its dispatch
+  callback can mint reCAPTCHA or execute the paid fetch.
+- The dispatch callback re-checks the same profile lease/session and refuses a
+  page-object change. It never opens a second browser/profile.
+- `flow_browser_paid_image.js` accepts only `ogiZ0b`, exactly one image
+  variant, the exact project route and the expected CAPTCHA placeholders. It
+  mints one `IMAGE_GENERATION` token using the page's native enterprise
+  reCAPTCHA runtime and performs one fetch only. There is no submit retry loop.
+- A complete HTTP-200 body is returned as `effect=completed`. Once fetch may
+  have started, HTTP rejection/body failure/exception is `effect=unknown`.
+  The durable gate then records UNKNOWN when possible and never auto-resends it.
+- Successful response parsing still requires exactly one generated media UUID;
+  only project/media UUIDs are persisted as the paid receipt. Prompt, CAPTCHA,
+  auth/session data and signed URLs are not stored.
+- Health/capability projection reflects paid dispatch only when an explicitly
+  constructed driver/backend has the paid flag enabled; default application
+  health remains paid-disabled.
+
+### Validation and safety boundary
+
+No paid request was executed. Tests executed: **none**. No pytest/import
+smoke/compile/lint/build, browser/profile launch, EXE launch, Stable/ThoRemix
+mutation or Remote Desktop action occurred.
+
+The native page CAPTCHA recipe is source-authored only and has not been proven
+against the live current Flow frontend. A later explicitly authorized validation
+checkpoint must verify session/captcha/receipt behavior with exactly one approved
+paid shot. Any ambiguous result remains UNKNOWN and is not retried.
+
+The separate KAT/ThoRemix acceptance conversation remains external evidence only
+and does not validate this browser-only branch.
+
+### Next short sub-task
+
+**Task 4b — FlowClient one-shot business routing.** Add an explicit
+idempotency-key/authorization business seam that maps the existing one-image
+generation request into `BrowserFlowBackend.submit_paid_image()`, shapes the
+verified media receipt back into the current FlowClient business response, and
+bypasses the old extension-era multi-wave/retry logic for the browser paid path.
+Keep the normal application paid flag locked and do not run tests or a paid call.
