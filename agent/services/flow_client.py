@@ -27,6 +27,25 @@ from agent.services.flow_backend_selection import BackendSelection, resolve_back
 
 logger = logging.getLogger(__name__)
 
+_POLL_COMPLAINT_CODES = frozenset({
+    "OPERATION_BINDING_REQUIRED",
+    "OPERATION_BINDING_CONFLICT",
+    "BROWSER_NOT_READY",
+    "PROJECT_REQUIRED",
+    "POLL_READ_UNAVAILABLE",
+    "MEDIA_READ_UNAVAILABLE",
+})
+
+
+def _fixed_poll_complaint(error, fallback: str = "POLL_READ_UNAVAILABLE") -> str:
+    """Map poll/read failures to fixed public codes without leaking browser details."""
+    value = str(error or "")
+    for code in _POLL_COMPLAINT_CODES:
+        if code in value:
+            return code
+    return fallback
+
+
 class FlowClient:
     """Flow business API over one browser backend."""
 
@@ -612,9 +631,13 @@ class FlowClient:
             try:
                 out.append(await self._poll_batch_operation(op_id))
             except Exception as e:
-                # A hiccup on one poll round costs a round, not the job.
-                logger.warning("Operation %s poll failed: %s", op_id[:20], e)
-                out.append(_as_pending_operation(op_id, error=str(e)))
+                # A read hiccup costs a poll round, not the job. Keep the
+                # business complaint fixed/non-sensitive for logs and API shape.
+                logger.warning("Operation %s poll failed: %s", op_id[:20],
+                               _fixed_poll_complaint(e))
+                out.append(_as_pending_operation(
+                    op_id, error=_fixed_poll_complaint(e),
+                ))
         return {"status": 200, "data": {"operations": out}}
 
     async def _poll_batch_operation(self, operation_id: str) -> dict:
@@ -622,7 +645,12 @@ class FlowClient:
         try:
             project_id = await self._operation_project_id(operation_id)
         except Exception as error:
-            return _as_pending_operation(operation_id, error=str(error))
+            return _as_pending_operation(
+                operation_id,
+                error=_fixed_poll_complaint(
+                    error, "OPERATION_BINDING_REQUIRED",
+                ),
+            )
 
         media_id, complaint = await self._find_operation_media(
             operation_id, project_id=project_id,
@@ -633,7 +661,11 @@ class FlowClient:
         try:
             urls = await self._batch_media_urls(media_id, project_id=project_id)
         except Exception as error:
-            return _as_pending_operation(operation_id, error=str(error), media_id=media_id)
+            return _as_pending_operation(
+                operation_id,
+                error=_fixed_poll_complaint(error, "MEDIA_READ_UNAVAILABLE"),
+                media_id=media_id,
+            )
 
         if not urls.video:
             # The listing has the id but the clip is still being written.
@@ -660,7 +692,9 @@ class FlowClient:
             try:
                 project_id = await self._operation_project_id(operation_id)
             except Exception as error:
-                return None, str(error)
+                return None, _fixed_poll_complaint(
+                    error, "OPERATION_BINDING_REQUIRED",
+                )
 
         complaint = None
         try:
