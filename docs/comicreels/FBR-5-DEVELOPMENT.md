@@ -760,3 +760,65 @@ Proceed to **Task 5 — browser-only polling/media/operation state alignment**.
 Reconcile FlowClient's remaining in-memory operation caches with the durable
 browser journal, preserve response shapes and restart/resume semantics, and do not
 run tests/build/Stable until the full browser-only source plan is complete.
+
+
+## Browser-only Task 5a — durable operation/project binding authority
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; Task 5 still in progress**.
+
+Source commits:
+- Authored durable operation-binding requirements:
+  `2584221bb2d5848e6fed80d982a736644131cf75`.
+- Add durable binding methods to the backend protocol:
+  `06290f703315f8dce5dcb75d87335c4b07851310`.
+- Driver read/write binding under the existing profile lease:
+  `a39850730ec5ae2cbee0870bb5ec4799bbb5e6b1`.
+- Async backend routing for operation binding:
+  `8d1c1b47fec3ee0ac4053138380a87a44896563d`.
+- Make FlowClient durable binding authoritative:
+  `dcf034ff4a97da223c27a4c9133b01518f75372f`.
+
+### Binding contract
+
+- `FlowClient` no longer owns an in-memory `_operation_projects` map.
+- After a generation submit returns an operation id, FlowClient persists
+  `operation_id -> project_id` through `FlowBackend.bind_operation()`.
+- On browser backend this write runs on the single owner executor, requires the
+  existing profile lease and writes `BrowserStateStore.operation_projects`.
+- A conflicting durable binding fails with the fixed
+  `OPERATION_BINDING_CONFLICT` code and is never overwritten.
+- Poll/restart lookup uses `FlowBackend.operation_project()`; browser driver
+  resolves only the durable store/receipt evidence. FlowClient no longer falls
+  back to `FLOW_PROJECT_ID` or a process-local operation/project cache.
+- If a remote submit appears successful but durable binding cannot be recorded,
+  FlowClient returns `effect=unknown` with `OPERATION_BINDING_REQUIRED`.
+  It does not imply that the remote effect was not submitted or safe to replay.
+- When an operation poll returns a project id, it must agree with the existing
+  durable binding. A mismatch is treated as `OPERATION_BINDING_CONFLICT`.
+- Business operation response shapes remain unchanged:
+  pending entries still use `data.operations[].operation.name` and successful
+  polling still uses the existing media metadata shape.
+- Paid-image intent/receipt/idempotency code is untouched by Task 5a. Production
+  paid dispatch remains locked and UNKNOWN remains non-retryable.
+
+### Restart boundary
+
+A new FlowClient process no longer needs the previous process's operation/project
+map. With the same persisted browser state file and owner/profile identity, the
+backend can resolve the operation's project after restart. Media-id and poll-round
+caches remain process-local for now; removing those restart assumptions belongs to
+Task 5b.
+
+Tests executed: **none**. No pytest/import smoke/compile/lint/build, browser/profile
+launch, paid/CAPTCHA request, EXE launch, Stable/ThoRemix mutation or Remote
+Desktop action occurred.
+
+### Next short sub-task
+
+**Task 5b — restart-safe media discovery/poll cache behavior.** Remove correctness
+dependence on process-local `_operation_media` / `_operation_polls`: durable
+binding + current browser project listing/media reads must be sufficient after
+restart, while disposable caches may remain optimization-only. Preserve the
+existing pending/success response shape and never turn read uncertainty into a
+paid resubmit.
