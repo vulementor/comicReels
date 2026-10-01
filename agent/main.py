@@ -144,17 +144,20 @@ app.include_router(comicreels_router, prefix="/api")
 
 @app.get("/health")
 async def health():
-    client = get_flow_client()
     backend_status = await read_backend_status()
     return {
         "status": "ok",
         "version": app.version,
-        "extension_connected": client.extension_connected,
-        "backend_kind": client.backend_kind,
-        "backend_ready": backend_status['backend_ready'],
-        "paid_dispatch_enabled": client.paid_dispatch_enabled,
+        "transport": "browser",
+        "backend_kind": "browser",
+        "backend_ready": backend_status.get("backend_ready"),
+        "browser_session_ready": backend_status.get("session_ready"),
+        "authentication": backend_status.get("authentication"),
+        "lease_held": backend_status.get("lease_held"),
+        "reconciliation_required": backend_status.get("reconciliation_required"),
+        "pending_intents": backend_status.get("pending_intents"),
+        "paid_dispatch_enabled": backend_status.get("paid_dispatch_enabled"),
         "backend_status": backend_status,
-        "ws": client.ws_stats,
     }
 
 
@@ -162,7 +165,7 @@ async def health():
 
 @app.websocket("/ws/dashboard")
 async def dashboard_ws(websocket: WebSocket):
-    """WebSocket endpoint for dashboard clients (Chrome extension side panel)."""
+    """Dashboard event WebSocket; independent from Flow browser transport."""
     # Reject cross-origin connections (only allow localhost)
     origin = (websocket.headers.get("origin") or "").lower()
     if origin and not any(origin.startswith(p) for p in (
@@ -175,7 +178,7 @@ async def dashboard_ws(websocket: WebSocket):
     q = event_bus.subscribe()
     try:
         # Send initial snapshot
-        client = get_flow_client()
+        backend_status = await read_backend_status()
         controller = get_worker_controller()
         from agent.db import crud
         pending_requests = await crud.list_requests(status="PENDING")
@@ -184,10 +187,15 @@ async def dashboard_ws(websocket: WebSocket):
             "type": "snapshot",
             "health": {
                 "status": "ok",
-                "extension_connected": client.extension_connected,
-                "backend_kind": client.backend_kind,
-                "backend_ready": client.connected,
-                "paid_dispatch_enabled": client.paid_dispatch_enabled,
+                "transport": "browser",
+                "backend_kind": "browser",
+                "backend_ready": backend_status.get("backend_ready"),
+                "browser_session_ready": backend_status.get("session_ready"),
+                "authentication": backend_status.get("authentication"),
+                "lease_held": backend_status.get("lease_held"),
+                "reconciliation_required": backend_status.get("reconciliation_required"),
+                "pending_intents": backend_status.get("pending_intents"),
+                "paid_dispatch_enabled": backend_status.get("paid_dispatch_enabled"),
             },
             "requests": pending_requests + processing_requests,
             "worker": {
