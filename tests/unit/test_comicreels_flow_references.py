@@ -65,8 +65,16 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
         return {"media_id": f"media-{len(uploads)}"}
 
     async def fake_flowkit_status():
+        # Current browser-only preflight contract. Keep the unit test entirely
+        # synthetic: no profile/backend construction and no paid authorization.
         return {
-            "connected": True,
+            "transport": "browser",
+            "backend_ready": True,
+            "browser_session_ready": True,
+            "authentication": "authenticated",
+            "lease_held": True,
+            "reconciliation_required": False,
+            "paid_dispatch_enabled": False,
             "flow_project_id": None,
             "session_project": {"project_id": "flow-project"},
         }
