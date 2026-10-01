@@ -172,7 +172,7 @@
 - [x] Remove obsolete callback/WS configuration used solely by Flow extension transport.
 - [x] Rewrite preflight to browser profile/session readiness.
 - [x] Preserve non-Flow dashboard/websocket facilities that remain independently required.
-- [ ] Update checkpoint docs.
+- [x] Update checkpoint docs.
 
 ### Task 9: Final source integration and validation handoff
 
