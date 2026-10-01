@@ -75,7 +75,7 @@ while ($null -ne $ancestor) {
 }
 Assert-Check ($source.Contains('Assert-StagedPackageMatchesSource -SourcePackageRoot $krpSourcePackage -InstalledPackageRoot $krpInstalledPackage -Label ''KRP''')) 'KRP staged bytes must be verified against pinned source'
 
-Assert-Check ($source.Contains(". (Join-Path $PSScriptRoot 'Child-PythonIsolation.ps1')")) 'build must load child-environment isolation helper'
+Assert-Check ($source.Contains('. (Join-Path $PSScriptRoot ''Child-PythonIsolation.ps1'')')) 'build must load child-environment isolation helper'
 Assert-Check ($source.Contains('Invoke-StagedPipInstall')) 'all staged pip installs must use isolated helper'
 Assert-Check ($source.Contains('Invoke-IsolatedStagedPython')) 'staged Python validation must use isolated helper'
 Assert-Check (-not $source.Contains('$env:PYTHONPATH =')) 'build body must not mutate parent PYTHONPATH'
