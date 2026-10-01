@@ -55,13 +55,15 @@ foreach ($forbidden in @('Stop-Process','Restart-Service','Restart-Computer','pa
 
 $krpInstalls = @($ast.FindAll({ param($node)
     $node -is [System.Management.Automation.Language.CommandAst] -and
-    $node.Extent.Text -match '\bpip\s+install\b' -and
+    $node.GetCommandName() -eq 'Invoke-StagedPipInstall' -and
     $node.Extent.Text.Contains('$dependencies.krp.path')
 }, $true))
 Assert-Check ($krpInstalls.Count -eq 1) 'exactly one pinned KRP refresh command'
 $krpInstall = $krpInstalls[0]
-Assert-Check ($krpInstall.Extent.Text -match '(?<!\S)--force-reinstall(?!\S)') 'KRP refresh must force reinstall'
-Assert-Check ($krpInstall.Extent.Text -match '(?<!\S)--no-deps(?!\S)') 'KRP refresh must not drift dependency pins'
+Assert-Check ($krpInstall.Extent.Text.Contains("'--force-reinstall'")) 'KRP refresh must force reinstall'
+Assert-Check ($krpInstall.Extent.Text.Contains("'--no-deps'")) 'KRP refresh must not drift dependency pins'
+Assert-Check ($krpInstall.Extent.Text.Contains('-Interpreter $stagedPython')) 'KRP refresh must use staged interpreter'
+Assert-Check ($krpInstall.Extent.Text.Contains('-InstallTarget $sitePackages')) 'KRP refresh must use staged install target'
 $ancestor = $krpInstall.Parent
 while ($null -ne $ancestor) {
     if ($ancestor -is [System.Management.Automation.Language.IfStatementAst]) {
