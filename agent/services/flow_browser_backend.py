@@ -73,11 +73,27 @@ class BrowserFlowBackend:
         return getattr(self._driver, method)(*args)
 
     async def check_readiness(self):
-        if not self.ready:
-            return {'backend_kind': self.kind, 'ready': False, 'paid_dispatch_enabled': False}
-        result = await asyncio.shield(self._submit(self._driver.health))
-        self._ready = bool(result.get('ready'))
-        return {**result, 'backend_kind': self.kind, 'paid_dispatch_enabled': False}
+        # A cached False is not a terminal lifecycle state. Observe the SAME
+        # driver on its owner thread; never restart, navigate or switch backend.
+        if self._closing or self._closed:
+            return {'backend_kind': self.kind, 'ready': False, 'session_ready': False,
+                    'state': 'closed' if self._closed else 'closing',
+                    'error': 'BACKEND_CLOSED', 'paid_dispatch_enabled': False}
+        if (self._driver is None or self._start_future is None
+                or not self._start_future.done()):
+            return {'backend_kind': self.kind, 'ready': False, 'session_ready': False,
+                    'state': 'new' if self._start_future is None else 'starting',
+                    'error': 'BROWSER_NOT_READY', 'paid_dispatch_enabled': False}
+        try:
+            result = await asyncio.shield(self._submit(self._driver.health))
+            if not isinstance(result, dict):
+                raise BrowserCommandError('BROWSER_NOT_READY')
+        except Exception:
+            self._ready = False
+            raise
+        self._ready = result.get('ready') is True and not self._closing and not self._closed
+        return {**result, 'backend_kind': self.kind, 'ready': self.ready,
+                'paid_dispatch_enabled': False}
 
     async def execute(self, method, params, timeout=300):
         try:
