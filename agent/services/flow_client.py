@@ -526,12 +526,45 @@ class FlowClient:
             },
         }
 
+    async def submit_paid_video(self, *, rpcid: str, freq: str,
+                                project_id: str, idempotency_key: str | None,
+                                paid_authorization=None,
+                                timeout: float = 120) -> dict:
+        """Submit one existing video RPC through the durable paid browser gate."""
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            return {
+                "status": 409,
+                "error": "PAID_IDEMPOTENCY_REQUIRED",
+                "effect": "not_submitted",
+            }
+        try:
+            return await self._backend.submit_paid_video(
+                {
+                    "rpcid": rpcid,
+                    "freq": freq,
+                    "projectId": project_id,
+                    "captchaAction": fb.CAPTCHA_VIDEO,
+                },
+                idempotency_key=idempotency_key,
+                authorization=paid_authorization,
+                timeout=timeout,
+            )
+        except Exception:
+            # The browser effect may have started before transport failure.
+            return {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
+            }
+
     async def generate_video(self, start_image_media_id: str, prompt: str,
                               project_id: str, scene_id: str,
                               aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
                               end_image_media_id: str = None,
-                              user_paygate_tier: str = "PAYGATE_TIER_TWO") -> dict:
-        """Submit an i2v generation. Returns operations for the poller."""
+                              user_paygate_tier: str = "PAYGATE_TIER_TWO",
+                              idempotency_key: str | None = None,
+                              paid_authorization=None) -> dict:
+        """Submit one i2v effect through the durable paid-video browser gate."""
 
         if end_image_media_id:
             if not FLOW_ALLOW_DEGRADED:
@@ -551,29 +584,59 @@ class FlowClient:
                 prompt, pid, start_image_media_id, aspect=aspect_ratio,
                 model=self._batch_video_model(user_paygate_tier, gen_type, aspect_ratio),
             )
-            payload = await self._batch_payload(
-                fb.RPC_GEN_VIDEO, freq, fb.CAPTCHA_VIDEO, timeout=120,
-                project_id=pid)
-            operation = fb.read_operation(payload)
-        except Exception as e:
-            return _batch_error(e)
+        except Exception as exc:
+            return _batch_error(exc)
+
+        result = await self.submit_paid_video(
+            rpcid=fb.RPC_GEN_VIDEO,
+            freq=freq,
+            project_id=pid,
+            idempotency_key=idempotency_key,
+            paid_authorization=paid_authorization,
+            timeout=120,
+        )
+        if (not isinstance(result, dict) or result.get("status") != 200
+                or result.get("effect") != "completed"):
+            return result if isinstance(result, dict) else {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
+            }
+
+        data = result.get("data")
+        operation_id = data.get("operationId") if isinstance(data, dict) else None
+        if (not isinstance(data, dict) or data.get("receiptKind") != "operation"
+                or not isinstance(operation_id, str)
+                or not self._UUID_RE.match(operation_id)):
+            return {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
+            }
 
         try:
-            await self._remember_operation(operation.operation_id, pid)
-        except Exception as exc:
-            # The remote submit may already have happened. Never suggest that a
-            # missing local binding makes the paid/remote effect safe to resend.
+            await self._remember_operation(operation_id, pid)
+        except Exception:
+            # The paid receipt may already be durable, but callers must not infer
+            # that a missing project binding makes the remote effect safe to resend.
             return {
                 "status": 409,
                 "error": "OPERATION_BINDING_REQUIRED",
                 "effect": "unknown",
             }
-        return {"status": 200, "data": {"operations": [_as_pending_operation(operation.operation_id)]}}
+        return {
+            "status": 200,
+            "data": {"operations": [_as_pending_operation(operation_id)]},
+            "effect": "completed",
+            "reused": result.get("reused") is True,
+        }
 
     async def generate_video_from_references(self, reference_media_ids: list[str],
                                               prompt: str, project_id: str, scene_id: str,
                                               aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
-                                              user_paygate_tier: str = "PAYGATE_TIER_TWO") -> dict:
+                                              user_paygate_tier: str = "PAYGATE_TIER_TWO",
+                                              idempotency_key: str | None = None,
+                                              paid_authorization=None) -> dict:
         """Generate video from multiple reference images (r2v)."""
 
         if not FLOW_ALLOW_DEGRADED:
@@ -591,6 +654,8 @@ class FlowClient:
             start_image_media_id=reference_media_ids[0], prompt=prompt,
             project_id=project_id, scene_id=scene_id, aspect_ratio=aspect_ratio,
             user_paygate_tier=user_paygate_tier,
+            idempotency_key=idempotency_key,
+            paid_authorization=paid_authorization,
         )
 
     async def upscale_video(self, media_id: str, scene_id: str,
