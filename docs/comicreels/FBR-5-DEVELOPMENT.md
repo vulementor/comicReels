@@ -1250,3 +1250,88 @@ references**. Audit runtime/package/config/operator/Guide references, retire the
 Flow extension package only after references are removed, preserve the independent
 dashboard WebSocket/event channel, and update browser-profile/session preflight
 documentation. Source GitHub first; no test/build/Stable before source closure.
+
+
+## Browser-only Task 8a — retire verified Flow-extension runtime/package
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; Task 8 still in progress**.
+
+Source commits:
+- Authored runtime-retirement contract:
+  `13f9ff62aa2a58b4996401b0bed55a72831a900b`.
+- Remove extension-only WS config from `agent/config.py`:
+  `4daae03fbff49388194e15ef14736a4f590502ce`.
+- Remove FlowClient extension status compatibility shims:
+  `8ea115f521b824029a08e0b89893fb48f676921a`.
+- Update browser-session module transport description:
+  `83d97b108ecb1ab846ff7f2324c4af2cd967fdb3`.
+- Replace unpacked-extension setup step with existing persistent-profile handoff:
+  `99ea3cfdfa522b83133cf6bd7d29066bf50742a3`.
+- Remove retired extension metadata ignore:
+  `139647950ccbaa73adcc4f16d35fe4f764e50890`.
+- Delete the 12 verified files under `extension/`:
+  `8ac11c7` through `eb62253`.
+- Align Task-3 authored coverage with fully retired compatibility shims:
+  `81480e53d865951fda13b50a4a456758892fed5b`.
+
+### Verified deletion scope
+
+The removed `extension/` tree was inspected file-by-file before deletion:
+- background service worker connected to `ws://127.0.0.1:9222` and proxied Flow RPC/CAPTCHA;
+- content/injected/hijack scripts bridged Chrome isolated/main worlds and Flow reCAPTCHA;
+- manifest/rules registered Flow/labs host permissions, service worker, DNR and side panel;
+- popup/side-panel files presented extension connection/request UI;
+- bundled reCAPTCHA loader/runtime existed only for that Chrome extension package.
+
+Current source tree at this checkpoint contains **no `extension/` path**.
+
+### Runtime/config cleanup
+
+- `WS_HOST` and `WS_PORT` were removed from `agent/config.py`; they served the
+  retired Flow extension socket and have no remaining Flow lifecycle consumer.
+- Stale config comments saying Flow RPCs execute through the extension were
+  rewritten to the leased browser-session authority.
+- `FlowClient._flow_key`, `extension_connected` and `ws_stats` compatibility
+  shims were removed after Tasks 6/7 stopped consuming them.
+- `setup.sh` no longer instructs loading an unpacked extension. It only points
+  the operator at an **existing** persistent browser-profile config via
+  `COMICREELS_FLOW_PROFILE_CONFIG`; it explicitly does not create, clear or
+  replace that profile.
+- No browser profile directory, cookie/storage state, sign-in state or user data
+  was read, mutated or deleted in this task.
+
+### Preserved non-Flow WebSocket facilities
+
+Ruling: keep `websockets>=12.0` in `requirements.txt`. The project still ships
+the independent `/ws/dashboard` channel and `uvicorn` is installed without the
+`[standard]` extra, so removing the WebSocket implementation dependency here
+could break dashboard events. Cost if wrong: one dependency remains broader than
+strictly necessary; removing it prematurely risks losing dashboard connectivity.
+
+Ruling: keep the existing `chrome-extension://` origin compatibility on
+`/ws/dashboard` for now. It belongs to the independent dashboard event channel,
+not to the deleted Flow RPC transport, and this task deletes only references
+verified as Flow-extension-only. Cost if wrong: an obsolete allowed origin may
+remain until a later security-specific cleanup; removing it now could break an
+unrelated dashboard client.
+
+### Remaining Task 8 work
+
+Legacy operator/docs/generated-copy references still exist outside runtime,
+including `setup.py` generated AGENTS content, `AGENTS.md`, `CLAUDE.md`,
+README/operator docs, Guide/i18n copy and historical skills/checkpoints. These are
+**not** evidence that the extension runtime still exists; they are the next Task 8
+documentation/preflight cleanup slice.
+
+Tests/builds executed: **none**. No browser/profile launch, paid/CAPTCHA request,
+EXE launch, Stable/ThoRemix mutation or Remote Desktop action occurred.
+
+### Next short sub-task
+
+**Task 8b — browser-only operator docs/Guide/generated preflight.** Rewrite
+`setup.py` generated AGENTS source, checked-in AGENTS/CLAUDE/README/operator and
+dashboard Guide copy so setup/preflight uses the persistent browser profile/session
+and current browser health fields. Remove extension/token/9222/load-unpacked
+instructions while preserving historical development ledgers where they are
+explicitly marked historical.
