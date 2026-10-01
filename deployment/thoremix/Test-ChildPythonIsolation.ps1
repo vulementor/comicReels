@@ -42,7 +42,7 @@ $sentinelHash=(Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash
 $pipConfigHash=(Get-FileHash -LiteralPath $pipConfig -Algorithm SHA256).Hash
 
 $hostPython=(Get-Command python -ErrorAction Stop).Source
-& $hostPython -m venv $runtimeRoot
+& $hostPython -m venv --copies $runtimeRoot
 if($LASTEXITCODE -ne 0){ throw 'fixture venv creation failed' }
 $stagedPython=Join-Path $runtimeRoot 'Scripts\python.exe'
 Assert-Check (Test-Path -LiteralPath $stagedPython -PathType Leaf) 'staged test interpreter exists'
