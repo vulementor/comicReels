@@ -1,9 +1,9 @@
-"""FBR-3 one-shot paid image safety boundary.
+"""Durable/idempotent one-shot paid image safety boundary.
 
-This module prepares the durable/idempotent control plane only. It has no browser
-recipe and is not wired into FlowBrowserDriver.execute(). Dispatch is disabled by
-default and requires an exact in-memory authorization object when explicitly
-enabled by the later paid validation checkpoint.
+The browser-only driver/backend may call this gate through a dedicated paid-image
+method; generic execute() remains non-paid. Dispatch is disabled by default and
+requires the exact in-memory authorization object supplied only by an explicitly
+constructed validation path. SUBMITTING/UNKNOWN effects are never auto-replayed.
 """
 from __future__ import annotations
 
