@@ -39,7 +39,9 @@ function decodeStatus(value: unknown): BackendStatus {
     || ![null, 'authenticated', 'signed_out', 'unknown'].includes(value.authentication as null | string)
     || !nullableBoolean(value.lease_held)
     || !(value.pending_intents === null
-      || (Number.isInteger(value.pending_intents) && Number(value.pending_intents) >= 0))
+      || (typeof value.pending_intents === 'number'
+        && Number.isInteger(value.pending_intents)
+        && value.pending_intents >= 0))
     || !nullableBoolean(value.paid_dispatch_enabled)
     || !nullableBoolean(value.reconciliation_required)
     || !(value.error === null || typeof value.error === 'string')
