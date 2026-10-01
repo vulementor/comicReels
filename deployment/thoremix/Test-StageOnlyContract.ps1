@@ -82,6 +82,10 @@ Assert-Check (-not $source.Contains('$env:PYTHONPATH =')) 'build body must not m
 Assert-Check (-not $source.Contains('$env:PYTHONHOME =')) 'build body must not mutate parent PYTHONHOME'
 Assert-Check (-not $source.Contains('"$runtime\python.exe" -m pip')) 'build body must not invoke staged pip directly'
 
+Assert-Check ($source.Contains('from agent.thoremix.config import Settings, atomic_json, isolated_stage_settings')) 'staged validation must import isolated StageOnly settings helper'
+Assert-Check ($source.Contains('s = isolated_stage_settings(stage)')) 'StageOnly settings must be rooted at the exact staged bundle'
+Assert-Check ($source.Contains("if os.environ.get('THOREMIX_AFF_PROFILE') and not stage_only:")) 'StageOnly must ignore production Affiliate profile injection'
+
 $lock = Read-DependencyLock -Path $DependencyLock
 $expectedPins = @{
     krp='1a0d6d0004cbe522483890d87743522243221719'
