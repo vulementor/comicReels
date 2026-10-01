@@ -4,6 +4,7 @@ Development-first policy: source coverage only; execution is deferred until the
 browser-only source pass is complete.
 """
 from pathlib import Path
+import re
 
 import pytest
 
@@ -14,10 +15,22 @@ from agent.worker._parsing import _is_error
 def test_worker_routes_durable_request_id_into_all_paid_image_paths():
     source = Path("agent/worker/processor.py").read_text(encoding="utf-8")
 
-    assert "ops.generate_scene_image(scene, orientation, request_id=rid)" in source
-    assert "ops.edit_scene_image(" in source
-    assert "request_id=rid" in source
-    assert "ops.generate_reference_image(char, pid, request_id=rid)" in source
+    assert re.search(
+        r"ops\.generate_scene_image\(\s*scene,\s*orientation,\s*request_id=rid,?\s*\)",
+        source,
+    )
+    assert re.search(
+        r"ops\.edit_scene_image\(.*?request_id=rid,?\s*\)",
+        source,
+        re.S,
+    )
+    # Both character-generation branches must preserve the same durable rid.
+    assert len(re.findall(
+        r"ops\.generate_reference_image\(\s*char,\s*pid,\s*request_id=rid,?\s*\)",
+        source,
+    )) == 2
+    # Direct character edit bypasses OperationService but must use that rid as
+    # the Flow idempotency key rather than minting a retry-specific key.
     assert "idempotency_key=rid" in source
 
 
