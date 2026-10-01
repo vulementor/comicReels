@@ -4,7 +4,15 @@ param(
     [string]$AffiliateProfile = '',
     [switch]$SkipRuntime,
     [switch]$InstallSchedule,
-    [switch]$LockCheckOnly
+    [switch]$LockCheckOnly,
+    [Alias('NoPromote')][switch]$StageOnly,
+    [string]$StageOutputRoot = '',
+    [string]$RuntimeSource = '',
+    [string]$DependencyLock = (Join-Path $PSScriptRoot 'dependencies.lock.json'),
+    [string]$KrpSource = '',
+    [string]$GptFullProxySource = '',
+    [string]$KbsSource = '',
+    [string]$KatSource = ''
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
@@ -122,46 +130,334 @@ function Copy-UpgradeMirror {
         throw "Upgrade mirror failed for ${Label}: robocopy exit $code"
     }
 }
-# Same byte and file as Python msvcrt.locking; retained for the whole transaction.
-$dataDirectory = Join-Path $destination 'data'
-New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
+
+function Initialize-ThoRemixPathNative {
+    if ('ThoRemixPathNative' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class ThoRemixPathNative {
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr security,
+        uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern uint GetFinalPathNameByHandleW(IntPtr handle, StringBuilder path, uint size, uint flags);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool CloseHandle(IntPtr handle);
+}
+'@
+}
+
+function Resolve-PhysicalBuildPath {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [switch]$AllowMissing
+    )
+    if (-not [IO.Path]::IsPathRooted($Path)) { throw 'BUILD_PATH_MUST_BE_ABSOLUTE' }
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $probe = $full
+    $missing = [Collections.Generic.List[string]]::new()
+    while (-not (Test-Path -LiteralPath $probe)) {
+        if (-not $AllowMissing) { throw "BUILD_PATH_NOT_FOUND: $Path" }
+        $leaf = Split-Path -Leaf $probe
+        $parent = Split-Path -Parent $probe
+        if ([string]::IsNullOrWhiteSpace($leaf) -or [string]::IsNullOrWhiteSpace($parent) -or $parent -eq $probe) {
+            throw "BUILD_PATH_UNRESOLVABLE: $Path"
+        }
+        $missing.Insert(0, $leaf)
+        $probe = $parent
+    }
+    $item = Get-Item -LiteralPath $probe -Force -ErrorAction Stop
+    if (-not $item.PSIsContainer) { throw "BUILD_PATH_ANCESTOR_NOT_DIRECTORY: $probe" }
+
+    Initialize-ThoRemixPathNative
+    $handle = [ThoRemixPathNative]::CreateFileW(
+        $item.FullName, 0, [uint32]7, [IntPtr]::Zero, [uint32]3, [uint32]0x02000000, [IntPtr]::Zero)
+    if ($handle -eq [IntPtr]::new(-1)) { throw "BUILD_PATH_RESOLUTION_FAILED: $probe" }
+    try {
+        $buffer = [Text.StringBuilder]::new(32768)
+        $length = [ThoRemixPathNative]::GetFinalPathNameByHandleW($handle, $buffer, $buffer.Capacity, 0)
+        if ($length -eq 0 -or $length -ge $buffer.Capacity) { throw "BUILD_PATH_RESOLUTION_FAILED: $probe" }
+        $resolved = $buffer.ToString()
+    } finally {
+        [ThoRemixPathNative]::CloseHandle($handle) | Out-Null
+    }
+    if ($resolved.StartsWith('\\?\UNC\', [StringComparison]::OrdinalIgnoreCase)) {
+        $resolved = '\\' + $resolved.Substring(8)
+    } elseif ($resolved.StartsWith('\\?\', [StringComparison]::OrdinalIgnoreCase)) {
+        $resolved = $resolved.Substring(4)
+    }
+    foreach ($part in $missing) { $resolved = Join-Path $resolved $part }
+    return [IO.Path]::GetFullPath($resolved).TrimEnd([IO.Path]::DirectorySeparatorChar)
+}
+
+function Assert-StageOutputIsolated {
+    param(
+        [Parameter(Mandatory=$true)][string]$StageOutputRoot,
+        [Parameter(Mandatory=$true)][string]$LiveRoot
+    )
+    $stage = Resolve-PhysicalBuildPath -Path $StageOutputRoot -AllowMissing
+    $live = Resolve-PhysicalBuildPath -Path $LiveRoot -AllowMissing
+    $comparison = [StringComparison]::OrdinalIgnoreCase
+    $separator = [IO.Path]::DirectorySeparatorChar
+    $stageChild = $stage.Equals($live, $comparison) -or $stage.StartsWith($live + $separator, $comparison)
+    $liveChild = $live.StartsWith($stage + $separator, $comparison)
+    if ($stageChild -or $liveChild) { throw 'STAGE_OUTPUT_OVERLAPS_LIVE_STABLE' }
+    return [ordered]@{stage=$stage; live=$live}
+}
+
+function Normalize-GitRemote {
+    param([Parameter(Mandatory=$true)][string]$Remote)
+    $value = $Remote.Trim().TrimEnd('/')
+    if ($value.EndsWith('.git', [StringComparison]::OrdinalIgnoreCase)) {
+        $value = $value.Substring(0, $value.Length - 4)
+    }
+    if ($value -match '^https://github\.com/(?<slug>[^/]+/[^/]+)$') {
+        return ('github.com/' + $Matches.slug).ToLowerInvariant()
+    }
+    if ($value -match '^git@github\.com:(?<slug>[^/]+/[^/]+)$') {
+        return ('github.com/' + $Matches.slug).ToLowerInvariant()
+    }
+    if ($value -match '^ssh://git@github\.com/(?<slug>[^/]+/[^/]+)$') {
+        return ('github.com/' + $Matches.slug).ToLowerInvariant()
+    }
+    throw 'DEPENDENCY_REMOTE_UNSUPPORTED'
+}
+
+function Read-DependencyLock {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw 'DEPENDENCY_LOCK_MISSING' }
+    try { $lock = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json }
+    catch { throw 'DEPENDENCY_LOCK_INVALID' }
+    if ($lock.schema_version -ne 1 -or
+            [string]$lock.source_validated_base -notmatch '^[0-9a-f]{40}$') {
+        throw 'DEPENDENCY_LOCK_INVALID'
+    }
+    $expected = @('krp','gpt_fullproxy','kbs','kat')
+    $actual = @($lock.dependencies.PSObject.Properties.Name | Sort-Object)
+    if (($actual -join ',') -ne (($expected | Sort-Object) -join ',')) { throw 'DEPENDENCY_LOCK_INVALID' }
+    foreach ($name in $expected) {
+        $entry = $lock.dependencies.$name
+        if ($null -eq $entry -or
+                [string]$entry.repository -notmatch '^https://github\.com/[^/]+/[^/]+\.git$' -or
+                [string]$entry.commit -notmatch '^[0-9a-f]{40}$' -or
+                [string]::IsNullOrWhiteSpace([string]$entry.package)) {
+            throw 'DEPENDENCY_LOCK_INVALID'
+        }
+    }
+    return $lock
+}
+
+function Assert-DependencyCheckout {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$true)]$Spec
+    )
+    $codeName = $Name.ToUpperInvariant().Replace('-', '_')
+    if ([string]::IsNullOrWhiteSpace($Source) -or -not [IO.Path]::IsPathRooted($Source)) {
+        throw ('DEPENDENCY_' + $codeName + '_SOURCE_REQUIRED')
+    }
+    if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+        throw ('DEPENDENCY_' + $codeName + '_SOURCE_MISSING')
+    }
+    $sourcePath = (Resolve-Path -LiteralPath $Source).Path
+    $inside = (& git -C $sourcePath rev-parse --is-inside-work-tree 2>$null)
+    if ($LASTEXITCODE -ne 0 -or ($inside | Select-Object -First 1).Trim() -ne 'true') {
+        throw ('DEPENDENCY_' + $codeName + '_NOT_GIT')
+    }
+    $dirty = @(& git -C $sourcePath status --porcelain)
+    if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw ('DEPENDENCY_' + $codeName + '_DIRTY') }
+    $head = (& git -C $sourcePath rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $head -ne [string]$Spec.commit) { throw ('DEPENDENCY_' + $codeName + '_SHA_MISMATCH') }
+    $origin = (& git -C $sourcePath remote get-url origin).Trim()
+    if ($LASTEXITCODE -ne 0 -or
+            (Normalize-GitRemote $origin) -ne (Normalize-GitRemote ([string]$Spec.repository))) {
+        throw ('DEPENDENCY_' + $codeName + '_ORIGIN_MISMATCH')
+    }
+    return [ordered]@{
+        name=$Name; path=$sourcePath; repository=[string]$Spec.repository
+        commit=$head; package=[string]$Spec.package
+    }
+}
+
+function Assert-KbsSourcePinMatchesRequirements {
+    param(
+        [Parameter(Mandatory=$true)][string]$Repo,
+        [Parameter(Mandatory=$true)]$KbsSpec
+    )
+    $requirements = Get-Content -LiteralPath (Join-Path $Repo 'requirements-flow-browser.txt') -Raw -Encoding UTF8
+    $matches = [regex]::Matches(
+        $requirements,
+        'kabin-browser-semantic\s*@\s*git\+https://github\.com/vulementor/kabin_browser_semantic\.git@(?<sha>[0-9a-f]{40})')
+    if ($matches.Count -ne 1 -or $matches[0].Groups['sha'].Value -ne [string]$KbsSpec.commit) {
+        throw 'KBS_PIN_MISMATCH_WITH_FLOW_REQUIREMENTS'
+    }
+}
+
+function New-BuildManifest {
+    param(
+        [Parameter(Mandatory=$true)][string]$SourceCommit,
+        [Parameter(Mandatory=$true)][string]$ValidatedBase,
+        [Parameter(Mandatory=$true)][bool]$StageOnlyMode,
+        [Parameter(Mandatory=$true)][string]$StagePath,
+        [Parameter(Mandatory=$true)]$DependencyLockData,
+        [Parameter(Mandatory=$true)][hashtable]$Files
+    )
+    $dependencies = [ordered]@{}
+    foreach ($name in @('krp','gpt_fullproxy','kbs','kat')) {
+        $spec = $DependencyLockData.dependencies.$name
+        $dependencies[$name] = [ordered]@{
+            repository=[string]$spec.repository
+            commit=[string]$spec.commit
+            package=[string]$spec.package
+        }
+    }
+    return [ordered]@{
+        schema_version=2
+        built_at=[DateTime]::UtcNow.ToString('o')
+        source_commit=$SourceCommit
+        validated_base=$ValidatedBase
+        source_state='clean'
+        stage_only=$StageOnlyMode
+        promotion_performed=(-not $StageOnlyMode)
+        stage_path=$StagePath
+        dependencies=$dependencies
+        files=$Files
+        ai_provider='gpt_fullproxy'
+    }
+}
+
+function Assert-ManifestHashes {
+    param(
+        [Parameter(Mandatory=$true)][string]$Stage,
+        [Parameter(Mandatory=$true)][string]$ManifestPath
+    )
+    try { $manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+    catch { throw 'BUILD_MANIFEST_INVALID' }
+    if ($manifest.schema_version -ne 2 -or $null -eq $manifest.files) { throw 'BUILD_MANIFEST_INVALID' }
+    $stageFull = [IO.Path]::GetFullPath($Stage).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    foreach ($property in $manifest.files.PSObject.Properties) {
+        $candidate = [IO.Path]::GetFullPath((Join-Path $Stage ([string]$property.Name)))
+        if (-not $candidate.StartsWith($stageFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+                -or -not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            throw 'BUILD_MANIFEST_HASH_MISMATCH'
+        }
+        $actual = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne [string]$property.Value) { throw 'BUILD_MANIFEST_HASH_MISMATCH' }
+    }
+    return $true
+}
+
+
+$liveDestination = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar)
+if ($liveDestination -ne 'D:\StableApp\ThoRemix') {
+    throw 'This deployment is scoped to D:\StableApp\ThoRemix.'
+}
+if ($StageOnly -and $LockCheckOnly) { throw 'StageOnly and LockCheckOnly are mutually exclusive.' }
+if ($StageOnly -and $InstallSchedule) { throw 'StageOnly never installs or changes schedules.' }
+
+if ($LockCheckOnly) {
+    $dataDirectory = Join-Path $liveDestination 'data'
+    New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
+    $checkLease = [IO.File]::Open((Join-Path $dataDirectory 'runner.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
+    try {
+        try { $checkLease.Lock(0, 1) }
+        catch { throw 'ThoRemix operation or login is active; bundle upgrade refused before installed files were changed.' }
+        try { Write-Output 'Upgrade lock available; no bundle files changed.' }
+        finally { $checkLease.Unlock(0, 1) }
+    } finally { $checkLease.Dispose() }
+    return
+}
+
+$dependencyLockData = Read-DependencyLock -Path $DependencyLock
+$revision = (& git -C $repo rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $revision -notmatch '^[0-9a-f]{40}$') { throw 'SOURCE_REVISION_UNAVAILABLE' }
+$sourceDirty = @(& git -C $repo status --porcelain)
+if ($LASTEXITCODE -ne 0 -or $sourceDirty.Count -ne 0) { throw 'SOURCE_NOT_CLEAN' }
+$validatedBase = [string]$dependencyLockData.source_validated_base
+& git -C $repo merge-base --is-ancestor $validatedBase $revision
+if ($LASTEXITCODE -ne 0) { throw 'SOURCE_VALIDATED_BASE_NOT_ANCESTOR' }
+
+Assert-KbsSourcePinMatchesRequirements -Repo $repo -KbsSpec $dependencyLockData.dependencies.kbs
+$dependencies = [ordered]@{
+    krp = Assert-DependencyCheckout -Name 'krp' -Source $KrpSource -Spec $dependencyLockData.dependencies.krp
+    gpt_fullproxy = Assert-DependencyCheckout -Name 'gpt_fullproxy' -Source $GptFullProxySource -Spec $dependencyLockData.dependencies.gpt_fullproxy
+    kbs = Assert-DependencyCheckout -Name 'kbs' -Source $KbsSource -Spec $dependencyLockData.dependencies.kbs
+    kat = Assert-DependencyCheckout -Name 'kat' -Source $KatSource -Spec $dependencyLockData.dependencies.kat
+}
+
+$workspaceRoot = Split-Path -Parent (Split-Path -Parent $workspace)
+$stageBase = $null
+if ($StageOnly) {
+    if ([string]::IsNullOrWhiteSpace($StageOutputRoot)) {
+        $StageOutputRoot = Join-Path $workspaceRoot 'validation\thoremix-stageonly'
+    }
+    $isolation = Assert-StageOutputIsolated -StageOutputRoot $StageOutputRoot -LiveRoot $liveDestination
+    $stageBase = $isolation.stage
+    New-Item -ItemType Directory -Path $stageBase -Force | Out-Null
+}
+
 $lease = $null
 $locked = $false
 try {
-    $lease = [IO.File]::Open((Join-Path $dataDirectory 'runner.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
-    try { $lease.Lock(0, 1); $locked = $true }
-    catch { throw 'ThoRemix operation or login is active; bundle upgrade refused before installed files were changed.' }
-    if ($lease.Length -eq 0) { $lease.WriteByte(48); $lease.Flush() }
-    if ($LockCheckOnly) { Write-Output 'Upgrade lock available; no bundle files changed.'; return }
-    if (Get-Process -Name ThoRemix -ErrorAction SilentlyContinue) { throw 'Close ThoRemix before upgrading its bundle.' }
+    if (-not $StageOnly) {
+        $dataDirectory = Join-Path $liveDestination 'data'
+        New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
+        $lease = [IO.File]::Open((Join-Path $dataDirectory 'runner.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
+        try { $lease.Lock(0, 1); $locked = $true }
+        catch { throw 'ThoRemix operation or login is active; bundle upgrade refused before installed files were changed.' }
+        if ($lease.Length -eq 0) { $lease.WriteByte(48); $lease.Flush() }
+        if (Get-Process -Name ThoRemix -ErrorAction SilentlyContinue) { throw 'Close ThoRemix before upgrading its bundle.' }
+    }
 
-    $stage = Join-Path $destination ('.upgrade-stage-' + [Guid]::NewGuid().ToString('N'))
-    $backup = Join-Path $destination ('.upgrade-backup-' + [Guid]::NewGuid().ToString('N'))
+    $stage = if ($StageOnly) {
+        Join-Path $stageBase ('stage-' + $revision.Substring(0,12) + '-' + [Guid]::NewGuid().ToString('N'))
+    } else {
+        Join-Path $liveDestination ('.upgrade-stage-' + [Guid]::NewGuid().ToString('N'))
+    }
+    if ($StageOnly) {
+        Assert-StageOutputIsolated -StageOutputRoot $stage -LiveRoot $liveDestination | Out-Null
+    }
     foreach ($folder in @('app', 'source\agent\thoremix', 'runtime\python', 'runtime\bin', 'config')) {
         New-Item -ItemType Directory -Path (Join-Path $stage $folder) -Force | Out-Null
     }
     $runtime = Join-Path $stage 'runtime\python'
     if ($SkipRuntime) {
-        & robocopy (Join-Path $destination 'runtime') (Join-Path $stage 'runtime') /E /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($StageOnly -and [string]::IsNullOrWhiteSpace($RuntimeSource)) {
+            throw 'STAGE_ONLY_RUNTIME_SOURCE_REQUIRED'
+        }
+        $runtimeSourcePath = if ([string]::IsNullOrWhiteSpace($RuntimeSource)) {
+            Join-Path $liveDestination 'runtime'
+        } else {
+            if (-not [IO.Path]::IsPathRooted($RuntimeSource) -or -not (Test-Path -LiteralPath $RuntimeSource -PathType Container)) {
+                throw 'RUNTIME_SOURCE_INVALID'
+            }
+            (Resolve-Path -LiteralPath $RuntimeSource).Path
+        }
+        if ($StageOnly) {
+            Assert-StageOutputIsolated -StageOutputRoot $runtimeSourcePath -LiveRoot $liveDestination | Out-Null
+        }
+        & robocopy $runtimeSourcePath (Join-Path $stage 'runtime') /E /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -gt 7) { throw 'Existing runtime staging failed.' }
     } else {
         & robocopy $PythonHome $runtime /E /XD (Join-Path $PythonHome 'Lib\site-packages') (Join-Path $PythonHome 'Doc') (Join-Path $PythonHome 'Scripts') (Join-Path $PythonHome 'Lib\test') __pycache__ /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -gt 7) { throw 'Python runtime staging failed.' }
         & "$runtime\python.exe" -m ensurepip --upgrade | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Staged pip bootstrap failed.' }
-        & "$runtime\python.exe" -m pip install --disable-pip-version-check 'httpx==0.28.1' 'pillow==12.3.0' 'tzdata==2026.4' 'pydantic==2.13.5' 'PyYAML==6.0.3' 'camoufox==0.5.6' (Join-Path $workspace 'kabin_reel_poster')
+        & "$runtime\python.exe" -m pip install --disable-pip-version-check 'httpx==0.28.1' 'pillow==12.3.0' 'tzdata==2026.4' 'pydantic==2.13.5' 'PyYAML==6.0.3' 'camoufox==0.5.6' $dependencies.krp.path
         if ($LASTEXITCODE -ne 0) { throw 'Staged dependencies failed.' }
         foreach ($binary in @('ffmpeg.exe', 'ffprobe.exe')) {
             Copy-Item -LiteralPath (Join-Path 'C:\ffmpeg\bin' $binary) -Destination (Join-Path $stage 'runtime\bin') -Force
         }
     }
-    # Also update desktop-only dependencies when reusing an existing browser runtime.
-    & "$runtime\python.exe" -m pip install --disable-pip-version-check 'pystray==0.19.5' 'faster-whisper==1.2.1' 'aiosqlite==0.22.1' 'ffpyplayer==4.5.3' (Join-Path $workspace 'gpt_fullproxy') (Join-Path $workspace 'kabin_browser_semantic')
+
+    & "$runtime\python.exe" -m pip install --disable-pip-version-check 'pystray==0.19.5' 'faster-whisper==1.2.1' 'aiosqlite==0.22.1' 'ffpyplayer==4.5.3' $dependencies.gpt_fullproxy.path $dependencies.kbs.path
     if ($LASTEXITCODE -ne 0) { throw 'Staged system tray dependency installation failed.' }
-    # Refresh canonical KAT in BOTH build modes, including a copied -SkipRuntime.
-    # Replace same-version toolkit snapshots without changing runtime dependency pins.
-    & "$runtime\python.exe" -m pip install --disable-pip-version-check --force-reinstall --no-deps (Join-Path $workspace 'kabin_affiliate_toolkit')
+    & "$runtime\python.exe" -m pip install --disable-pip-version-check --force-reinstall --no-deps $dependencies.kat.path
     if ($LASTEXITCODE -ne 0) { throw 'Staged KAT refresh failed; installed bundle was not replaced.' }
+
     Copy-Item -LiteralPath (Join-Path $repo 'agent\__init__.py') -Destination (Join-Path $stage 'source\agent')
     Copy-Item -LiteralPath (Join-Path $repo 'agent\config.py') -Destination (Join-Path $stage 'source\agent')
     Copy-Item -LiteralPath (Join-Path $repo 'agent\models.json') -Destination (Join-Path $stage 'source\agent')
@@ -179,7 +475,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Staged launcher compilation failed.' }
 
     $savedEnvironment = @{}
-    foreach ($name in @('PYTHONPATH', 'PYTHONUTF8', 'PYTHONTZPATH', 'PATH', 'THOREMIX_BUILD_ROOT', 'THOREMIX_BUILD_STAGE', 'THOREMIX_AFF_PROFILE')) {
+    foreach ($name in @('PYTHONPATH', 'PYTHONUTF8', 'PYTHONTZPATH', 'PATH', 'THOREMIX_BUILD_ROOT', 'THOREMIX_BUILD_STAGE', 'THOREMIX_AFF_PROFILE', 'THOREMIX_STAGE_ONLY')) {
         $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
     try {
@@ -187,10 +483,10 @@ try {
         $env:PYTHONUTF8 = '1'
         $env:PYTHONTZPATH = Join-Path $runtime 'Lib\site-packages\tzdata\zoneinfo'
         $env:PATH = (Join-Path $stage 'runtime\bin') + ';' + $env:PATH
-        $env:THOREMIX_BUILD_ROOT = $destination
+        $env:THOREMIX_BUILD_ROOT = $liveDestination
         $env:THOREMIX_BUILD_STAGE = $stage
         $env:THOREMIX_AFF_PROFILE = $AffiliateProfile
-        # Do not invoke lock-taking CLI init from inside the .NET lock.
+        $env:THOREMIX_STAGE_ONLY = if ($StageOnly) { '1' } else { '0' }
         $validation = @'
 import compileall, os, pathlib, subprocess
 from dataclasses import asdict, replace
@@ -207,6 +503,7 @@ from agent.thoremix import core, cli, sdk, desktop, producer, publishing, affili
 from agent.thoremix.config import Settings, atomic_json
 stage = pathlib.Path(os.environ['THOREMIX_BUILD_STAGE'])
 root = pathlib.Path(os.environ['THOREMIX_BUILD_ROOT'])
+stage_only = os.environ.get('THOREMIX_STAGE_ONLY') == '1'
 assert pathlib.Path(core.__file__).resolve().is_relative_to(stage.resolve())
 assert callable(getattr(KRPClient, 'recover_pre_submit', None)), 'KRP runtime lacks durable pre-submit recovery'
 kat_fields = SelectionPolicy.model_fields
@@ -216,7 +513,10 @@ assert kat_config.catalog_first is True, 'KAT runtime must default to Product Of
 assert kat_config.legacy_public_search_fallback is False, 'KAT legacy detail-first fallback must remain opt-in'
 assert ShopeeVNProvider.product_offer_url == 'https://affiliate.shopee.vn/offer/product_offer', 'KAT Product Offer surface mismatch'
 assert compileall.compile_dir(stage / 'source', quiet=1)
-s = Settings.load(root) if (root / 'config/settings.json').exists() else Settings(root=str(root))
+if stage_only:
+    s = Settings(root=str(root))
+else:
+    s = Settings.load(root) if (root / 'config/settings.json').exists() else Settings(root=str(root))
 if os.environ.get('THOREMIX_AFF_PROFILE'):
     s = replace(s, affiliate_profile_dir=os.environ['THOREMIX_AFF_PROFILE'])
 s.validate()
@@ -226,8 +526,6 @@ for name in ('ffmpeg.exe', 'ffprobe.exe'):
     subprocess.run([str(stage / 'runtime/bin' / name), '-version'], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 '@
-        # python -c places cwd ahead of PYTHONPATH. Launch inside staged source
-        # so a canonical-repository cwd cannot shadow the bundle being tested.
         Push-Location -LiteralPath (Join-Path $stage 'source')
         try {
             & "$runtime\python.exe" -c $validation
@@ -236,27 +534,39 @@ for name in ('ffmpeg.exe', 'ffprobe.exe'):
     } finally {
         foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
     }
+
     $files = @(Get-ChildItem -LiteralPath (Join-Path $stage 'source') -Recurse -File | Where-Object { $_.Extension -in @('.py','.js','.json') }) + @(Get-Item -LiteralPath (Join-Path $stage 'ThoRemix.exe'))
     foreach ($packageName in @('kabin_reel_poster', 'kabin_affiliate_toolkit', 'pystray', 'gpt_fullproxy', 'kabin_browser_semantic')) {
         $files += @(Get-ChildItem -LiteralPath (Join-Path $runtime "Lib\site-packages\$packageName") -Recurse -File -Filter '*.py')
     }
     $hashes = @{}
-    foreach ($file in $files) { $hashes[$file.FullName.Substring($stage.Length + 1)] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLower() }
-    $revision = & git -C $repo rev-parse HEAD
-    @{schema_version=1; built_at=(Get-Date).ToUniversalTime().ToString('o'); base_commit=$revision; source_state='working-tree'; files=$hashes; ai_provider='gpt_fullproxy'} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $stage 'build-manifest.json') -Encoding utf8
+    foreach ($file in $files) {
+        $relative = $file.FullName.Substring($stage.Length + 1)
+        $hashes[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $manifest = New-BuildManifest -SourceCommit $revision -ValidatedBase $validatedBase -StageOnlyMode ([bool]$StageOnly) -StagePath $stage -DependencyLockData $dependencyLockData -Files $hashes
+    $manifestPath = Join-Path $stage 'build-manifest.json'
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Assert-ManifestHashes -Stage $stage -ManifestPath $manifestPath | Out-Null
 
+    if ($StageOnly) {
+        Write-Output ("STAGE_ONLY_READY|" + $stage + "|source=" + $revision + "|validated_base=" + $validatedBase + "|promotion_performed=false")
+        return
+    }
+
+    $backup = Join-Path $liveDestination ('.upgrade-backup-' + [Guid]::NewGuid().ToString('N'))
     $parts = @('runtime', 'source', 'app', 'ThoRemix.exe')
-    if ($AffiliateProfile -or -not (Test-Path -LiteralPath (Join-Path $destination 'config\settings.json'))) { $parts += 'config\settings.json' }
+    if ($AffiliateProfile -or -not (Test-Path -LiteralPath (Join-Path $liveDestination 'config\settings.json'))) { $parts += 'config\settings.json' }
     $parts += 'build-manifest.json'
     $promoted = [Collections.Generic.List[object]]::new()
     New-Item -ItemType Directory -Path $backup | Out-Null
     try {
         foreach ($part in $parts) {
             $incoming = [IO.Path]::GetFullPath((Join-Path $stage $part))
-            $live = [IO.Path]::GetFullPath((Join-Path $destination $part))
+            $live = [IO.Path]::GetFullPath((Join-Path $liveDestination $part))
             $old = [IO.Path]::GetFullPath((Join-Path $backup $part))
             foreach ($path in @($incoming, $live, $old)) {
-                if (-not $path.StartsWith($destination + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Upgrade path escaped its owned destination.' }
+                if (-not $path.StartsWith($liveDestination + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Upgrade path escaped its owned destination.' }
             }
             New-Item -ItemType Directory -Path (Split-Path -Parent $live) -Force | Out-Null
             New-Item -ItemType Directory -Path (Split-Path -Parent $old) -Force | Out-Null
@@ -266,10 +576,6 @@ for name in ('ffmpeg.exe', 'ffprobe.exe'):
                     Move-UpgradePart -Source $live -Destination $old -Label "$part live->backup"
                 } catch {
                     if ($part -ne 'runtime') { throw }
-                    # Windows can hold read handles without delete sharing (for example a diagnostics
-                    # reader). The app and runner are already stopped/locked, so preserve a complete
-                    # byte-for-byte backup and mirror the validated staged runtime in place instead
-                    # of weakening the validation or killing an unrelated diagnostics process.
                     $entry.mode = 'mirror'
                     Copy-UpgradeMirror -Source $live -Destination $old -Label 'runtime live->backup'
                     try {
@@ -295,15 +601,14 @@ for name in ('ffmpeg.exe', 'ffprobe.exe'):
                     Copy-UpgradeMirror -Source $entry.old -Destination $entry.live -Label 'rollback runtime backup->live'
                 }
             } else {
-                if ($entry.installed) { Move-UpgradePart -Source $entry.live -Destination $entry.incoming -Label "rollback live->stage" }
-                if ($entry.hadOld) { Move-UpgradePart -Source $entry.old -Destination $entry.live -Label "rollback backup->live" }
+                if ($entry.installed) { Move-UpgradePart -Source $entry.live -Destination $entry.incoming -Label 'rollback live->stage' }
+                if ($entry.hadOld) { Move-UpgradePart -Source $entry.old -Destination $entry.live -Label 'rollback backup->live' }
             }
         }
         throw
     }
-    # Keep the prior bundle for recovery. No recursive cleanup or browser shutdown.
-    if ($InstallSchedule) { & (Join-Path $PSScriptRoot 'Install-Schedule.ps1') -Root $destination }
-    Write-Output "Built $destination\ThoRemix.exe; prior bundle preserved at $backup"
+    if ($InstallSchedule) { & (Join-Path $PSScriptRoot 'Install-Schedule.ps1') -Root $liveDestination }
+    Write-Output "Built $liveDestination\ThoRemix.exe; prior bundle preserved at $backup"
 } finally {
     if ($locked) { $lease.Unlock(0, 1) }
     if ($null -ne $lease) { $lease.Dispose() }
