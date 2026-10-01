@@ -109,6 +109,10 @@ async def test_generate_images_routes_one_shot_to_paid_backend_once_and_keeps_sh
         'reused': False,
     }
     assert len(backend.read_calls) == 1
+    read_method, read_params, _read_timeout = backend.read_calls[0]
+    assert read_method == "batch_rpc"
+    assert read_params["rpcid"] == fb.RPC_MEDIA
+    assert read_params["projectId"] == PROJECT
 
 
 @pytest.mark.asyncio
