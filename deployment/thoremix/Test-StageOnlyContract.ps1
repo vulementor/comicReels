@@ -28,7 +28,7 @@ foreach ($definition in $definitions) { . ([scriptblock]::Create($definition.Ext
 
 $source = Get-Content -LiteralPath $BuildScript -Raw -Encoding UTF8
 foreach ($required in @(
-    "[Alias('NoPromote')][switch]$StageOnly",
+    '[Alias(''NoPromote'')][switch]$StageOnly',
     '[string]$StageOutputRoot',
     '[string]$RuntimeSource',
     'STAGE_ONLY_READY|',
