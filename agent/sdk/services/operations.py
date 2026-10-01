@@ -490,6 +490,7 @@ class OperationService:
             aspect_ratio=aspect,
             end_image_media_id=end_id,
             user_paygate_tier=tier,
+            idempotency_key=request_id,
         )
 
         if _is_error(submit_result):
@@ -598,6 +599,7 @@ class OperationService:
             scene_id=scene.get("id", ""),
             aspect_ratio=aspect,
             user_paygate_tier=tier,
+            idempotency_key=request_id,
         )
 
         if _is_error(submit_result):
