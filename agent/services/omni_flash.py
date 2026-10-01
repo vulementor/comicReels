@@ -405,6 +405,8 @@ async def generate_omni_flash_first_last_video(
         aspect_ratio=aspect_ratio,
         user_paygate_tier=user_paygate_tier,
         seed=seed,
+        idempotency_key=idempotency_key,
+        paid_authorization=paid_authorization,
     )
 
 
