@@ -6,12 +6,14 @@ This module never submits generation, creates projects, or exports authenticatio
 """
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import os
 import re
 import secrets
 import socket
+import stat
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -78,11 +80,178 @@ class FlowProfileConfig:
             raise FlowBrowserError('PROFILE_CHANGED') from None
 
 
-class FlowProfileLease:
-    """Exclusive OS lock compatible with the workspace's one-time login helper.
+@dataclass(frozen=True)
+class _ProcessObservation:
+    state: str
+    started_at: str | None = None
 
-    The guard is permanent; never unlink it. A legacy helper marker requires explicit
-    reconciliation, even when it appears stale. Only this lease object's handle is released.
+
+@dataclass(frozen=True)
+class _LeaseMarkerSnapshot:
+    raw: bytes
+    file_identity: tuple[int, int, int, int]
+    schema_version: int
+    host: str
+    pid: int
+    owner_token: str
+    pid_started_at: str | None
+
+
+_OWNER_TOKEN = re.compile(r'^[0-9a-f]{48}$')
+_PROCESS_STARTED_AT = re.compile(r'^(?:windows-filetime|linux-proc-start):[0-9]+$')
+_MAX_LEASE_MARKER_BYTES = 4096
+
+
+def _observe_windows_process(pid: int) -> _ProcessObservation:
+    import ctypes
+    from ctypes import wintypes
+
+    class FILETIME(ctypes.Structure):
+        _fields_ = [('low', wintypes.DWORD), ('high', wintypes.DWORD)]
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    open_process = kernel32.OpenProcess
+    open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    open_process.restype = wintypes.HANDLE
+    get_exit_code = kernel32.GetExitCodeProcess
+    get_exit_code.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    get_exit_code.restype = wintypes.BOOL
+    get_times = kernel32.GetProcessTimes
+    get_times.argtypes = [wintypes.HANDLE, ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME),
+                          ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME)]
+    get_times.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    handle = open_process(0x1000, False, pid)
+    if not handle:
+        return _ProcessObservation('dead' if ctypes.get_last_error() == 87 else 'unknown')
+    try:
+        exit_code = wintypes.DWORD()
+        created = FILETIME()
+        exited = FILETIME()
+        kernel = FILETIME()
+        user = FILETIME()
+        if not get_exit_code(handle, ctypes.byref(exit_code)):
+            return _ProcessObservation('unknown')
+        if not get_times(handle, ctypes.byref(created), ctypes.byref(exited),
+                         ctypes.byref(kernel), ctypes.byref(user)):
+            return _ProcessObservation('unknown')
+        started = (int(created.high) << 32) | int(created.low)
+        state = 'alive' if exit_code.value == 259 else 'dead'
+        return _ProcessObservation(state, f'windows-filetime:{started}')
+    finally:
+        close_handle(handle)
+
+
+def _observe_process(pid: int) -> _ProcessObservation:
+    if type(pid) is not int or pid <= 0:
+        return _ProcessObservation('unknown')
+    if os.name == 'nt':
+        return _observe_windows_process(pid)
+    proc_stat = Path('/proc') / str(pid) / 'stat'
+    try:
+        raw = proc_stat.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return _ProcessObservation('dead')
+    except OSError:
+        return _ProcessObservation('unknown')
+    try:
+        tail = raw[raw.rfind(')') + 2:].split()
+        started = int(tail[19])
+        if started < 0:
+            raise ValueError
+    except (ValueError, IndexError):
+        return _ProcessObservation('unknown')
+    return _ProcessObservation('alive', f'linux-proc-start:{started}')
+
+
+def _native_profile_available(config: FlowProfileConfig) -> bool:
+    """Read-only proof that Firefox/Camoufox is not holding its native profile lock."""
+    lock = config.user_data_dir / 'parent.lock'
+    if not lock.exists():
+        return True
+    if os.name != 'nt':
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                            ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+                            wintypes.HANDLE]
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    handle = create_file(str(lock), 0x00010000, 0x00000001 | 0x00000002 | 0x00000004,
+                         None, 3, 0x00000080, None)
+    invalid = ctypes.c_void_p(-1).value
+    if handle == invalid:
+        return ctypes.get_last_error() == 2
+    close_handle(handle)
+    return True
+
+
+def _marker_identity(path: Path) -> tuple[int, int, int, int]:
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+
+def _read_lease_marker(path: Path) -> _LeaseMarkerSnapshot:
+    try:
+        identity = _marker_identity(path)
+        raw = path.read_bytes()
+        if not raw or len(raw) > _MAX_LEASE_MARKER_BYTES:
+            raise ValueError
+        data = json.loads(raw.decode('utf-8'))
+        if type(data) is not dict:
+            raise ValueError
+        schema = data.get('schema_version', 1)
+        legacy = {'host', 'pid', 'owner_token'}
+        current = legacy | {'schema_version', 'pid_started_at'}
+        if schema == 1:
+            if set(data) != legacy:
+                raise ValueError
+            started_at = None
+        elif schema == 2:
+            if set(data) != current:
+                raise ValueError
+            started_at = data.get('pid_started_at')
+            if not isinstance(started_at, str) or not _PROCESS_STARTED_AT.fullmatch(started_at):
+                raise ValueError
+        else:
+            raise ValueError
+        host = data.get('host')
+        pid = data.get('pid')
+        token = data.get('owner_token')
+        if (not isinstance(host, str) or not host or len(host) > 255
+                or type(pid) is not int or not 0 < pid <= 0xFFFFFFFF
+                or not isinstance(token, str) or not _OWNER_TOKEN.fullmatch(token)):
+            raise ValueError
+        return _LeaseMarkerSnapshot(
+            raw=raw, file_identity=identity, schema_version=schema,
+            host=host, pid=pid, owner_token=token, pid_started_at=started_at,
+        )
+    except FlowBrowserError:
+        raise
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+        raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED') from None
+
+
+class FlowProfileLease:
+    """Exclusive OS lock plus explicit, auditable stale-provider reconciliation.
+
+    Normal acquire remains fail-closed whenever a provider marker already
+    exists. reconcile_stale_and_acquire is the only recovery path and may
+    archive a marker only while this process owns the OS guard, the exact bound
+    profile identity is unchanged, the recorded owner is confirmed dead, and
+    the native browser profile is not busy.
     """
 
     def __init__(self, config: FlowProfileConfig):
@@ -90,15 +259,17 @@ class FlowProfileLease:
         self._guard = None
         self._token = None
         self._marker = config.user_data_dir / '.flow-browser-lease.json'
+        self._last_reconciliation_receipt = None
 
     @property
     def held(self) -> bool:
         return self._guard is not None
 
-    def acquire(self):
-        if self.held:
-            raise FlowBrowserError('PROFILE_BUSY')
-        self.config.verify_directory()
+    @property
+    def last_reconciliation_receipt(self) -> Path | None:
+        return self._last_reconciliation_receipt
+
+    def _acquire_guard(self) -> None:
         guard = None
         try:
             guard = (self.config.user_data_dir / '.gptfp-runtime.guard').open('a+b')
@@ -117,16 +288,113 @@ class FlowProfileLease:
                 guard.close()
             raise FlowBrowserError('PROFILE_BUSY') from None
         self._guard = guard
+
+    def _write_current_marker(self) -> None:
+        observed = _observe_process(os.getpid())
+        if observed.state != 'alive' or not observed.started_at:
+            raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+        token = secrets.token_hex(24)
+        payload = {
+            'schema_version': 2,
+            'host': socket.gethostname(),
+            'pid': os.getpid(),
+            'pid_started_at': observed.started_at,
+            'owner_token': token,
+        }
+        try:
+            with self._marker.open('x', encoding='utf-8') as marker:
+                json.dump(payload, marker, separators=(',', ':'))
+                marker.flush()
+                os.fsync(marker.fileno())
+        except FileExistsError:
+            raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED') from None
+        self._token = token
+
+    def _archive_stale_marker(self, snapshot: _LeaseMarkerSnapshot) -> Path:
+        try:
+            if _marker_identity(self._marker) != snapshot.file_identity:
+                raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+            if self._marker.read_bytes() != snapshot.raw:
+                raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+            digest = hashlib.sha256(snapshot.raw).hexdigest()[:16]
+            stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+            receipt = self.config.user_data_dir / (
+                f'.flow-browser-lease.reconciled-{snapshot.pid}-{stamp}-{digest}.json')
+            if receipt.exists():
+                raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+            os.rename(self._marker, receipt)
+            receipt_identity = _marker_identity(receipt)
+            same_file = receipt_identity[:2] == snapshot.file_identity[:2]
+            same_bytes = receipt.read_bytes() == snapshot.raw
+            if not same_file or not same_bytes:
+                if not self._marker.exists():
+                    try:
+                        os.rename(receipt, self._marker)
+                    except OSError:
+                        pass
+                raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+            return receipt
+        except FlowBrowserError:
+            raise
+        except OSError:
+            raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED') from None
+
+    def acquire(self):
+        if self.held:
+            raise FlowBrowserError('PROFILE_BUSY')
+        self.config.verify_directory()
+        self._acquire_guard()
         try:
             self.config.verify_directory()
             if (self.config.user_data_dir / '.gptfp-runtime.lock').exists() or self._marker.exists():
                 raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
-            token = secrets.token_hex(24)
-            with self._marker.open('x', encoding='utf-8') as marker:
-                json.dump({'host': socket.gethostname(), 'pid': os.getpid(), 'owner_token': token}, marker)
-                marker.flush()
-                os.fsync(marker.fileno())
-            self._token = token
+            self._write_current_marker()
+        except BaseException:
+            self.release()
+            raise
+        return self
+
+    def reconcile_stale_and_acquire(self):
+        """Recover one confirmed-dead provider marker without force takeover."""
+        if self.held:
+            raise FlowBrowserError('PROFILE_BUSY')
+        self.config.verify_directory()
+        self._acquire_guard()
+        try:
+            self.config.verify_directory()
+            if (self.config.user_data_dir / '.gptfp-runtime.lock').exists():
+                raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+            if not self._marker.exists():
+                self._write_current_marker()
+                return self
+
+            snapshot = _read_lease_marker(self._marker)
+            if snapshot.host.casefold() != socket.gethostname().casefold():
+                raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+
+            owner = _observe_process(snapshot.pid)
+            if owner.state == 'unknown':
+                raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+            if snapshot.schema_version == 1:
+                if owner.state != 'dead':
+                    raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+            else:
+                if owner.state == 'alive':
+                    raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+                if owner.state != 'dead':
+                    raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+
+            if not _native_profile_available(self.config):
+                raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+            self.config.verify_directory()
+
+            receipt = self._archive_stale_marker(snapshot)
+            self._last_reconciliation_receipt = receipt
+
+            if not _native_profile_available(self.config):
+                raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED')
+            self.config.verify_directory()
+            self._write_current_marker()
         except BaseException:
             self.release()
             raise
@@ -137,13 +405,14 @@ class FlowProfileLease:
             if self._token is not None:
                 try:
                     data = json.loads(self._marker.read_text(encoding='utf-8'))
-                    if data.get('owner_token') != self._token or data.get('pid') != os.getpid():
+                    if (data.get('owner_token') != self._token
+                            or data.get('pid') != os.getpid()
+                            or data.get('schema_version') != 2):
                         raise ValueError
                     self._marker.unlink()
                 except (OSError, ValueError, TypeError):
                     raise FlowBrowserError('PROFILE_RECONCILE_REQUIRED') from None
                 self._token = None
-            # Closing this handle releases the kernel lock, including on process exit.
             self._guard.close()
             self._guard = None
 
