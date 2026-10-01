@@ -10,8 +10,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [worker, setWorker] = useState<WorkerSnapshot | null>(null)
 
   const handleMessage = useCallback((event: WSEvent) => {
-    // The initial snapshot and keepalive ping are sent directly by the WS endpoint (agent/main.py),
-    // not through event_bus, so they don't share WSEvent's {type, data, timestamp} shape.
+    // The dashboard event snapshot and keepalive ping are sent directly by
+    // /ws/dashboard, not through event_bus, so they do not share WSEvent's
+    // {type, data, timestamp} shape. This socket is not the Flow transport.
     const raw = event as unknown as { type: string; worker?: WorkerSnapshot }
     if (raw.type === 'snapshot') {
       if (raw.worker) setWorker(raw.worker)
