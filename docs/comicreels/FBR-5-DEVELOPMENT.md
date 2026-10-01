@@ -1425,3 +1425,148 @@ remaining non-historical docs/generated artifacts/config/package references for
 Flow-extension transport strings; classify explicit historical records versus
 current operator/runtime references; repair only current stale references. Then
 mark Task 8 source-complete and hand off to Task 9 final integration audit.
+
+
+## Browser-only Task 8c — repo-wide stale-reference audit + Task 8 source closure
+
+Date: 2026-10-01.
+Status: **TASK 8 SOURCE_COMPLETE; NOT VALIDATED**.
+
+### Audit method
+
+GitHub code search does not reliably index the feature-branch head, so Task 8c
+did not treat repository search returning zero results as evidence. The audit used
+the exact branch ref/tree and read the relevant blobs from that revision.
+
+Audited categories:
+- Flow runtime/lifecycle/API/backend/session/worker/SDK source;
+- dashboard Flow status/Guide/event-channel source;
+- setup/run/statusline/build/package/config surfaces;
+- generated Claude command artifacts with anomalous embedded content;
+- current root/operator/architecture/capture/Omni documentation;
+- current Flow/operator skills;
+- browser-only/legacy Flow test contracts that could otherwise require deleted
+  extension behavior in Phase 3.
+
+### Runtime result
+
+At the audit head:
+- repository tree contains **no `extension/` path**;
+- `agent/main.py`, `agent/config.py`, Flow API/services, worker and SDK live
+  paths contain no retired extension protocol markers such as
+  `extension_connected`, `flow_key_present`, `NO_FLOW_TAB`,
+  port 9222, extension lifecycle methods, extension callback route or WS server;
+- stale worker and `flow_batch.py` comments that still named the Chrome
+  extension as active transport were corrected to browser-only wording;
+- setup/scripts/deployment/workflow/package surfaces contain no Flow extension
+  launch/bundle/config dependency;
+- `websockets>=12.0` remains intentionally for the independent dashboard event
+  WebSocket, per Task 8a ruling.
+
+### Generated artifact result
+
+Four checked-in Claude command files still embedded stale copies after their
+source skills were fixed:
+- `fk-monitor`;
+- `fk-refresh-urls`;
+- `fk-review-video`;
+- `fk-upload-image`.
+
+They were normalized to the generated stub form that delegates to the current
+`skills/fk-*.md` source. Earlier Task 8b had already normalized the stale
+dashboard/doctor/status/pipeline artifacts.
+
+Large remaining command artifacts were inspected for the retired transport
+markers and did not contain extension preflight references.
+
+### Test-contract result
+
+Retired:
+- `tests/unit/test_extension_hijack_bypass.py`: tested files deleted with the
+  extension package;
+- `tests/unit/test_flow_backend_integration.py`: encoded default-extension,
+  extension socket and extension lifespan behavior superseded by the browser-only
+  selection/lifecycle/status suites.
+
+Updated:
+- global-throttle status coverage now checks browser readiness/reconciliation/
+  paid-lock state instead of extension version/socket metadata;
+- the old `CAPTCHA_FAILED: NO_FLOW_TAB` image case was removed from the legacy
+  batch test because the one-shot paid browser contract has dedicated Task 4
+  coverage;
+- new authored audit coverage protects live Flow surfaces from retired protocol
+  markers and confirms the old explicit `extension` backend setting is rejected.
+
+Remaining extension words in active tests are negative assertions such as
+"ExtensionFlowBackend must not exist" or "extension_connected must not appear";
+those are regression guards, not runtime dependencies.
+
+### Documentation classification
+
+**Current authority/current operator docs** were repaired:
+- root `ARCHITECTURE.md`, README current sections, AGENTS/CLAUDE;
+- `docs/CAPTURE.md`, `docs/OMNI_FLASH.md`;
+- `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`;
+- current Dashboard Guide/i18n/statusline and Flow/operator skills;
+- current ComicReels `VISION.md`.
+
+**Historical/superseded records are intentionally preserved**:
+- root `PLAN.md` is explicitly marked **HISTORICAL / SUPERSEDED**;
+- `docs/comicreels/ARCHITECTURE.md` Segment-1 proposal is explicitly marked
+  **HISTORICAL / SUPERSEDED** and points to current browser-only authority;
+- `docs/comicreels/FOUNDATION.md` is a dated 2026-09-24 Segment-1 evidence
+  snapshot and is not rewritten;
+- FBR development ledgers, old superpowers plans/checkpoints, dated local-test
+  results and migration/changelog sections remain historical evidence rather
+  than being cosmetically rewritten.
+
+Safety prohibitions such as **do not clear cookies/storage**, **do not replace
+the profile**, and statements that the old extension transport is **retired/not
+supported** are intentionally retained. They are not classified as stale
+operational references.
+
+### Independent dashboard channel
+
+`/ws/dashboard` remains in `agent/main.py`, its event bus subscription remains,
+and dashboard WebSocket source remains in the tree. The existing
+`chrome-extension://` origin compatibility is intentionally preserved under the
+Task 8a ruling because the evidence does not prove it belongs exclusively to the
+removed Flow RPC transport. It is not used as Flow readiness.
+
+### Profile/data boundary
+
+Task 8c read and changed repository source only. It did **not** read, create,
+copy, clear, rename, sign out of or otherwise mutate any browser profile,
+cookies/storage, credentials or user data.
+
+### Known Task 9 source-audit obligation
+
+`tests/unit/test_flow_client_batch.py` still contains pre-cutover behavioral
+expectations unrelated to extension transport, notably multi-wave image generation
+and process-local poll-cache cadence. Tasks 4/5 authored replacement one-shot and
+restart-safe contracts. Task 9 must reconcile those legacy behavioral tests
+against current source before Phase 3 is entered. They were not rewritten under
+Task 8 because they are not extension runtime/docs references.
+
+### Task 8 source closure
+
+All Task 8 plan obligations are represented:
+1. Flow extension runtime/package code removed;
+2. extension-only callback/WS configuration removed;
+3. current preflight/docs/Guide/skills use persistent browser profile/session
+   readiness;
+4. independent dashboard event WebSocket preserved;
+5. current generated/operator docs audited and checkpointed.
+
+Tests/builds executed: **none**. No shell/statusline execution, pytest,
+TypeScript build/lint, browser/profile launch, paid/CAPTCHA effect, EXE launch,
+Stable/ThoRemix mutation or Remote Desktop action occurred.
+
+### Next plan task
+
+Proceed to **Task 9 — final source integration and validation handoff**. Task 9
+must reconcile this long-lived browser-only branch with then-current `main`
+without overwriting main, preserve PR #12 staged-KAT changes and later main
+changes, reconcile remaining stale behavioral test contracts, update
+`CHECKPOINTS.md`, record exact source/KBS/rollback revisions, and only after
+Task 9 source closure authorize Phase 3 validation.
