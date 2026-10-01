@@ -11,11 +11,13 @@ Usage: `/fk-refresh-urls <video_id> [--project-id <PID>]`
 ## Pre-flight
 
 ```bash
-curl -s http://127.0.0.1:8100/api/flow/status
-# Must show: {"connected": true, "transport": "batch"}
-# Ignore flow_key_present — the batch path has no bearer token.
-# If connected is false: open https://flow.google.com/ and sign in.
+curl -s http://127.0.0.1:8100/health
+curl -s http://127.0.0.1:8100/api/flow/backend-status
 ```
+
+Require browser/session/authentication/lease readiness. URL refresh is read-only
+with respect to paid generation and does not require enabling paid dispatch.
+Preserve the existing bound profile; do not clear cookies/storage or replace it.
 
 ## Step 1: Get project_id from video
 
@@ -83,7 +85,7 @@ for s in scenes:
 print(f'Orientation: {ori.upper()}')
 print(f'Valid URLs: {ok}/{len(scenes)}')
 if expired:
-    print(f'Still expired: {expired} — may need to open Flow tab in Chrome for flow key')
+    print(f'Still expired: {expired} — inspect browser session readiness and media ids')
 else:
     print('All URLs refreshed successfully!')
 "
@@ -116,9 +118,9 @@ curl -X PATCH "http://127.0.0.1:8100/api/scenes/<SID>" \
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| `flow_key_present: false` | No bearer token — **expected**; batchexecute authenticates in the page | Ignore |
-| `Extension not connected` | Chrome extension WS disconnected | Check the extension is enabled, refresh the Flow tab |
+| `BROWSER_NOT_READY` | Browser session evidence is not ready | Inspect `/api/flow/backend-status`; preserve the existing profile |
+| `PROFILE_BUSY` / `PROFILE_RECONCILE_REQUIRED` | Profile ownership/lease conflict | Stop competing owner and reconcile lease; do not delete profile data |
 | `refreshed: 0`, `found: 0` | No media ids stored for this project | Nothing to refresh — check the project id |
-| `refreshed: 0`, `found: N` | Every re-sign failed | Read the agent log; usually `NO_FLOW_TAB` or a signed-out Flow tab |
-| Some URLs still expired after refresh | media_id mismatch (upscale overwrote video_media_id) | Use per-media fallback with correct media_id |
-| `get_media` returns error for media_id | Media deleted or expired on Google's side | Re-generate the video/image |
+| `refreshed: 0`, `found: N` | Current media reads failed | Inspect browser session/auth/lease and stable media ids; retry reads only |
+| Some URLs still expired after refresh | media_id mismatch or media not ready | Use per-media read with the correct stable media UUID |
+| `get_media` returns missing media | Media is unavailable on Flow | Surface the missing media state; do not treat read failure as permission to regenerate automatically |
