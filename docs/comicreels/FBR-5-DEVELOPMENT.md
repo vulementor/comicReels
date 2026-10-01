@@ -1171,3 +1171,82 @@ Proceed to **Task 7 — remove extension-specific dashboard UI**. Update dashboa
 types/copy/status rendering to browser session readiness, reconciliation and paid
 state while preserving the independent dashboard WebSocket/event indicator. Source
 GitHub first; no build/test/Stable until the full browser-only source plan closes.
+
+
+## Browser-only Task 7 — dashboard UI/types/copy
+
+Date: 2026-10-01.
+Status: **TASK 7 SOURCE_COMPLETE; NOT VALIDATED**.
+
+Source commits:
+- Authored dashboard browser-status UI contract:
+  `edaa0213a48154fa8efa7fd611b08994add7fd0d`.
+- Browser-only Flow status panel with schema v2:
+  `65a6d3e0ebe2bf07a2bf7ca3f6d3c6d59669fb75`.
+- Label header WebSocket as dashboard event channel:
+  `11e2e2b0aea34132c2ce4b44ce8172666189767d`.
+- Add dashboard-live/offline i18n copy:
+  `583119bacfa7ad343b6ce992202251f8c9abbb5f`.
+- Explicit numeric/type narrowing in status decoder:
+  `0b982d83a90441217968c88e4c631dee6103f955`.
+- Clarify dashboard WebSocket context is not Flow transport:
+  `66498f026784bb2130ee00453d817afaf5b4167a`,
+  `ed55962d52909c5b5e5380d3921cc32b65e91ba1`.
+- Final decoder type-safety narrowing:
+  `088d1948523315e0cf6fa4bace11cbc0f36a9b76`.
+
+### Flow status panel contract
+
+- `FlowBackendStatus.tsx` now decodes backend status schema v2 only.
+- Flow transport kind is fixed to `browser`; there is no Browser/Extension
+  switch, extension-default source, extension-required preflight or extension
+  connection wording in this component.
+- Readiness is shown from independent browser-session evidence:
+  backend ready + preflight ready + session ready + authenticated + lease held.
+- Reconciliation is rendered separately from readiness, including bounded pending
+  intent count when present.
+- Paid dispatch is rendered separately from readiness/reconciliation:
+  disabled production state is labeled **Locked** / **Đang khóa**; an explicitly
+  enabled validation state is labeled separately and is not presented as normal
+  production authorization.
+- The panel explicitly notes that browser readiness does not authorize paid
+  generation.
+- Failed/invalid status observations clear stale green readiness rather than
+  keeping a previous optimistic state visible.
+
+### Dashboard event WebSocket contract
+
+- The header's independent `useWebSocketContext().isConnected` indicator remains.
+- Its user-facing copy is now **DASHBOARD LIVE / DASHBOARD OFFLINE**, not a Flow
+  extension/transport status.
+- `WebSocketContext` comments explicitly identify `/ws/dashboard` as an
+  independent dashboard event/snapshot channel, not Flow transport.
+- Worker event/active-slot behavior is unchanged.
+
+### Source read-back
+
+At this checkpoint:
+- `FlowBackendStatus.tsx`: 0 occurrences of `extension`;
+- `App.tsx`: 0 occurrences of `extension`;
+- App uses `app.dashboardLive` / `app.dashboardDisconnected`, not the old
+  generic WS labels;
+- browser readiness, reconciliation, pending intents and paid lock all remain
+  independently rendered.
+
+Legacy extension copy elsewhere in the Guide/translations is intentionally deferred
+to Task 8 because it is operator/runtime documentation, not the Task 7 live status
+surface.
+
+### Deferred validation
+
+Dashboard TypeScript build/lint/tests executed: **none**. No pytest/import
+smoke/build, browser/profile launch, paid/CAPTCHA request, EXE launch,
+Stable/ThoRemix mutation or Remote Desktop action occurred.
+
+### Next plan task
+
+Proceed to **Task 8 — remove extension runtime package/code and stale docs/build
+references**. Audit runtime/package/config/operator/Guide references, retire the
+Flow extension package only after references are removed, preserve the independent
+dashboard WebSocket/event channel, and update browser-profile/session preflight
+documentation. Source GitHub first; no test/build/Stable before source closure.
