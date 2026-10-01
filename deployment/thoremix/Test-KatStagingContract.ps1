@@ -31,8 +31,8 @@ while ($null -ne $parent) {
 }
 
 if (-not $install.Extent.Text.Contains('-Interpreter $stagedPython') -or
-        -not $install.Extent.Text.Contains('-InstallTarget $sitePackages')) {
-    throw 'KAT must install through the isolated staged interpreter and target.'
+        -not $install.Extent.Text.Contains('-InstallPrefix $runtime')) {
+    throw 'KAT must install through the isolated staged interpreter and runtime prefix.'
 }
 if (-not $install.Extent.Text.Contains("'--force-reinstall'") -or
     -not $install.Extent.Text.Contains("'--no-deps'")) {
