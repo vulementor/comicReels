@@ -10,7 +10,7 @@ PROJECT = "11111111-2222-3333-4444-555555555555"
 
 
 class Backend:
-    paid_dispatch_enabled = True
+    paid_video_dispatch_enabled = True
 
     async def start(self): pass
     async def close(self): pass
@@ -89,3 +89,21 @@ def test_image_and_video_validation_capabilities_remain_separate_modules():
     assert "class PaidVideoValidationSession" in video_source
     assert "class PaidValidationSession" in image_source
     assert "generate_one_image" not in video_source
+
+
+def test_video_validation_builder_enables_only_video_paid_capability():
+    source = Path(
+        "agent/services/flow_paid_video_validation.py"
+    ).read_text(encoding="utf-8")
+    assert "paid_video_dispatch_enabled=True" in source
+    assert "paid_video_authorization=authorization" in source
+    assert "paid_dispatch_enabled=True" not in source
+
+
+def test_image_validation_builder_does_not_enable_video_paid_capability():
+    source = Path(
+        "agent/services/flow_paid_validation.py"
+    ).read_text(encoding="utf-8")
+    assert "paid_dispatch_enabled=True" in source
+    assert "paid_video_dispatch_enabled=True" not in source
+    assert "paid_video_authorization=" not in source
