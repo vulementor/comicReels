@@ -42,7 +42,8 @@ jobs:
         # fonts-dejavu-core is not optional. The drawtext call in
         # video_reviewer.py passes no fontfile=, so it asks fontconfig for a
         # default family; with --no-install-recommends the runner can end up
-        # with an ffmpeg that has drawtext and no font for it to use.
+        # with an ffmpeg that has drawtext and no font. video_reviewer.py now
+        # degrades gracefully when drawtext is unavailable.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
@@ -81,7 +82,9 @@ jobs:
         run: |
           # Hosted GITHUB_TOKEN cannot read the private sibling toolkits and
           # Ubuntu cannot exercise the Windows GUI/bundled-media contracts.
-          # Every excluded case remains covered by ThoRemix full Windows validation.
+          # The owner retired self-hosted validation on 2026-10-01.
+          # Excluded cases remain required for separate local final acceptance;
+          # a portable PASS alone must never authorize Stable promotion.
           python -m pytest tests/unit -q \
             --ignore=tests/unit/test_flow_browser_discovery.py \
             --ignore=tests/unit/test_flow_browser_session.py \
