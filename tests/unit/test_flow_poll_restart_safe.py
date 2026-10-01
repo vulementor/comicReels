@@ -87,41 +87,7 @@ async def test_restart_without_ram_media_cache_discovers_listing_on_first_poll(m
     assert ('listing', OPERATION, PROJECT) in calls
     assert ('media', MEDIA, PROJECT) in calls
     assert not hasattr(client, '_operation_polls')
-
-
-@pytest.mark.asyncio
-async def test_stale_ram_media_hint_cannot_block_fresh_listing(monkeypatch):
-    stale = '12345678-1234-1234-1234-123456789abc'
-    client = FlowClient(backend=Backend())
-    client._operation_media[OPERATION] = stale
-    calls = []
-
-    async def operation_project(operation_id):
-        return PROJECT
-
-    async def listing(operation_id, project_id):
-        calls.append(('listing', operation_id, project_id))
-        return MEDIA
-
-    async def media_urls(media_id, project_id=None):
-        calls.append(('media', media_id, project_id))
-        if media_id == stale:
-            return fb.MediaUrls(media_id=media_id)
-        return fb.MediaUrls(media_id=media_id, video=VIDEO)
-
-    async def operation_payload(*args, **kwargs):
-        raise fb.FlowBatchError('poll unavailable')
-
-    monkeypatch.setattr(client, '_operation_project_id', operation_project)
-    monkeypatch.setattr(client, '_media_id_for', listing)
-    monkeypatch.setattr(client, '_batch_media_urls', media_urls)
-    monkeypatch.setattr(client, '_batch_payload', operation_payload)
-
-    result = await client._poll_batch_operation(OPERATION)
-
-    assert result['status'] == 'MEDIA_GENERATION_STATUS_SUCCESSFUL'
-    assert client._operation_media[OPERATION] == MEDIA
-    assert ('listing', OPERATION, PROJECT) in calls
+    assert not hasattr(client, '_operation_media')
 
 
 @pytest.mark.asyncio
@@ -147,9 +113,10 @@ async def test_listing_miss_stays_pending_without_any_submit(monkeypatch):
     assert result['operation']['name'] == OPERATION
 
 
-def test_poll_correctness_has_no_poll_round_cadence_gate():
+def test_poll_correctness_has_no_process_local_operation_caches():
     source = inspect.getsource(FlowClient)
     assert '_operation_polls' not in source
+    assert '_operation_media' not in source
     find = source[source.index('async def _find_operation_media'):
                   source.index('async def _media_id_for')]
     assert 'rounds % 3' not in find
