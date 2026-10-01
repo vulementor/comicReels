@@ -184,12 +184,12 @@
 **Interfaces:**
 - Produces: source-complete browser-only revision ready for Phase 3 validation.
 
-- [ ] Audit repository references for extension Flow transport.
-- [ ] Confirm no production path can select or call extension transport.
-- [ ] Confirm browser paid path exists but remains gated for explicit validation.
-- [ ] Confirm worker/startup/status/UI/docs are browser-only.
-- [ ] Record exact source revision, KBS pin, known validation obligations and rollback source commit.
-- [ ] Only then enter Phase 3: tests/build/EXE/Stable validation.
+- [x] Audit repository references for extension Flow transport.
+- [x] Confirm no production path can select or call extension transport.
+- [x] Confirm browser paid path exists but remains gated for explicit validation.
+- [x] Confirm worker/startup/status/UI/docs are browser-only.
+- [x] Record exact source revision, KBS pin, known validation obligations and rollback source commit.
+- [x] Only then enter Phase 3: tests/build/EXE/Stable validation.
 
 ## Self-Review
 
