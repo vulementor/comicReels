@@ -48,21 +48,36 @@ $stagedPython=Join-Path $runtimeRoot 'Scripts\python.exe'
 Assert-Check (Test-Path -LiteralPath $stagedPython -PathType Leaf) 'staged test interpreter exists'
 
 $wheel=Join-Path $wheelDir 'stage_probe-0.0.0-py3-none-any.whl'
-$wheelBuilder=@'
-import pathlib, sys, zipfile
-path = pathlib.Path(sys.argv[1])
-files = {
-    "stage_probe/__init__.py": "VALUE='inside-stage'\n",
-    "stage_probe-0.0.0.dist-info/METADATA": "Metadata-Version: 2.1\nName: stage-probe\nVersion: 0.0.0\n",
-    "stage_probe-0.0.0.dist-info/WHEEL": "Wheel-Version: 1.0\nGenerator: thoremix-contract\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-    "stage_probe-0.0.0.dist-info/RECORD": "stage_probe/__init__.py,,\nstage_probe-0.0.0.dist-info/METADATA,,\nstage_probe-0.0.0.dist-info/WHEEL,,\nstage_probe-0.0.0.dist-info/RECORD,,\n",
+Add-Type -AssemblyName System.IO.Compression
+$wheelStream=[IO.File]::Open($wheel,[IO.FileMode]::Create,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+$archive=[IO.Compression.ZipArchive]::new($wheelStream,[IO.Compression.ZipArchiveMode]::Create,$false)
+try {
+    $entries=[ordered]@{
+        'stage_probe/__init__.py'="VALUE='inside-stage'"
+        'stage_probe-0.0.0.dist-info/METADATA'=([string]::Join([Environment]::NewLine,@(
+            'Metadata-Version: 2.1','Name: stage-probe','Version: 0.0.0',''
+        )))
+        'stage_probe-0.0.0.dist-info/WHEEL'=([string]::Join([Environment]::NewLine,@(
+            'Wheel-Version: 1.0','Generator: thoremix-contract','Root-Is-Purelib: true','Tag: py3-none-any',''
+        )))
+        'stage_probe-0.0.0.dist-info/RECORD'=([string]::Join([Environment]::NewLine,@(
+            'stage_probe/__init__.py,,',
+            'stage_probe-0.0.0.dist-info/METADATA,,',
+            'stage_probe-0.0.0.dist-info/WHEEL,,',
+            'stage_probe-0.0.0.dist-info/RECORD,,',
+            ''
+        )))
+    }
+    foreach($name in $entries.Keys){
+        $entry=$archive.CreateEntry($name,[IO.Compression.CompressionLevel]::Optimal)
+        $writer=[IO.StreamWriter]::new($entry.Open(),[Text.UTF8Encoding]::new($false))
+        try { $writer.Write([string]$entries[$name]) } finally { $writer.Dispose() }
+    }
+} finally {
+    $archive.Dispose()
+    $wheelStream.Dispose()
 }
-with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-    for name, value in files.items():
-        archive.writestr(name, value)
-'@
-& $hostPython -c $wheelBuilder $wheel
-if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $wheel)){ throw 'fixture wheel creation failed' }
+Assert-Check (Test-Path -LiteralPath $wheel -PathType Leaf) 'fixture wheel created'
 
 $poisonNames=@('PIP_TARGET','PIP_PREFIX','PIP_ROOT','PIP_CONFIG_FILE','PYTHONHOME','PYTHONPATH','APPDATA')
 $saved=@{}
