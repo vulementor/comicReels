@@ -78,3 +78,19 @@ extension/browser parity expectations for preserved ComicReels/FlowKit scenarios
 without running paid generation and without changing browser backend to default.
 
 FBR-3 paid dispatch remains disabled until the separate paid validation gate.
+
+
+## Supersession update — browser-only Task 4 source closure
+
+Date: 2026-10-01.
+
+The preparation-only limitations documented above are historical. Under
+`docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md`, Task 4 has now
+source-authored the dedicated browser paid recipe, leased-session bridge,
+FlowClient one-shot routing, durable request-id propagation, UNKNOWN no-retry
+handling and an isolated explicit validation authorization seam.
+
+Normal application startup remains paid-disabled. No paid request or validation
+test has run, so this update does **not** change FBR-3/Task 4 acceptance status.
+Live paid validation remains a later owner-authorized Phase 3 action after the
+entire browser-only source plan is complete.
