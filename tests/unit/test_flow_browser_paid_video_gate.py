@@ -200,3 +200,38 @@ def test_paid_video_script_is_single_fetch_video_captcha_recipe():
     assert "for (;;)" in source  # response-body reader only
     assert "effect: 'unknown'" in source
     assert "effect: 'not_submitted'" in source
+
+
+@pytest.mark.parametrize("record", [
+    [MEDIA, None, WORKFLOW, "CAE"],
+    ["CAMS-not-a-uuid", PROJECT, WORKFLOW, "CAE"],
+    [MEDIA, PROJECT, "not-a-workflow-uuid", "CAE"],
+])
+def test_malformed_native_video_receipt_becomes_unknown_and_is_never_replayed(
+        tmp_path, record):
+    state = BrowserStateStore(tmp_path / "state.json", "owner")
+    calls = []
+
+    def dispatch(_command, _timeout):
+        calls.append(1)
+        payload = [None, 10, [], [record]]
+        body = json.dumps([["wrb.fr", fb.RPC_GEN_VIDEO_TEXT, json.dumps(payload)]])
+        return completed(body)
+
+    gate = FlowPaidVideoGate(
+        state, dispatch, dispatch_enabled=True, authorization=AUTH,
+    )
+    first = gate.submit(
+        media_params(), idempotency_key="video-malformed", authorization=AUTH,
+    )
+    second = gate.submit(
+        media_params(), idempotency_key="video-malformed", authorization=AUTH,
+    )
+
+    assert first == {
+        "status": 409,
+        "error": "PAID_RECONCILIATION_REQUIRED",
+        "effect": "unknown",
+    }
+    assert second == first
+    assert calls == [1]
