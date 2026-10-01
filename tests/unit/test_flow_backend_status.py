@@ -180,16 +180,7 @@ async def test_status_reads_frozen_browser_selection(singleton, monkeypatch):
     singleton.backend_readiness.assert_awaited_once()
 
 
-@pytest.mark.asyncio
-async def test_status_never_reads_extension_compatibility_properties(singleton):
-    class Trap:
-        @property
-        def extension_connected(self):
-            raise AssertionError('browser-only status must not read extension state')
-
-    singleton.__class__ = Trap
-    # SimpleNamespace cannot be safely class-swapped on all Python versions;
-    # source-level assertion below is the durable contract.
+def test_status_reader_has_no_extension_compatibility_dependency():
     source = __import__('inspect').getsource(status.read_backend_status)
     assert 'extension_connected' not in source
     assert 'ws_stats' not in source
