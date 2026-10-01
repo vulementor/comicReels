@@ -372,3 +372,94 @@ FlowClient/backend layer.** Remove `ExtensionFlowBackend`, extension WS pending
 maps/session/failover/token machinery and extension send path while preserving the
 FlowClient business API consumed by worker/API. Do not test/build/launch Stable
 until the full browser-only source plan is complete.
+
+
+## Browser-only Task 3 — remove extension transport implementation
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED**.
+Plan: `docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md`.
+
+Source commits:
+- Authored browser-only transport requirements:
+  `a732bae7fe1776fd19330b0a919b867128a4f54a`.
+- Remove `ExtensionFlowBackend` implementation:
+  `41ee23b453d57cfeff7a9166a74a6d92813702c5`.
+- Remove extension socket/token/pending/failover/send machinery from `FlowClient`:
+  `b5d6df861bbed2cef9d4eb8dc718194767ab010c`.
+- Remove stale extension transport comments:
+  `f9ab4d9eac54ad8c980539816fc29521d314de92`.
+
+### Implemented boundary
+
+- `agent/services/flow_backend.py` now contains only the stable `FlowBackend`
+  protocol. `ExtensionFlowBackend` is removed.
+- `FlowClient` no longer owns or exposes extension connection objects, profile
+  candidate selection, pending WebSocket requests, request/socket correlation,
+  token capture, extension message handling, extension failover, or
+  `_send_extension()`.
+- `FlowClient._send()` remains the single business dispatch seam and delegates
+  only to its injected `FlowBackend`.
+- Direct `FlowClient()` construction now creates `BrowserFlowBackend`, preserving
+  the historical no-argument business API while making its transport browser-only.
+  Production singleton construction remains owned by `get_flow_client()`.
+- Existing business method names and response shaping for project/media/generation/
+  polling are retained in this task. Task 4/5 will replace the remaining
+  extension-era generation/poll assumptions with durable browser-native paths.
+- Temporary compatibility readouts remain only to avoid breaking the still-old
+  status endpoints before Task 6:
+  `extension_connected=False`, `_flow_key=None`, and an immutable empty
+  `ws_stats` shape with `transport_removed=True`. They contain no live socket,
+  token, sender, failover or extension transport capability.
+- Intent/receipt/idempotency state and no-auto-resend rules are untouched by this
+  task.
+
+### Main/PR #12 integration preservation gate
+
+Do **not** merge this browser-only branch into main during the development phase.
+
+Live GitHub observation at this checkpoint:
+- current `main`: `5aecee7ef007b34e1ec732a3a382c80ff393546c`;
+- PR #12 merge/KAT refresh commit:
+  `18553d3fda9b26105f99951b2c752bc7fe5ca568`;
+- `18553d3` is confirmed an ancestor of current main (main is 3 commits ahead of it);
+- current browser-only branch vs main: **diverged, 67 ahead / 17 behind**;
+- merge base remains `373e0a2e416819774fa88df0517b71868832b138`.
+
+At final source integration, merge/rebase against the then-current `main` and
+preserve the full PR #12 staged-KAT refresh plus subsequent main changes. In
+particular, do not overwrite:
+- `.github/workflows/tests.yml`;
+- `.github/workflows/thoremix-kat-staging.yml`;
+- `agent/thoremix/publishing.py`;
+- `deployment/thoremix/Build-Stable.ps1`;
+- `deployment/thoremix/Test-KatStagingContract.ps1`;
+- `requirements-dev.txt`;
+and also preserve subsequent main changes such as the current
+`deployment/thoremix/verify_upgrade_lock.py` / `tests/unit/test_setup.py`
+updates unless a later explicit source reconciliation proves otherwise.
+
+Ruling: integration must reconcile browser-only work *into* current main, never
+replace main with this long-lived branch. Cost if wrong: staged-KAT refresh,
+Python 3.10 hashing compatibility, portable-validation policy, ThoRemix build
+behavior or later main fixes could be lost.
+
+### Acceptance isolation
+
+The KAT/ThoRemix final acceptance running in another chat is not acceptance evidence
+for this browser-only branch. No result from that flow can mark these Task 3 changes
+PASS. This branch requires validation at its own final source revision.
+
+### Deferred validation
+
+Tests executed: **none**. No pytest/import smoke/compile/lint/build/workflow
+dispatch, browser/profile launch, EXE launch, Stable/ThoRemix mutation, paid request
+or Remote Desktop action occurred.
+
+### Next task
+
+**Browser-only Task 4 — concrete browser paid-dispatch integration.** Wire the
+existing durable paid intent/receipt gate to the same leased browser session and
+route the business single-shot path through it without extension-era retry/cadence
+semantics. Paid dispatch remains disabled by default and unknown outcomes remain
+non-retryable until explicit reconciliation.
