@@ -540,3 +540,73 @@ generation request into `BrowserFlowBackend.submit_paid_image()`, shapes the
 verified media receipt back into the current FlowClient business response, and
 bypasses the old extension-era multi-wave/retry logic for the browser paid path.
 Keep the normal application paid flag locked and do not run tests or a paid call.
+
+
+## Browser-only Task 4b — FlowClient paid one-shot business routing
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; PAID DISPATCH DEFAULT OFF**.
+Parent task: browser-only Task 4 — concrete browser paid-dispatch integration.
+
+Source commits:
+- Authored FlowClient one-shot contract:
+  `fe9a9d264be3a391a7eadb93c3f9e939fc6c070c`.
+- Route `FlowClient.generate_images()` through
+  `BrowserFlowBackend.submit_paid_image()`:
+  `4dbd767a58a0b427fdc19b59b10b554daa3d93af`.
+- Authored fixed-UNKNOWN backend-exception requirement:
+  `91f0ace75428f5ae452eaf5dfc150a6650325abd`.
+- Map unexpected paid bridge exceptions to fixed UNKNOWN without retry:
+  `da65b4c3acb443d8846cc04ee411e1014e79082f`.
+
+### Business contract
+
+- `FlowClient.generate_images()` is now an explicit one-shot paid seam.
+  `count != 1` fails before submission with `PAID_SINGLE_SHOT_REQUIRED`.
+- A non-empty caller-provided `idempotency_key` is mandatory before the
+  backend is called. Missing keys fail with `PAID_IDEMPOTENCY_REQUIRED`.
+  The durable gate still performs its stricter key validation/fingerprinting.
+- The method builds exactly one `ogiZ0b` request and calls
+  `BrowserFlowBackend.submit_paid_image()` exactly once. The old image
+  `run_wave`, cadence and transient-[8] resubmit policy were removed from this
+  business path.
+- `paid_authorization` is forwarded by identity to the backend/gate. Normal
+  application construction still has no enabling authorization and remains
+  `paid_dispatch_enabled=False`.
+- Backend UNKNOWN/error results are returned without media lookup or paid retry.
+  Unexpected backend exceptions are mapped to fixed
+  `PAID_RECONCILIATION_REQUIRED` + `effect=unknown`; private browser/profile
+  exception text is not forwarded and there is no second submission.
+- After a verified COMPLETED receipt, FlowClient performs only a read-only
+  media lookup for a fresh signed image URL. Failure to obtain that URL does not
+  downgrade the paid receipt or trigger another paid call.
+- The historical business response shape is retained:
+  `data.media[0].name`, `image.generatedImage.mediaId`,
+  `image.generatedImage.fifeUrl`, plus requested/generated/complete counts.
+  The completed response also carries `effect=completed` and receipt reuse state.
+- `edit_image()` forwards the same idempotency/authorization seam to
+  `generate_images()`; callers that do not yet supply a key fail closed rather
+  than silently using the removed extension-era paid path.
+
+### Remaining Task 4 obligation
+
+Task 4 is **not complete**. Worker/SDK/direct API callers still need to provide a
+stable business idempotency key (normally the durable request id) and the explicit
+authorization capability must remain isolated from normal production construction.
+UNKNOWN/reconciliation results must be classified as non-retryable by the worker so
+generic retry handling cannot manufacture a second key/submission.
+
+### Deferred validation
+
+Tests executed: **none**. No paid/CAPTCHA call, pytest/import smoke/compile/lint/
+build, browser/profile launch, EXE launch, Stable/ThoRemix mutation or Remote
+Desktop action occurred. KAT/ThoRemix acceptance in another conversation remains
+non-authoritative for this branch.
+
+### Next short sub-task
+
+**Task 4c — durable caller idempotency and UNKNOWN no-retry propagation.** Wire
+worker/SDK image generation calls to use the durable request id (or an equally
+stable persisted business key), keep normal paid authorization unavailable by
+default, and make `PAID_RECONCILIATION_REQUIRED/effect=unknown` terminal for
+automatic retry while remaining visible for explicit reconciliation.
