@@ -394,6 +394,47 @@ class FlowBrowserDriver:
             'effect': 'completed',
         }
 
+    def bind_operation(self, operation_id: str, project_id: str) -> dict:
+        """Persist operation -> project binding under the held browser lease."""
+        self._check_thread()
+        try:
+            operation_id = uuid_value(operation_id)
+            project_id = uuid_value(project_id)
+            self._require_lease()
+            status, existing = self._store.operation_binding(operation_id)
+            if status == 'conflict' or (existing is not None and existing != project_id):
+                raise BrowserCommandError('OPERATION_BINDING_CONFLICT')
+            self._store.remember_operation(operation_id, project_id)
+            return {
+                'status': 200,
+                'data': {'operationId': operation_id, 'projectId': project_id},
+                'effect': 'completed',
+            }
+        except Exception as error:
+            return {
+                'status': 409,
+                'error': _public_error(error, 'OPERATION_BINDING_CONFLICT'),
+                'effect': 'not_submitted',
+            }
+
+    def operation_project(self, operation_id: str) -> dict:
+        """Read the durable operation -> project binding without remote effects."""
+        self._check_thread()
+        try:
+            operation_id = uuid_value(operation_id)
+            project_id = self._operation_project(operation_id)
+            return {
+                'status': 200,
+                'data': {'operationId': operation_id, 'projectId': project_id},
+                'effect': 'completed',
+            }
+        except Exception as error:
+            return {
+                'status': 409,
+                'error': _public_error(error, 'OPERATION_BINDING_REQUIRED'),
+                'effect': 'not_submitted',
+            }
+
     def _operation_project(self, operation_id: str) -> str:
         self._require_lease()
         status, project_id = self._store.operation_binding(uuid_value(operation_id))
