@@ -392,6 +392,11 @@ while stages_to_run:
 
 ## Step 5: Failure Handling
 
+**Paid/unknown-effect rule:** `effect=unknown`,
+`RECONCILIATION_REQUIRED` or `PAID_RECONCILIATION_REQUIRED` is terminal for
+automatic resubmission. Reconcile the durable request/receipt first. Only a
+known `not_submitted` outcome may enter the ordinary retry policy.
+
 | Failure type | Detection | Action |
 |---|---|---|
 | Ref image FAILED | `media_id` missing after request COMPLETED | Resubmit `GENERATE_CHARACTER_IMAGE` once |
@@ -470,7 +475,7 @@ Cycle 12 / next poll in 15s...
 
 | Issue | Fix |
 |-------|-----|
-| `extension_connected: false` | Chrome extension disconnected — reload extension |
+| `BROWSER_NOT_READY` | Inspect `/api/flow/backend-status`; require session/auth/lease readiness without changing profile data |
 | Stage stuck at 0/N | Check `/api/requests?status=FAILED` for errors |
 | Upscale TIER_ONE error | Account is TIER_ONE — skip `--upscale` |
 | Downloads 4KB XML error | Write URL to temp file, re-curl |

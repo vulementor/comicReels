@@ -1,86 +1,59 @@
-# Capturing a Flow batchexecute payload
+# Capturing Flow browser payloads
 
-`agent/services/flow_batch.py` only knows the RPC shapes that were captured off a
-real UI action. Adding one — video upscale, reference-to-video, start+end-frame
-chaining, a base-image edit — starts by watching the browser do it, because
-guessing at Google's positional payloads does not work. Thirty generations were
-spent proving that a reference image in the wrong slot is *accepted* and then
-silently ignored.
+Flow Kit only implements RPC shapes that were observed from a real
+`flow.google.com` UI action. Discovery happens through the browser/KBS path,
+not through the retired Chrome extension.
 
-The recorder is deliberately **not** in the shipped extension: it writes live
-request bodies to disk, so it goes in for one session and comes straight back out.
+## Safety boundary
 
-## What already exists
+- Capture only during an explicitly approved validation/discovery session.
+- Reuse the existing persistent signed-in profile under its normal lease.
+- Never clear cookies/storage, sign out, clone/replace the profile or export
+  credentials.
+- Never use paid generation merely to diagnose transport.
+- If a paid effect outcome becomes unknown, stop and reconcile it before any
+  resend.
+- Never commit raw cookies, auth headers, CSRF values, profile databases or
+  unredacted browser dumps.
 
-| step | rpcid | notes |
-|---|---|---|
-| generate image | `ogiZ0b` | signed CDN url comes back inline |
-| generate video | `eb1hJf` | returns an operation id |
-| poll operation | `jwpduf` | status `CAE` means finished |
-| operation → media id | `Zzl0ze` | `projects/<id>`; the listing is ~17 MB |
-| media id → urls | `as29s` | signed `/video/` + poster `/image/` |
-| upload an image | `maseQ` | base64 in the payload, captcha like a generate |
+## Preferred discovery flow
 
-Missing, and each blocked behind a capture: **video upscale**, **r2v**,
-**start+end-frame chaining**, and the **base-image** variant of the image edit.
+1. Start from the exact source revision and pinned KBS revision.
+2. Open/resume the existing Flow profile through `BrowserFlowBackend`.
+3. Observe the relevant UI/network action using KBS/browser observation tools.
+4. Capture only the minimum sanitized request/response structure needed to
+   identify `rpcid`, `f.req` positional shape and response parsing.
+5. Store discovery material only in approved scratch space. Redact identity,
+   cookies, headers, signed URLs and other live credentials.
+6. Diff the inner payload against the nearest builder in
+   `agent/services/flow_batch.py`.
+7. Encode the learned shape as a validated browser contract/recipe plus authored
+   coverage.
+8. Delete scratch captures after extracting the non-secret structural fixture.
 
-## Recording one
+## Existing browser RPC building blocks
 
-1. Add to `extension/background.js`, temporarily:
+| Capability | rpcid / source |
+|---|---|
+| image generation | `ogiZ0b` |
+| video generation | current builders in `flow_batch.py` |
+| operation polling | `jwpduf` |
+| project media listing | `Zzl0ze` |
+| media URL read | `as29s` |
+| upload | `maseQ` |
 
-```js
-const NETLOG_HOSTS = ['https://flow.google.com/_/*'];
-const pending = new Map();
+Do not infer support from an old extension capture. The current
+`flow.google.com` UI plus the pinned browser recipe is the authority.
 
-chrome.webRequest.onBeforeRequest.addListener((d) => {
-  const body = d.requestBody?.raw?.length
-    ? new TextDecoder().decode(new Uint8Array(d.requestBody.raw[0].bytes))
-    : null;
-  pending.set(d.requestId, { ts: new Date().toISOString(), url: d.url, body });
-}, { urls: NETLOG_HOSTS }, ['requestBody']);
+## Validation rules
 
-chrome.webRequest.onCompleted.addListener((d) => {
-  const rec = pending.get(d.requestId);
-  if (!rec) return;
-  pending.delete(d.requestId);
-  fetch('http://127.0.0.1:8100/api/ext/netlog', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...rec, statusCode: d.statusCode }),
-  }).catch(() => {});
-}, { urls: NETLOG_HOSTS });
-```
+**Accepted is not the same as used.** A positional payload can return HTTP 200
+while silently ignoring a field. Verify the resulting media/operation semantics,
+not only the status code.
 
-   Headers are omitted on purpose — the payload shape is what is wanted, and the
-   credentials are what caused the mess. Add an `onBeforeSendHeaders` listener
-   only if a header itself is the open question, and delete the log afterwards.
+**Read vs effect matters.** Read-only discovery can be retried when safe. A
+generation/effect cannot be blindly replayed after timeout or ambiguous browser
+failure.
 
-2. Add a matching throwaway route to `agent/main.py` that appends the posts to a
-   file under the scratch directory.
-3. Reload the extension, perform **one** action in Flow, then reload again with
-   the listener removed.
-4. Read the `f.req` out of the capture: it is
-   `[[[rpcid, "<inner payload as JSON string>", null, "generic"]]]`. Diff the
-   inner payload against the closest builder in `flow_batch.py` to find which
-   slot changed.
-5. Delete the capture file. It is evidence, not a fixture — put what you learned
-   into a builder and a test instead.
-
-## Two things worth knowing before you diff
-
-**Accepted ≠ used.** A wrong arrangement inside a slot comes back 200 and is
-then ignored. Prove a reference image with a prompt that never names its
-subject; prove an aspect ratio by reading the JPEG header, not by trusting the
-field name.
-
-**Slots do not share encodings.** Image aspect is 1 square / 2 portrait /
-3 landscape / 4 is 3:4 / 5 is 4:3. Video aspect is 1 portrait / 2 landscape, in
-its own slot. Conflating them renders the wrong shape silently.
-
-## 2026-09-23 UI refresh notes
-
-A live `flow.google.com` capture showed two migrated Omni video details had changed from older fixtures:
-
-- default first-frame crop is now `[null, null, 1, 1]` when the user has not reframed the source;
-- text-to-video 360p uses the `*_360p` model key, appends the low-resolution `[4]` option slot, and uses client descriptor type `2`.
-
-The same capture verified current first-frame `eb1hJf` structure and was followed by a successful direct FlowKit submit using that shape. Keep the golden fixtures aligned with these live-captured slots; do not restore the older near-edge crop or text-video descriptor `1` without a newer UI capture.
+**Signed URLs are ephemeral.** Persist stable media/operation UUIDs, then refresh
+URLs through the current read path when needed.

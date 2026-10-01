@@ -1,4 +1,4 @@
-"""Background worker — processes pending requests via Chrome extension.
+"""Background worker — processes pending requests via the browser-only Flow backend.
 
 Thin dispatcher: picks up PENDING requests, delegates to OperationService
 for actual API work, handles status transitions + retry + scene updates.
@@ -69,10 +69,18 @@ class WorkerController:
         return len(self._active_ids)
 
     async def start(self):
-        """Start the worker loop."""
-        if not get_flow_client().paid_dispatch_enabled:
-            logger.info("Worker disabled: selected Flow backend does not allow paid dispatch")
-            return
+        """Start the worker loop independently from paid-dispatch authorization.
+
+        The queue must remain alive so durable operations submitted before a
+        restart can resume read-only polling/reconciliation. New paid effects
+        remain blocked by the backend's explicit paid authorization boundary.
+        """
+        client = get_flow_client()
+        if not client.paid_dispatch_enabled:
+            logger.info(
+                "Worker running with paid dispatch locked; saved operations may "
+                "resume, new paid effects remain blocked"
+            )
         await self._cleanup_stale_processing()
         await self._run_loop()
 
@@ -308,9 +316,15 @@ async def _dispatch(req: dict, orientation: str) -> dict:
         scene["_project_id"] = pid
 
         if req_type in ("GENERATE_IMAGE", "REGENERATE_IMAGE"):
-            return await ops.generate_scene_image(scene, orientation)
+            return await ops.generate_scene_image(
+                scene, orientation, request_id=rid,
+            )
         if req_type == "EDIT_IMAGE":
-            return await ops.edit_scene_image(scene, orientation, source_media_id=req.get("source_media_id"))
+            return await ops.edit_scene_image(
+                scene, orientation,
+                source_media_id=req.get("source_media_id"),
+                request_id=rid,
+            )
         if req_type in ("GENERATE_VIDEO", "REGENERATE_VIDEO"):
             return await ops.generate_scene_video(scene, orientation, request_id=rid)
         if req_type == "GENERATE_VIDEO_REFS":
@@ -328,7 +342,9 @@ async def _dispatch(req: dict, orientation: str) -> dict:
             await crud.update_character(char["id"], media_id=None, reference_image_url=None)
             char["media_id"] = None
             char["reference_image_url"] = None
-            return await ops.generate_reference_image(char, pid)
+            return await ops.generate_reference_image(
+                char, pid, request_id=rid,
+            )
         if req_type == "EDIT_CHARACTER_IMAGE":
             src = req.get("source_media_id") or char.get("media_id")
             if not src:
@@ -341,8 +357,11 @@ async def _dispatch(req: dict, orientation: str) -> dict:
                 prompt=edit_prompt, source_media_id=src,
                 project_id=pid, aspect_ratio=aspect,
                 user_paygate_tier=tier,
+                idempotency_key=rid,
             )
-        return await ops.generate_reference_image(char, pid)
+        return await ops.generate_reference_image(
+            char, pid, request_id=rid,
+        )
 
     return {"error": f"Unknown request type: {req_type}"}
 
@@ -437,6 +456,23 @@ async def _handle_failure(rid: str, req: dict, result: dict, retry_after: dict =
     if isinstance(error_msg, dict):
         error_msg = json.dumps(error_msg)[:200]
 
+    effect = result.get("effect")
+    error_code = str(error_msg or "")
+    if effect == "unknown" or error_code == "PAID_RECONCILIATION_REQUIRED":
+        if retry_after is not None:
+            retry_after.pop(rid, None)
+        await crud.update_request(
+            rid,
+            status="FAILED",
+            error_message="PAID_RECONCILIATION_REQUIRED",
+        )
+        await _mark_scene_failed(req)
+        logger.error(
+            "Request %s requires paid-effect reconciliation; automatic retry blocked",
+            rid[:8],
+        )
+        return
+
     # Auto-recover expired media by re-uploading
     if "not found" in str(error_msg).lower():
         recovered = await _recover_entity_not_found(req)
@@ -465,12 +501,6 @@ async def _handle_failure(rid: str, req: dict, result: dict, retry_after: dict =
         await crud.update_request(rid, status="FAILED", error_message=str(error_msg))
         await _mark_scene_failed(req)
         logger.error("Request %s FAILED (not retryable): %s", rid[:8], error_msg)
-        return
-
-    # WS transient errors (extension disconnect/reconnect): retry without incrementing count
-    if "extension reconnected" in error_lower or "extension disconnected" in error_lower or "extension not connected" in error_lower:
-        await crud.update_request(rid, status="PENDING", error_message=str(error_msg))
-        logger.info("Request %s transient WS error, will retry (no retry increment): %s", rid[:8], error_msg)
         return
 
     # reCAPTCHA errors: retry up to 10 times — deferred dict in main loop handles delay

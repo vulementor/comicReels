@@ -31,7 +31,6 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Fetch all independent endpoints in parallel
 curl -s --max-time 1 "$BASE/health" >"$TMP/health" 2>/dev/null &
-curl -s --max-time 1 "$BASE/api/flow/status" >"$TMP/flow" 2>/dev/null &
 curl -s --max-time 1 "$BASE/api/flow/credits" >"$TMP/credits" 2>/dev/null &
 curl -s --max-time 1 "$BASE/api/active-project" >"$TMP/active_project" 2>/dev/null &
 curl -s --max-time 1 "$BASE/api/projects" >"$TMP/projects" 2>/dev/null &
@@ -39,32 +38,41 @@ curl -s --max-time 1 "$BASE/api/requests/pending" >"$TMP/pending" 2>/dev/null &
 curl -s --max-time 1 "$BASE/api/requests?status=PROCESSING" >"$TMP/processing" 2>/dev/null &
 wait
 
-# Health — single jq call
+# Browser transport health — single jq call
 health=$(cat "$TMP/health")
 if [ -z "$health" ]; then
   echo -e "${CLAUDE:+$CLAUDE | }GLA: ⚠ DOWN"
   exit 0
 fi
 
-IFS='|' read -r ext ws_connects ws_disconnects ws_uptime <<< "$(echo "$health" | jq -r '[
-  (.extension_connected // false | tostring),
-  (.ws.connects // 0 | tostring),
-  (.ws.disconnects // 0 | tostring),
-  (.ws.uptime_s // 0 | tostring)
+IFS='|' read -r backend_ready session_ready auth lease reconciliation pending_intents paid_enabled <<< "$(echo "$health" | jq -r '[
+  (.backend_ready // false | tostring),
+  (.browser_session_ready // false | tostring),
+  (.authentication // "unknown"),
+  (.lease_held // false | tostring),
+  (.reconciliation_required // false | tostring),
+  (.pending_intents // 0 | tostring),
+  (.paid_dispatch_enabled // false | tostring)
 ] | join("|")' 2>/dev/null)"
 
-if [ "$ext" = "true" ]; then
-  ws_up_min=$((${ws_uptime%.*} / 60))
-  ext_icon="WS:${G}Ok${R}(${ws_up_min}m↑${ws_connects}c↓${ws_disconnects}d)"
+if [ "$backend_ready" = "true" ] && [ "$session_ready" = "true" ] && [ "$auth" = "authenticated" ] && [ "$lease" = "true" ]; then
+  browser_icon="BR:${G}Ok${R}"
 else
-  ext_icon="WS:${V}✗${R}(↓${ws_disconnects}d)"
+  browser_icon="BR:${V}✗${R}"
 fi
 
-# Flow + credits — single jq each
-flow_info=""
-flow_key=$(jq -r '.flow_key_present // false' "$TMP/flow" 2>/dev/null)
-if [ "$flow_key" = "true" ]; then flow_info="Auth:Ok"; else flow_info="Auth:✗"; fi
+recon_info=""
+if [ "$reconciliation" = "true" ]; then
+  recon_info=" ${V}Recon:!${pending_intents}${R}"
+fi
 
+if [ "$paid_enabled" = "true" ]; then
+  paid_info=" ${V}Paid:Val${R}"
+else
+  paid_info=" Paid:Lock"
+fi
+
+# Credits/tier is business metadata; browser authentication comes from /health.
 credits_info=""
 tier=$(jq -r '.data.userPaygateTier // .userPaygateTier // empty' "$TMP/credits" 2>/dev/null)
 case "$tier" in
@@ -84,7 +92,7 @@ vid_id=$(echo "$ap" | jq -r '.video_id // empty' 2>/dev/null)
 if [ -z "$proj_id" ]; then
   project=$(cat "$TMP/projects")
   if [ -z "$project" ] || [ "$project" = "[]" ]; then
-    echo -e "${CLAUDE:+$CLAUDE | }GLA: ${ext_icon}"
+    echo -e "${CLAUDE:+$CLAUDE | }GLA: ${browser_icon}${paid_info}${recon_info}"
     exit 0
   fi
   IFS='|' read -r proj_name proj_id <<< "$(echo "$project" | jq -r '.[-1] | [(.name // "?"), (.id // "")] | join("|")' 2>/dev/null)"
@@ -92,7 +100,7 @@ if [ -z "$proj_id" ]; then
 fi
 
 if [ -z "$vid_id" ]; then
-  echo -e "${CLAUDE:+$CLAUDE | }GLA: ${ext_icon} $(echo "$proj_name" | cut -c1-15)"
+  echo -e "${CLAUDE:+$CLAUDE | }GLA: ${browser_icon}${paid_info}${recon_info} $(echo "$proj_name" | cut -c1-15)"
   exit 0
 fi
 
@@ -150,9 +158,8 @@ fi
 
 flow_str=""
 [ -n "$credits_info" ] && flow_str=" ${V}${credits_info}${R}"
-[ -n "$flow_info" ] && flow_str="${flow_str} ${V}${flow_info}${R}"
 
 # Queue: pending→processing/max
 queue="${V}${pending}${R}→${V}${processing}${R}/5"
 
-echo -e "${CLAUDE:+$CLAUDE | }GLA: ${ext_icon}${flow_str} ${short_name} ${ori_label} ${total}sc img:${V}${img_done}${R} vid:${V}${vid_done}${R} 4K:${V}${up_done}${R}↓${V}${dl_count}${R} TTS:${V}${tts_count}${R} Q:${queue}"
+echo -e "${CLAUDE:+$CLAUDE | }GLA: ${browser_icon}${paid_info}${recon_info}${flow_str} ${short_name} ${ori_label} ${total}sc img:${V}${img_done}${R} vid:${V}${vid_done}${R} 4K:${V}${up_done}${R}↓${V}${dl_count}${R} TTS:${V}${tts_count}${R} Q:${queue}"

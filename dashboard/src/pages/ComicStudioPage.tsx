@@ -4,7 +4,7 @@ import {
   Play, RefreshCcw, Save, Scissors, ShieldCheck, Sparkles, Trash2, UploadCloud,
 } from 'lucide-react'
 
-type FlowState = { extension_connected: boolean; project_id: string | null; ready: boolean }
+type FlowState = { browser_ready: boolean; project_id: string | null; ready: boolean }
 type AIState = { provider: string; configured: boolean; vision_model: string; image_model: string }
 type ComicStatus = { status: string; flow: FlowState; ai: AIState; local_test_state: string }
 type Dialogue = {
@@ -561,7 +561,7 @@ export default function ComicStudioPage() {
             <div className="border-t pt-2" style={{ borderColor: 'var(--border)' }}>
               <div className="font-semibold">{status?.flow.ready ? '● Google Flow sẵn sàng' : '○ Google Flow chưa sẵn sàng'}</div>
               <div className="mt-1" style={{ color: 'var(--muted)' }}>
-                Extension: {status?.flow.extension_connected ? 'đã nối' : 'chưa nối'} · Project: {status?.flow.project_id ?? 'chưa chọn'}
+                Browser: {status?.flow.browser_ready ? 'sẵn sàng' : 'chưa sẵn sàng'} · Project: {status?.flow.project_id ?? 'chưa chọn'}
               </div>
             </div>
             <button onClick={() => void refreshStatus()} className="rounded border px-2 py-1" style={{ borderColor: 'var(--border)' }}>

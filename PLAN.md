@@ -1,4 +1,13 @@
-# google-flow-agent — Revised Plan
+# HISTORICAL / SUPERSEDED — google-flow-agent Revised Plan
+
+> This document records the original Chrome-extension architecture plan and is
+> retained only as history. It is **not** current setup, recovery or implementation
+> authority. Do not follow its extension/WebSocket, token-capture or port-9222
+> instructions.
+>
+> Current authority:
+> `docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md` and
+> `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`.
 
 ## What We're Building
 

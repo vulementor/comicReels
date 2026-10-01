@@ -1,28 +1,17 @@
 """
-Flow Client — business API over an explicitly selected Flow backend.
+Flow Client — business API over the browser-only Flow backend.
 
-The default extension backend uses the existing WS bridge. The optional browser
-backend owns a persistent signed-in session and is limited to non-paid work.
-
-One transport: Flow's ``batchexecute`` endpoint on flow.google.com, whose calls
-only a signed-in page can sign — the agent builds the envelope, the selected
-backend runs it in the tab (see :mod:`agent.services.flow_batch`).
-
-The REST path against ``aisandbox-pa.googleapis.com`` that preceded it is gone.
-It needed a ``Bearer ya29.…`` that Flow stopped minting in the September 2026
-migration, so it could not run; keeping it only gave the next contributor a
-second place to implement things. Git history has it if a payload is ever needed.
-
-Answers are shaped like the old REST ones, so everything downstream — the
-worker's parsers, the operation poller, the scene/character updaters — reads one
-shape and never learns where it came from.
+FlowKit now has one Flow transport: BrowserFlowBackend owns the persistent
+signed-in browser session and executes validated batchexecute requests in that
+leased session. Business callers keep using FlowClient response shapes and do
+not depend on browser internals.
 """
 import asyncio
 import json
 import logging
-import os
+import re
+import threading
 import time
-import uuid
 from typing import Optional
 
 from agent.config import (
@@ -34,184 +23,61 @@ from agent.config import (
 )
 from agent import config as _config
 from agent.services import flow_batch as fb
-from agent.services.flow_backend import ExtensionFlowBackend, FlowBackend
+from agent.services.flow_backend import FlowBackend
+from agent.services.flow_backend_selection import BackendSelection, resolve_backend_selection
 
 logger = logging.getLogger(__name__)
 
-# Captured from the current Flow image composer. x4 launches independent
-# ogiZ0b requests at roughly 0.0s, 0.5s, 1.5s and 2.5s rather than bursting
-# all variants at once. The generation work still overlaps after submission.
-IMAGE_UI_SUBMIT_OFFSETS_S = (0.0, 0.5, 1.5, 2.5)
+_POLL_COMPLAINT_CODES = frozenset({
+    "OPERATION_BINDING_REQUIRED",
+    "OPERATION_BINDING_CONFLICT",
+    "BROWSER_NOT_READY",
+    "PROJECT_REQUIRED",
+    "POLL_READ_UNAVAILABLE",
+    "MEDIA_READ_UNAVAILABLE",
+})
 
-# RPC [8] is a transient Flow-side generation rejection seen under image load.
-# A short 6s retry was still rejected in live testing, so use one bounded
-# cooldown retry rather than hot-looping or multiplying duplicate generations.
-# This is FlowKit resilience policy; the current UI was not observed to retry
-# automatically after the same failure.
-IMAGE_TRANSIENT_RETRY_DELAY_S = 34.0
-IMAGE_TRANSIENT_MAX_ATTEMPTS = 2
+
+def _fixed_poll_complaint(error, fallback: str = "POLL_READ_UNAVAILABLE") -> str:
+    """Map poll/read failures to fixed public codes without leaking browser details."""
+    value = str(error or "")
+    for code in _POLL_COMPLAINT_CODES:
+        if code in value:
+            return code
+    return fallback
 
 
 class FlowClient:
-    """Flow business API using one explicitly selected backend."""
+    """Flow business API over one browser backend."""
+
+    # Match the browser contract exactly. This validator is business-layer
+    # convenience only and must not accept looser identifiers than KBS/browser
+    # recipes do.
+    _UUID_RE = re.compile(
+        r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+        re.IGNORECASE,
+    )
 
     def __init__(self, backend: FlowBackend | None = None):
-        self._extension_ws = None  # Active authenticated extension connection
-        self._extensions: dict[object, dict] = {}
-        self._pending: dict[str, asyncio.Future] = {}
-        self._pending_ws: dict[str, object] = {}
-        self._flow_key: Optional[str] = None
-        # Per-operation poll state. `_operation_projects` says which project
-        # listing to look a finished media up in; `_operation_media` caches the
-        # id once the listing has it, so later rounds skip the listing entirely;
-        # `_operation_polls` counts rounds, to keep the listing off most of them.
-        self._operation_projects: dict[str, str] = {}
-        self._operation_media: dict[str, str] = {}
-        self._operation_polls: dict[str, int] = {}
+        if backend is None:
+            # Preserve direct FlowClient() construction as a browser-only API.
+            # get_flow_client() still owns production singleton/error caching.
+            from agent.services.flow_browser_backend import BrowserFlowBackend
+            backend = BrowserFlowBackend()
+        self._backend = backend
+
+        # Existing business-level generation guards remain intact. They do not
+        # authorize a paid browser effect; the paid gate remains separate.
         self._generation_slots = asyncio.Semaphore(FLOW_GENERATION_MAX_CONCURRENT)
         self._generation_rate_gate = asyncio.Lock()
         self._generation_last_submit_at = 0.0
         self._generation_unusual_until = 0.0
         self._generation_last_unusual_at: Optional[float] = None
         self._generation_last_unusual_rpc: Optional[str] = None
-        # WS stats
-        self._ws_connect_count = 0
-        self._ws_disconnect_count = 0
-        self._ws_connected_at: Optional[float] = None
-        self._ws_last_disconnect_at: Optional[float] = None
-        self._backend = backend if backend is not None else ExtensionFlowBackend(
-            self._send_extension, lambda: self.extension_connected,
-        )
-
-    def set_extension(self, ws):
-        """Called when extension connects via WS."""
-        self._extensions[ws] = {
-            "connected_at": time.time(),
-            "flow_key": None,
-            "token_captured_at": None,
-            "extension_version": None,
-            "flow_url_supported": None,
-            "unavailable_until": 0,
-        }
-        # A new unauthenticated profile must not displace an already
-        # authenticated extension. It becomes active after token_captured.
-        if self._extension_ws is None:
-            self._extension_ws = ws
-        self._ws_connect_count += 1
-        self._ws_connected_at = time.time()
-        logger.info(
-            "Extension connected #%d (%d active connection(s)); "
-            "waiting for extension_ready/token_captured to sync",
-            self._ws_connect_count,
-            len(self._extensions),
-        )
-
-    def clear_extension(self, ws=None):
-        """Called when extension disconnects."""
-        disconnected_ws = ws or self._extension_ws
-        if disconnected_ws is None:
-            return
-
-        self._extensions.pop(disconnected_ws, None)
-        self._ws_disconnect_count += 1
-        self._ws_last_disconnect_at = time.time()
-
-        # Only cancel requests that were sent through the disconnected socket.
-        # Requests owned by other Chrome profiles are still valid.
-        disconnected_pending = [
-            (req_id, self._pending.get(req_id))
-            for req_id, pending_ws in list(self._pending_ws.items())
-            if pending_ws is disconnected_ws
-        ]
-        for req_id, future in disconnected_pending:
-            if future is not None and not future.done():
-                future.set_exception(ConnectionError("Extension disconnected"))
-            self._pending_ws.pop(req_id, None)
-
-        if self._extension_ws is disconnected_ws:
-            self._extension_ws = self._select_extension(require_token=True)
-            if self._extension_ws is None:
-                self._extension_ws = self._select_extension(require_token=False)
-
-        active_session = self._extensions.get(self._extension_ws, {})
-        self._flow_key = active_session.get("flow_key")
-        logger.warning(
-            "Extension disconnected, cancelled %d owned request(s); "
-            "%d extension connection(s) remain",
-            len(disconnected_pending),
-            len(self._extensions),
-        )
-
-    def _extension_candidates(self, require_token: bool):
-        """Return usable extensions in preferred routing order."""
-        now = time.time()
-        candidates = []
-        for ws, session in self._extensions.items():
-            if require_token and not session.get("flow_key"):
-                continue
-            recency = (
-                session.get("token_captured_at")
-                if require_token
-                else session.get("connected_at")
-            )
-            candidates.append({
-                "ws": ws,
-                "available": session.get("unavailable_until", 0) <= now,
-                "active": ws is self._extension_ws,
-                "recency": recency or 0,
-            })
-
-        # Prefer an available active session, then the most recently
-        # authenticated alternatives. Temporarily unavailable sessions remain
-        # last-resort candidates so a single-profile setup can still recover.
-        candidates.sort(
-            key=lambda item: (
-                item["available"],
-                item["active"] and item["available"],
-                item["recency"],
-            ),
-            reverse=True,
-        )
-        return [item["ws"] for item in candidates]
-
-    def _select_extension(self, require_token: bool):
-        """Choose the preferred authenticated or connected extension."""
-        candidates = self._extension_candidates(require_token)
-        return candidates[0] if candidates else None
-
-    @staticmethod
-    def _should_failover(result: dict) -> bool:
-        """Return true for profile-local failures that another tab can solve."""
-        message = str(result.get("error") or result.get("data") or "").lower()
-        return any(marker in message for marker in (
-            "no_flow_key",
-            "no_flow_tab",
-            # Batch path: this profile's Flow tab cannot sign a request — it is
-            # signed out, still booting, or Chrome discarded it. Another
-            # profile's tab may be perfectly able to.
-            "no_at_token",
-            "flow_tab_discarded",
-            "no current window",
-            "extension not connected",
-            "extension disconnected",
-            "extension_switched",
-            "public_error_per_model_daily_quota_reached",
-            "public_error_user_quota_reached",
-        ))
-
-    def set_flow_key(self, key: str):
-        self._flow_key = key
-        if self._extension_ws in self._extensions:
-            self._extensions[self._extension_ws]["flow_key"] = key
-            self._extensions[self._extension_ws]["token_captured_at"] = time.time()
 
     @property
     def connected(self) -> bool:
         return self._backend.ready
-
-    @property
-    def extension_connected(self) -> bool:
-        return bool(self._extensions)
 
     @property
     def backend(self) -> FlowBackend:
@@ -241,6 +107,12 @@ class FlowClient:
     async def open_project(self, project_id: str) -> dict:
         return await self._backend.open_project(project_id)
 
+    async def ensure_session_project(self, *, title=None, force_new=False) -> dict:
+        """Use the backend's durable create/reuse path, never raw create RPC."""
+        return await self._backend.ensure_session_project(
+            title=title, force_new=force_new,
+        )
+
     @property
     def generation_guard_status(self) -> dict:
         remaining = max(0.0, self._generation_unusual_until - time.monotonic())
@@ -250,174 +122,6 @@ class FlowClient:
             "last_unusual_activity_at": self._generation_last_unusual_at,
             "last_unusual_activity_rpc": self._generation_last_unusual_rpc,
         }
-
-    @property
-    def ws_stats(self) -> dict:
-        uptime = None
-        if self._ws_connected_at and self.extension_connected:
-            uptime = int(time.time() - self._ws_connected_at)
-        versions = sorted({
-            str(session["extension_version"])
-            for session in self._extensions.values()
-            if session.get("extension_version")
-        })
-        flow_url_support = [
-            session.get("flow_url_supported")
-            for session in self._extensions.values()
-            if session.get("flow_url_supported") is not None
-        ]
-        return {
-            "connected": self.extension_connected,
-            "active_connections": len(self._extensions),
-            "authenticated_connections": sum(
-                1 for session in self._extensions.values()
-                if session.get("flow_key")
-            ),
-            "extension_versions": versions,
-            "flow_url_supported": all(flow_url_support) if flow_url_support else None,
-            "connects": self._ws_connect_count,
-            "disconnects": self._ws_disconnect_count,
-            "uptime_s": uptime,
-        }
-
-    async def handle_message(self, data: dict, websocket=None):
-        """Handle incoming message from extension."""
-        if data.get("type") == "token_captured":
-            key = data.get("flowKey")
-            source_ws = websocket or self._extension_ws
-            if source_ws is not None and source_ws in self._extensions:
-                self._extensions[source_ws]["flow_key"] = key
-                self._extensions[source_ws]["token_captured_at"] = time.time()
-                self._extension_ws = source_ws
-            self._flow_key = key
-            logger.info("Flow key captured from extension")
-            asyncio.create_task(self._sync_tier())
-            return
-
-        if data.get("type") == "extension_ready":
-            source_ws = websocket or self._extension_ws
-            version = data.get("extensionVersion")
-            flow_supported = data.get("flowUrlSupported")
-            if source_ws is not None and source_ws in self._extensions:
-                self._extensions[source_ws]["extension_version"] = version
-                self._extensions[source_ws]["flow_url_supported"] = flow_supported
-            logger.info(
-                "Extension ready, flowKey=%s version=%s flow.google.com=%s",
-                "yes" if data.get("flowKeyPresent") else "no",
-                version or "unknown",
-                "yes" if flow_supported is True else "no" if flow_supported is False else "unknown",
-            )
-            asyncio.create_task(self._sync_tier())
-            return
-
-        if data.get("type") == "media_urls_refresh":
-            asyncio.create_task(self._refresh_media_urls(data.get("urls", [])))
-            return
-
-        if data.get("type") == "pong":
-            return
-
-        if data.get("type") == "ping":
-            # Respond to keepalive
-            target_ws = websocket or self._extension_ws
-            if target_ws:
-                await target_ws.send(json.dumps({"type": "pong"}))
-            return
-
-        # Response to a pending request
-        req_id = data.get("id")
-        if req_id and req_id in self._pending:
-            if not self._pending[req_id].done():
-                self._pending[req_id].set_result(data)
-            return
-
-    async def _sync_tier(self):
-        """Detect current tier from credits API and update all active projects."""
-        if getattr(self, '_sync_in_progress', False):
-            return
-        self._sync_in_progress = True
-        try:
-            result = await self.get_credits()
-            data = result.get("data", result)
-            tier = data.get("userPaygateTier", "PAYGATE_TIER_ONE")
-            logger.info("Syncing tier: %s", tier)
-
-            from agent.db import crud
-            projects = await crud.list_projects(status="ACTIVE")
-            for p in projects:
-                if p.get("user_paygate_tier") != tier:
-                    await crud.update_project(p["id"], user_paygate_tier=tier)
-                    logger.info("Updated project %s tier: %s -> %s",
-                                p["id"][:12], p.get("user_paygate_tier"), tier)
-        except Exception as e:
-            logger.warning("Failed to sync tier: %s", e)
-        finally:
-            self._sync_in_progress = False
-
-    _UUID_RE = __import__("re").compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
-    # flow-content.google is where the rewritten frontend serves media from;
-    # the other two are the pre-migration hosts, still seen on older media.
-    _SAFE_URL_RE = __import__("re").compile(
-        r'^https://(storage\.googleapis\.com|lh3\.googleusercontent\.com|flow-content\.google)/')
-
-    async def _refresh_media_urls(self, urls: list[dict]):
-        """Update scene/character URLs in DB from fresh TRPC-captured signed URLs.
-
-        Each entry: {mediaId: str, mediaType: 'image'|'video', url: str}
-        """
-        from agent.db import crud
-        from agent.services.event_bus import event_bus
-
-        updated = 0
-        for entry in urls:
-            media_id = entry.get("mediaId", "")
-            media_type = entry.get("mediaType", "")
-            url = entry.get("url", "")
-            if not media_id or not url:
-                continue
-            # Validate media_id is UUID and url is from trusted domains
-            if not self._UUID_RE.match(media_id):
-                logger.warning("Rejected invalid media_id: %s", media_id[:20])
-                continue
-            if not self._SAFE_URL_RE.match(url):
-                logger.warning("Rejected untrusted URL domain for media %s", media_id[:12])
-                continue
-            if media_type not in ("image", "video"):
-                continue
-
-            # Try matching against scenes (check both orientations)
-            scenes = await crud.list_scenes_by_media_id(media_id)
-            for scene in scenes:
-                updates = {}
-                if media_type == "image":
-                    # Update whichever orientation matches
-                    if scene.get("vertical_image_media_id") == media_id:
-                        updates["vertical_image_url"] = url
-                    if scene.get("horizontal_image_media_id") == media_id:
-                        updates["horizontal_image_url"] = url
-                elif media_type == "video":
-                    if scene.get("vertical_video_media_id") == media_id:
-                        updates["vertical_video_url"] = url
-                    if scene.get("horizontal_video_media_id") == media_id:
-                        updates["horizontal_video_url"] = url
-                    if scene.get("vertical_upscale_media_id") == media_id:
-                        updates["vertical_upscale_url"] = url
-                    if scene.get("horizontal_upscale_media_id") == media_id:
-                        updates["horizontal_upscale_url"] = url
-                if updates:
-                    await crud.update_scene(scene["id"], **updates)
-                    updated += 1
-
-            # Try matching against characters
-            chars = await crud.list_characters_by_media_id(media_id)
-            for char in chars:
-                if media_type == "image" and char.get("media_id") == media_id:
-                    await crud.update_character(char["id"], reference_image_url=url)
-                    updated += 1
-
-        if updated:
-            logger.info("Refreshed %d media URLs from TRPC intercept", updated)
-            await event_bus.emit("urls_refreshed", {"count": updated})
 
     async def refresh_project_urls(self, project_id: str) -> dict:
         """Re-sign every stored media url for a project.
@@ -453,7 +157,9 @@ class FlowClient:
         refreshed = 0
         for (media_id, kind), fields in targets.items():
             try:
-                urls = await self._batch_media_urls(media_id)
+                urls = await self._batch_media_urls(
+                    media_id, project_id=project_id,
+                )
             except Exception as e:
                 logger.warning("Refresh failed for media %s: %s", media_id[:12], e)
                 continue
@@ -475,73 +181,12 @@ class FlowClient:
         """Dispatch through the selected backend; retain the business API seam."""
         return await self._backend.execute(method, params, timeout)
 
-    async def _send_extension(self, method: str, params: dict, timeout: float = 300) -> dict:
-        """Send request to extension and wait for response.
-
-        Always returns a dict. On error, returns {"error": "<reason>"} — callers
-        must check result.get("error") or use _is_ws_error() before reading data.
-        Never raises; exceptions are caught and returned as error dicts.
-        """
-        if not self.extension_connected:
-            return {"error": "Extension not connected"}
-
-        # No profile needs a bearer any more: batchexecute authenticates in the
-        # page with the session cookie. Demanding a flow key here would reject
-        # every profile, because none on this path ever captures one.
-        extension_candidates = self._extension_candidates(require_token=False)
-        if not extension_candidates:
-            return {"error": "Extension not connected"}
-
-        last_result = {"error": "Extension not connected"}
-        for index, extension_ws in enumerate(extension_candidates):
-            if extension_ws not in self._extensions:
-                continue
-
-            self._extension_ws = extension_ws
-            self._flow_key = self._extensions[extension_ws].get("flow_key")
-            req_id = str(uuid.uuid4())
-            future = asyncio.get_running_loop().create_future()
-            self._pending[req_id] = future
-            self._pending_ws[req_id] = extension_ws
-
-            try:
-                await extension_ws.send(json.dumps({
-                    "id": req_id,
-                    "method": method,
-                    "params": params,
-                }))
-                last_result = await asyncio.wait_for(future, timeout=timeout)
-            except asyncio.TimeoutError:
-                last_result = {"error": f"Timeout ({timeout}s) waiting for {method}"}
-            except Exception as e:
-                last_result = {"error": str(e)}
-            finally:
-                self._pending.pop(req_id, None)
-                self._pending_ws.pop(req_id, None)
-
-            has_alternative = index + 1 < len(extension_candidates)
-            if self._should_failover(last_result) and has_alternative:
-                if extension_ws in self._extensions:
-                    self._extensions[extension_ws]["unavailable_until"] = (
-                        time.time() + 60
-                    )
-                logger.warning(
-                    "Extension profile unavailable for %s; retrying through "
-                    "another authenticated profile",
-                    method,
-                )
-                continue
-
-            return last_result
-
-        return last_result
-
     # ─── batchexecute transport ──────────────────────────────
     #
     # Flow's rewritten frontend signs every call with the session cookie plus a
-    # per-page `at` token, and a generate also carries a single-use reCAPTCHA.
-    # None of that can be replayed from here, so the agent builds the envelope
-    # and the extension runs it inside a signed-in flow.google.com tab.
+    # per-page `at` token, and generation also carries single-use browser proof.
+    # FlowClient builds the business envelope; BrowserFlowBackend executes it in
+    # the leased signed-in flow.google.com session.
 
     async def batch_rpc(self, rpcid: str, freq: str,
                         captcha_action: str | None = None,
@@ -657,20 +302,25 @@ class FlowClient:
         legacy = VIDEO_MODELS.get(tier, {}).get(gen_type, {}).get(aspect_ratio)
         return fb.resolve_video_model(legacy)
 
-    def _remember_operation(self, operation_id: str, project_id: str):
-        """Which project an operation belongs to — the listing lookup needs it.
+    async def _remember_operation(self, operation_id: str, project_id: str):
+        """Persist operation ownership through the browser backend journal."""
+        result = await self._backend.bind_operation(operation_id, project_id)
+        if not isinstance(result, dict) or result.get("status") != 200:
+            code = result.get("error") if isinstance(result, dict) else None
+            raise fb.FlowBatchError(code or "OPERATION_BINDING_REQUIRED")
+        return result
 
-        A poll record usually carries the project id, but old operations decay
-        to a bare id, so keep our own note. Bounded: this is a cache, and the
-        pinned project is always a workable fallback.
-        """
-        if not operation_id:
-            return
-        if len(self._operation_projects) > 512:
-            self._operation_projects.clear()
-            self._operation_media.clear()
-            self._operation_polls.clear()
-        self._operation_projects[operation_id] = project_id
+    async def _operation_project_id(self, operation_id: str) -> str:
+        """Resolve operation ownership from durable browser state only."""
+        result = await self._backend.operation_project(operation_id)
+        if not isinstance(result, dict) or result.get("status") != 200:
+            code = result.get("error") if isinstance(result, dict) else None
+            raise fb.FlowBatchError(code or "OPERATION_BINDING_REQUIRED")
+        data = result.get("data")
+        project_id = data.get("projectId") if isinstance(data, dict) else None
+        if not isinstance(project_id, str) or not self._UUID_RE.match(project_id):
+            raise fb.FlowBatchError("OPERATION_BINDING_REQUIRED")
+        return project_id
 
     # ─── High-level API Methods ──────────────────────────────
 
@@ -681,22 +331,37 @@ class FlowClient:
         return None
 
     async def create_project(self, project_title: str, tool_name: str = "PINHOLE") -> dict:
+        """Create a fresh project through the backend's durable intent/receipt path."""
         try:
-            result = await self.batch_rpc(
-                fb.RPC_CREATE_PROJECT,
-                fb.create_project_request(project_title),
-                timeout=60,
+            result = await self.ensure_session_project(
+                title=project_title,
+                force_new=True,
             )
-            if result.get("error"):
-                return {"status": result.get("status", 502), "error": result["error"]}
-            payload = fb.first_payload(result.get("data") or "", fb.RPC_CREATE_PROJECT)
-            pid, title = fb.read_created_project(payload)
-            if not self._UUID_RE.match(pid):
-                raise fb.FlowBatchError(f"invalid project id returned by Flow: {pid!r}")
-            logger.info("Flow project created: %s title=%r", pid, title or project_title)
-            return {"status": 200, "data": {"projectId": pid, "title": title or project_title}}
         except Exception as exc:
             return _batch_error(exc)
+        if not isinstance(result, dict):
+            return {"status": 502, "error": "PROJECT_CREATE_FAILED"}
+        if result.get("error") or result.get("status") != 200:
+            return {
+                "status": result.get("status", 502),
+                "error": result.get("error", "PROJECT_CREATE_FAILED"),
+                "effect": result.get("effect", "not_submitted"),
+            }
+        data = result.get("data")
+        pid = data.get("projectId") if isinstance(data, dict) else None
+        title = data.get("title") if isinstance(data, dict) else None
+        if not isinstance(pid, str) or not self._UUID_RE.match(pid):
+            return {
+                "status": 409,
+                "error": "PROJECT_RECEIPT_UNVERIFIED",
+                "effect": "unknown",
+            }
+        logger.info("Flow project created: %s title=%r", pid, title or project_title)
+        return {
+            "status": 200,
+            "data": {"projectId": pid, "title": title or project_title},
+            "effect": result.get("effect", "completed"),
+        }
 
     async def generate_images(self, prompt: str, project_id: str,
                                aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
@@ -705,101 +370,111 @@ class FlowClient:
                                image_model: str = None,
                                count: int = 1,
                                seed: int | None = None,
-                               base_media_id: str | None = None) -> dict:
-        """Generate image(s).
+                               base_media_id: str | None = None,
+                               idempotency_key: str | None = None,
+                               paid_authorization=None) -> dict:
+        """Submit exactly one paid image through the durable browser gate.
 
-        ``character_media_ids`` are attached as reference images, which is what
-        keeps an entity the same across scenes. Response is shaped like the
-        old REST one so the parsers downstream do not have to care which
-        transport produced it.
+        The business response keeps the historical media[] shape. Durable state
+        stores only project/media UUIDs; signed URLs are refreshed afterwards by
+        a separate read-only media RPC. Missing URL data never turns a completed
+        paid receipt back into a generation failure.
         """
+        if count != 1:
+            return {
+                "status": 409,
+                "error": "PAID_SINGLE_SHOT_REQUIRED",
+                "effect": "not_submitted",
+            }
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            return {
+                "status": 409,
+                "error": "PAID_IDEMPOTENCY_REQUIRED",
+                "effect": "not_submitted",
+            }
 
         try:
-            if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 4:
-                raise ValueError("image count must be an integer from 1 to 4")
             pid = self._batch_project_id(project_id)
             model = self._batch_image_model(image_model)
             refs = list(character_media_ids or []) or None
+            freq = fb.image_request(
+                prompt, pid, count=1, aspect=aspect_ratio, seed=seed,
+                model=model, ref_media_ids=refs, base_media_id=base_media_id,
+            )
+        except Exception as exc:
+            return _batch_error(exc)
 
-            async def submit_once(index: int, launch_offset: float = 0.0):
-                if launch_offset:
-                    await asyncio.sleep(launch_offset)
-                request_seed = seed + index * 9973 if seed is not None else None
-                freq = fb.image_request(
-                    prompt, pid, count=1, aspect=aspect_ratio, seed=request_seed,
-                    model=model, ref_media_ids=refs, base_media_id=base_media_id,
-                )
-                payload = await self._batch_payload(
-                    fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE, project_id=pid
-                )
-                generated = fb.read_images(payload)
-                if not generated:
-                    raise fb.FlowBatchError("Image generation returned no media url")
-                return generated[0]
-
-            async def run_wave(indices: list[int]) -> dict[int, object]:
-                # Flow's UI starts variants as separate single-image RPCs with a
-                # short cadence instead of a burst. Apply the cadence relative
-                # to each wave, while Google still performs the generation work
-                # concurrently after each request has been accepted.
-                tasks = [
-                    submit_once(index, IMAGE_UI_SUBMIT_OFFSETS_S[position])
-                    for position, index in enumerate(indices)
-                ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                return dict(zip(indices, results))
-
-            results = await run_wave(list(range(count)))
-            retry_indices = [
-                index for index, result in results.items()
-                if isinstance(result, fb.RpcError)
-                and result.rpcid == fb.RPC_GEN_IMAGE
-                and result.detail == [8]
-            ]
-            if retry_indices:
-                logger.warning(
-                    "Flow image wave had transient [8] for variant(s) %s; "
-                    "retrying after %.0fs cooldown once the first wave is fully settled",
-                    ",".join(str(i + 1) for i in retry_indices),
-                    IMAGE_TRANSIENT_RETRY_DELAY_S,
-                )
-                await asyncio.sleep(IMAGE_TRANSIENT_RETRY_DELAY_S)
-                retried = await run_wave(retry_indices)
-                results.update(retried)
-
-            images_by_index = {
-                index: result
-                for index, result in results.items()
-                if not isinstance(result, BaseException)
+        try:
+            result = await self._backend.submit_paid_image(
+                {
+                    "rpcid": fb.RPC_GEN_IMAGE,
+                    "freq": freq,
+                    "projectId": pid,
+                    "captchaAction": fb.CAPTCHA_IMAGE,
+                },
+                idempotency_key=idempotency_key,
+                authorization=paid_authorization,
+                timeout=300,
+            )
+        except Exception:
+            # The bridge may fail after the browser accepted the effect. Never
+            # infer non-submission, leak browser details or attempt another paid call.
+            return {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
             }
-            failures = {
-                index: result
-                for index, result in results.items()
-                if isinstance(result, BaseException)
+        if (not isinstance(result, dict) or result.get("status") != 200
+                or result.get("effect") != "completed"):
+            return result if isinstance(result, dict) else {
+                "status": 502,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
             }
-            if not images_by_index:
-                first_error = failures[min(failures)] if failures else fb.FlowBatchError(
-                    "Image generation returned no media url"
-                )
-                raise first_error
 
-            images = [images_by_index[index] for index in sorted(images_by_index)]
+        data = result.get("data")
+        if not isinstance(data, dict):
+            return {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
+            }
+        media_id = data.get("mediaId")
+        if not isinstance(media_id, str) or not self._UUID_RE.match(media_id):
+            return {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
+            }
 
-        except Exception as e:
-            return _batch_error(e)
+        # Receipt is already durable at this point. URL lookup is read-only and
+        # must never cause a paid resend or downgrade a completed effect.
+        image_url = ""
+        try:
+            media = await self.get_media(media_id, project_id=pid)
+            if isinstance(media, dict) and media.get("status") == 200:
+                record = media.get("data")
+                if isinstance(record, dict):
+                    image = record.get("image")
+                    if isinstance(image, dict):
+                        value = image.get("fifeUrl")
+                        if isinstance(value, str):
+                            image_url = value
+        except Exception:
+            image_url = ""
 
-        data = {
-            "media": [_as_media_record(i) for i in images],
-            "requested_count": count,
-            "generated_count": len(images),
-            "complete": len(images) == count,
+        generated = fb.GeneratedImage(media_id=media_id, url=image_url)
+        return {
+            "status": 200,
+            "data": {
+                "media": [_as_media_record(generated)],
+                "requested_count": 1,
+                "generated_count": 1,
+                "complete": True,
+            },
+            "effect": "completed",
+            "reused": result.get("reused") is True,
         }
-        if failures:
-            data["failed_variants"] = [
-                {"index": index + 1, "error": str(error)}
-                for index, error in sorted(failures.items())
-            ]
-        return {"status": 200, "data": data}
 
     async def edit_image(self, prompt: str, source_media_id: str,
                           project_id: str,
@@ -808,7 +483,9 @@ class FlowClient:
                           character_media_ids: list[str] = None,
                           image_model: str = None,
                           count: int = 1,
-                          seed: int | None = None) -> dict:
+                          seed: int | None = None,
+                          idempotency_key: str | None = None,
+                          paid_authorization=None) -> dict:
         """Edit an image with the source encoded as Flow's BASE_IMAGE input.
 
         Additional references remain REFERENCE inputs. Sending the source as a
@@ -827,6 +504,8 @@ class FlowClient:
             count=count,
             seed=seed,
             base_media_id=source_media_id,
+            idempotency_key=idempotency_key,
+            paid_authorization=paid_authorization,
         )
 
     async def upscale_image(self, media_id: str, project_id: str,
@@ -856,12 +535,45 @@ class FlowClient:
             },
         }
 
+    async def submit_paid_video(self, *, rpcid: str, freq: str,
+                                project_id: str, idempotency_key: str | None,
+                                paid_authorization=None,
+                                timeout: float = 120) -> dict:
+        """Submit one existing video RPC through the durable paid browser gate."""
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            return {
+                "status": 409,
+                "error": "PAID_IDEMPOTENCY_REQUIRED",
+                "effect": "not_submitted",
+            }
+        try:
+            return await self._backend.submit_paid_video(
+                {
+                    "rpcid": rpcid,
+                    "freq": freq,
+                    "projectId": project_id,
+                    "captchaAction": fb.CAPTCHA_VIDEO,
+                },
+                idempotency_key=idempotency_key,
+                authorization=paid_authorization,
+                timeout=timeout,
+            )
+        except Exception:
+            # The browser effect may have started before transport failure.
+            return {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
+            }
+
     async def generate_video(self, start_image_media_id: str, prompt: str,
                               project_id: str, scene_id: str,
                               aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
                               end_image_media_id: str = None,
-                              user_paygate_tier: str = "PAYGATE_TIER_TWO") -> dict:
-        """Submit an i2v generation. Returns operations for the poller."""
+                              user_paygate_tier: str = "PAYGATE_TIER_TWO",
+                              idempotency_key: str | None = None,
+                              paid_authorization=None) -> dict:
+        """Submit one i2v effect through the durable paid-video browser gate."""
 
         if end_image_media_id:
             if not FLOW_ALLOW_DEGRADED:
@@ -881,20 +593,59 @@ class FlowClient:
                 prompt, pid, start_image_media_id, aspect=aspect_ratio,
                 model=self._batch_video_model(user_paygate_tier, gen_type, aspect_ratio),
             )
-            payload = await self._batch_payload(
-                fb.RPC_GEN_VIDEO, freq, fb.CAPTCHA_VIDEO, timeout=120,
-                project_id=pid)
-            operation = fb.read_operation(payload)
-        except Exception as e:
-            return _batch_error(e)
+        except Exception as exc:
+            return _batch_error(exc)
 
-        self._remember_operation(operation.operation_id, pid)
-        return {"status": 200, "data": {"operations": [_as_pending_operation(operation.operation_id)]}}
+        result = await self.submit_paid_video(
+            rpcid=fb.RPC_GEN_VIDEO,
+            freq=freq,
+            project_id=pid,
+            idempotency_key=idempotency_key,
+            paid_authorization=paid_authorization,
+            timeout=120,
+        )
+        if (not isinstance(result, dict) or result.get("status") != 200
+                or result.get("effect") != "completed"):
+            return result if isinstance(result, dict) else {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
+            }
+
+        data = result.get("data")
+        operation_id = data.get("operationId") if isinstance(data, dict) else None
+        if (not isinstance(data, dict) or data.get("receiptKind") != "operation"
+                or not isinstance(operation_id, str)
+                or not self._UUID_RE.match(operation_id)):
+            return {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
+            }
+
+        try:
+            await self._remember_operation(operation_id, pid)
+        except Exception:
+            # The paid receipt may already be durable, but callers must not infer
+            # that a missing project binding makes the remote effect safe to resend.
+            return {
+                "status": 409,
+                "error": "OPERATION_BINDING_REQUIRED",
+                "effect": "unknown",
+            }
+        return {
+            "status": 200,
+            "data": {"operations": [_as_pending_operation(operation_id)]},
+            "effect": "completed",
+            "reused": result.get("reused") is True,
+        }
 
     async def generate_video_from_references(self, reference_media_ids: list[str],
                                               prompt: str, project_id: str, scene_id: str,
                                               aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
-                                              user_paygate_tier: str = "PAYGATE_TIER_TWO") -> dict:
+                                              user_paygate_tier: str = "PAYGATE_TIER_TWO",
+                                              idempotency_key: str | None = None,
+                                              paid_authorization=None) -> dict:
         """Generate video from multiple reference images (r2v)."""
 
         if not FLOW_ALLOW_DEGRADED:
@@ -912,6 +663,8 @@ class FlowClient:
             start_image_media_id=reference_media_ids[0], prompt=prompt,
             project_id=project_id, scene_id=scene_id, aspect_ratio=aspect_ratio,
             user_paygate_tier=user_paygate_tier,
+            idempotency_key=idempotency_key,
+            paid_authorization=paid_authorization,
         )
 
     async def upscale_video(self, media_id: str, scene_id: str,
@@ -951,31 +704,46 @@ class FlowClient:
             try:
                 out.append(await self._poll_batch_operation(op_id))
             except Exception as e:
-                # A hiccup on one poll round costs a round, not the job.
-                logger.warning("Operation %s poll failed: %s", op_id[:20], e)
-                out.append(_as_pending_operation(op_id, error=str(e)))
+                # A read hiccup costs a poll round, not the job. Keep the
+                # business complaint fixed/non-sensitive for logs and API shape.
+                logger.warning("Operation %s poll failed: %s", op_id[:20],
+                               _fixed_poll_complaint(e))
+                out.append(_as_pending_operation(
+                    op_id, error=_fixed_poll_complaint(e),
+                ))
         return {"status": 200, "data": {"operations": out}}
 
     async def _poll_batch_operation(self, operation_id: str) -> dict:
-        media_id = self._operation_media.get(operation_id)
-        complaint = None
+        """Poll from durable binding + current listing; no RAM cache is authoritative."""
+        try:
+            project_id = await self._operation_project_id(operation_id)
+        except Exception as error:
+            return _as_pending_operation(
+                operation_id,
+                error=_fixed_poll_complaint(
+                    error, "OPERATION_BINDING_REQUIRED",
+                ),
+            )
 
+        media_id, complaint = await self._find_operation_media(
+            operation_id, project_id=project_id,
+        )
         if not media_id:
-            media_id, complaint = await self._find_operation_media(operation_id)
-            if not media_id:
-                return _as_pending_operation(operation_id, error=complaint)
-            self._operation_media[operation_id] = media_id
+            return _as_pending_operation(operation_id, error=complaint)
 
-        urls = await self._batch_media_urls(media_id)
+        try:
+            urls = await self._batch_media_urls(media_id, project_id=project_id)
+        except Exception as error:
+            return _as_pending_operation(
+                operation_id,
+                error=_fixed_poll_complaint(error, "MEDIA_READ_UNAVAILABLE"),
+                media_id=media_id,
+            )
+
         if not urls.video:
-            # The id landed but the clip is still being written; downloading
-            # now would save the poster still instead of the video.
+            # The listing has the id but the clip is still being written.
             return _as_pending_operation(operation_id, error=complaint, media_id=media_id)
 
-        # The media id stays cached rather than being cleared here: a batch
-        # with several operations re-polls the finished ones alongside the
-        # pending ones, and a cleared entry would report them PENDING again.
-        # Growth is bounded by _remember_operation.
         return {
             "operation": {
                 "name": operation_id,
@@ -984,47 +752,46 @@ class FlowClient:
             "status": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
         }
 
-    async def _find_operation_media(self, operation_id: str) -> tuple[str | None, str | None]:
-        """Ask the operation how it is going, then the listing where its media is.
+    async def _find_operation_media(
+        self, operation_id: str, *, project_id: str | None = None,
+    ) -> tuple[str | None, str | None]:
+        """Read current operation diagnostics and always consult its project listing.
 
-        The listing is the authority — the poll has been seen to never report a
-        finished job the listing already knows about — but it is also the
-        expensive call, so it is only consulted when the poll says something
-        happened, when the poll is unreadable, or every third round regardless.
+        Durable operation/project binding is the authority. The operation poll is
+        diagnostic only; every round may discover media from the current listing,
+        so restart with empty RAM caches cannot delay correctness.
         """
-        rounds = self._operation_polls.get(operation_id, 0) + 1
-        self._operation_polls[operation_id] = rounds
+        if project_id is None:
+            try:
+                project_id = await self._operation_project_id(operation_id)
+            except Exception as error:
+                return None, _fixed_poll_complaint(
+                    error, "OPERATION_BINDING_REQUIRED",
+                )
 
-        project_id = self._operation_projects.get(operation_id) or FLOW_PROJECT_ID
         complaint = None
-        worth_looking = rounds % 3 == 0
         try:
             operation = fb.read_operation(
                 await self._batch_payload(
                     fb.RPC_OPERATION, fb.operation_request(operation_id), timeout=60)
             )
             complaint = operation.error
-            project_id = operation.project_id or project_id
-            if project_id:
-                self._remember_operation(operation_id, project_id)
-            worth_looking = worth_looking or operation.done or operation.complained
-        except Exception as e:
-            # An operation that has decayed to a bare id still shows up in the
-            # listing, so a failed poll is a reason to look there, not to stop.
-            logger.debug("Operation %s poll unreadable (%s), trying the listing",
-                         operation_id[:20], e)
-            worth_looking = True
+            if operation.project_id and operation.project_id != project_id:
+                return None, "OPERATION_BINDING_CONFLICT"
+        except Exception as error:
+            # A decayed/unreadable operation still remains discoverable in the
+            # durable project's listing, so read failure never blocks discovery.
+            logger.debug(
+                "Operation %s poll unreadable (%s); consulting durable project listing",
+                operation_id[:20], error,
+            )
 
-        if not worth_looking:
-            return None, complaint
-        if not project_id:
-            return None, "no project id for the listing lookup"
         return await self._media_id_for(operation_id, project_id), complaint
 
     async def _media_id_for(self, operation_id: str, project_id: str) -> str | None:
         """Find an operation's media id in the project listing.
 
-        Asks the extension for an 800-byte window around the operation id
+        Requests an 800-byte browser-side window around the operation id
         rather than the whole listing — that payload is past 17 MB and grows
         with every generation, so anything that ships it whole gets truncated
         and loses roughly half of all lookups.
@@ -1038,7 +805,7 @@ class FlowClient:
         raw = result.get("data") or ""
         media_id = fb.find_media_id_in_text(raw, operation_id)
         if not media_id and raw.lstrip().startswith(")]}"):
-            # an extension that cannot filter hands back the whole envelope
+            # A backend that cannot filter may hand back the whole envelope.
             try:
                 media_id = fb.find_media_id(
                     fb.first_payload(raw, fb.RPC_PROJECT_MEDIA), operation_id)
@@ -1046,9 +813,13 @@ class FlowClient:
                 media_id = None
         return media_id
 
-    async def _batch_media_urls(self, media_id: str) -> "fb.MediaUrls":
+    async def _batch_media_urls(
+        self, media_id: str, project_id: str | None = None,
+    ) -> "fb.MediaUrls":
         payload = await self._batch_payload(
-            fb.RPC_MEDIA, fb.media_request(media_id), timeout=60)
+            fb.RPC_MEDIA, fb.media_request(media_id), timeout=60,
+            project_id=project_id,
+        )
         return fb.read_media_urls(payload, media_id)
 
     async def get_credits(self) -> dict:
@@ -1070,10 +841,12 @@ class FlowClient:
         status = result.get("status", 500)
         return isinstance(status, int) and status == 200
 
-    async def get_media(self, media_id: str) -> dict:
-        """Fetch a media record, which is where a fresh signed url lives."""
+    async def get_media(self, media_id: str, project_id: str | None = None) -> dict:
+        """Fetch media URLs, optionally scoped to the known owning Flow project."""
         try:
-            urls = await self._batch_media_urls(media_id)
+            urls = await self._batch_media_urls(
+                media_id, project_id=project_id,
+            )
         except Exception as e:
             return _batch_error(e)
         if not urls.video and not urls.image:
@@ -1144,23 +917,36 @@ def _as_pending_operation(operation_id: str, error: str | None = None,
 
 
 
-def _is_ws_error(result: dict) -> bool:
-    return bool(result.get("error")) or (isinstance(result.get("status"), int) and result["status"] >= 400)
 
-
-# Singleton
+# Browser-only singleton. The first valid selection is immutable for the process.
+# There is no extension fallback/rollback transport. A construction failure is
+# sticky until process restart so repeated getters cannot create multiple profiles
+# or silently revive a removed backend.
 _client: Optional[FlowClient] = None
+_client_selection: Optional[BackendSelection] = None
+_client_initialization_error: Optional[str] = None
+_client_lock = threading.Lock()
 
 
 def get_flow_client() -> FlowClient:
-    global _client
-    if _client is None:
-        kind = os.environ.get("COMICREELS_FLOW_BACKEND", "extension")
-        if kind == "extension":
-            _client = FlowClient()
-        elif kind == "browser":
+    """Construct the sole browser-backed Flow client without launching it."""
+    global _client, _client_selection, _client_initialization_error
+    with _client_lock:
+        if _client is not None:
+            return _client
+        if _client_initialization_error is not None:
+            raise RuntimeError(_client_initialization_error) from None
+        if _client_selection is None:
+            # Reject obsolete/invalid backend configuration before importing
+            # browser dependencies or touching the persistent profile.
+            _client_selection = resolve_backend_selection()
+        try:
             from agent.services.flow_browser_backend import BrowserFlowBackend
-            _client = FlowClient(backend=BrowserFlowBackend())
-        else:
-            raise ValueError("COMICREELS_FLOW_BACKEND must be 'extension' or 'browser'")
-    return _client
+            candidate = FlowClient(backend=BrowserFlowBackend())
+        except Exception:
+            # Retain only a fixed public code; never store profile paths, auth
+            # details or native exceptions. Do not retry or fall back.
+            _client_initialization_error = "FLOW_BACKEND_INITIALIZATION_FAILED"
+            raise RuntimeError(_client_initialization_error) from None
+        _client = candidate
+        return _client

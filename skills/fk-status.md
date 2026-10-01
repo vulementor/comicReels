@@ -12,9 +12,12 @@ Print table: ID | Name | Tier | Status
 
 ## With project_id: full dashboard
 
-### 1. Server health
+### 1. Server + browser transport health
 ```bash
 curl -s http://127.0.0.1:8100/health
+# Require backend_ready=true, browser_session_ready=true,
+# authentication=authenticated, lease_held=true.
+# paid_dispatch_enabled and reconciliation_required are separate gates.
 ```
 
 ### 2. Project info
@@ -76,7 +79,7 @@ Suggest next action:
 The `/fk-status` output is available in Claude Code's statusline at the bottom, showing live project progress:
 
 ```
-GLA: ✓ext Operation Hormu 40sc img:40 vid:40 4K:26 ▶0/5
+GLA: ✓browser Operation Hormu 40sc img:40 vid:40 4K:26 ▶0/5
 ```
 
 **Note:** Default orientation for TTS narration is **HORIZONTAL** (landscape, 16:9). For VERTICAL (portrait, 9:16) projects, explicitly pass `orientation: "VERTICAL"` to `/fk-gen-narrator`.

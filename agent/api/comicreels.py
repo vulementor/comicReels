@@ -59,7 +59,7 @@ from agent.api.flow import (
     GenerateVideoRefsRequest as FlowKitGenerateVideoRefsRequest,
     UploadImageRequest as FlowKitUploadImageRequest,
     check_status as flowkit_check_status,
-    extension_status as flowkit_extension_status,
+    flow_status as flowkit_status,
     generate_video as flowkit_generate_video,
     generate_video_refs as flowkit_generate_video_refs,
     upload_image as flowkit_upload_image,
@@ -1040,16 +1040,21 @@ async def restore_project(file: UploadFile = File(...)):
 
 @router.get("/flow/preflight")
 async def flow_preflight(project_id: str = ""):
-    status = await flowkit_extension_status()
+    status = await flowkit_status()
     session = status.get("session_project") or {}
-    pid = str(project_id.strip() or status.get("flow_project_id") or (session.get("project_id") if session.get("active", True) else "") or "").strip()
-    connected = bool(status.get("connected"))
+    pid = str(
+        project_id.strip()
+        or status.get("flow_project_id")
+        or (session.get("project_id") if session.get("active", True) else "")
+        or ""
+    ).strip()
+    ready = bool(status.get("backend_ready") is True)
     return {
-        "extension_connected": connected,
+        "browser_ready": ready,
         "project_id": pid or None,
-        "ready": bool(connected),
-        "message": "FlowKit sẵn sàng nhận job." if connected
-                   else "FlowKit chưa kết nối Extension.",
+        "ready": ready,
+        "message": "FlowKit browser sẵn sàng nhận job." if ready
+                   else "FlowKit browser chưa sẵn sàng.",
         "flowkit": status,
     }
 

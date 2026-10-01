@@ -4,21 +4,21 @@ Usage: `/fk-upload-image <file_path> [--project <project_id>] [--entity <entity_
 
 Useful for: setting channel icons, covers, or any local image as an entity reference or scene image.
 
-## Step 1: Check health
+## Step 1: Check browser transport health
 
 ```bash
 curl -s http://127.0.0.1:8100/health
-```
-Must have `extension_connected: true`. Abort if not.
-
-```bash
-curl -s http://127.0.0.1:8100/api/flow/status
-# Must return: {"connected": true, "transport": "batch", "flow_project_id": "<uuid>"}
-# flow_key_present is a legacy-path signal — false is expected here.
+curl -s http://127.0.0.1:8100/api/flow/backend-status
 ```
 
-The upload is scoped to a Flow project: pass `project_id`, or leave it out to
-use the pinned `FLOW_PROJECT_ID`. Without either you get `NO_FLOW_PROJECT`.
+Require `backend_ready=true`, `browser_session_ready=true`,
+`authentication=authenticated` and `lease_held=true`. Upload uses the same
+leased browser session and durable upload receipt path. It does not require paid
+generation authorization.
+
+The upload is scoped to a Flow project: pass `project_id`, or let the current
+session-project resolver provide one. Do not create/replace browser profiles or
+export credentials to make upload work.
 
 ## Step 2: Upload image
 
@@ -120,8 +120,9 @@ print(f'img_status={s.get(\"horizontal_image_status\")} mid={s.get(\"horizontal_
 
 ## Notes
 
-- The upload goes through the Chrome extension's `uploadImage` API to Google Flow
-- Extension must be connected with a valid flow key
-- Supported formats: PNG, JPG, JPEG, WebP (auto-detected from file extension)
-- The uploaded image becomes available as a media_id for use in video generation, edit operations, or as reference images
-- If `media_id` returns `null`, check that the flow key is present (`GET /api/flow/status`)
+- Upload executes through `BrowserFlowBackend` in the same leased signed-in Flow browser session.
+- Durable upload intent/receipt state is authoritative across restart.
+- Supported formats: PNG, JPG, JPEG, WebP.
+- The returned `media_id` is the stable UUID used by later Flow operations.
+- If upload outcome is uncertain, reconcile durable state before any replay.
+- Browser/profile data, cookies and credentials must remain in the existing profile and must not be copied into the repository.

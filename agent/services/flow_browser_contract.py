@@ -35,6 +35,7 @@ class BrowserCommand:
     file_name: str | None = None
     mime_type: str | None = None
     title: str | None = None
+    operation_id: str | None = None
 
 
 def validate_command(method, params) -> BrowserCommand:
@@ -83,8 +84,9 @@ def validate_command(method, params) -> BrowserCommand:
             uuid_value(data[0])
         elif rpc == fb.RPC_OPERATION:
             operation = uuid_value(data[2][0][0])
-            if data != [None, None, [[operation]]]:
+            if data != [None, None, [[operation]]] or pid or match:
                 raise ValueError
+            return BrowserCommand(capability='read', operation_id=operation, **kwargs)
         elif rpc == fb.RPC_UPLOAD_IMAGE:
             bound = uuid_value(data[0][5])
             if (len(data) != 12 or data[0] != fb._context(bound)

@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 def _is_error(result: dict) -> bool:
+    if result.get("effect") == "unknown":
+        return True
     if result.get("error"):
         return True
     status = result.get("status")

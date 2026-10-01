@@ -137,45 +137,41 @@ per-checkpoint-test, and Remote-Desktop validation instructions wherever they co
 
 """
 
-_BROWSER_FIRST_MIGRATION = """\
-## Browser-First Flow Refactor Contract
+_BROWSER_ONLY_TRANSPORT = """\\
+## Browser-Only Flow Transport Contract
 
-The owner has approved a checkpointed migration from the Chrome-extension/WebSocket Flow transport
-to a persistent browser-profile-first backend using `flow.google.com` + `kabin_browser_semantic`.
-
-**This is a transport refactor, not a FlowKit creative rewrite.**
+FlowKit uses one Flow transport: a persistent signed-in browser profile on
+`flow.google.com`, driven through `BrowserFlowBackend` and the pinned
+`kabin_browser_semantic` dependency.
 
 Mandatory invariants:
 
-1. **Preserve FlowKit creative/scenario capabilities.** Do not remove or simplify
-   `fk-create-project`, scene chains, transition prompts, `fk-creative-mix`,
-   `fk-pipeline`, `fk-gen-videos`, review/regen, TTS/concat/branding, Gallery/Logs/Guide/Settings.
-2. **GITHUB DEVELOPMENT FIRST.** Implement the complete coding plan on GitHub before starting
-   regression, build/runtime validation, live evidence, or any fix loop. Runtime/AppData/StableApp
-   are never development sources of truth.
-3. **Development-plan completion gate.** Follow
-   `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md` as a forward coding pass. Required
-   tests/live-evidence sections are deferred until all FBR coding checkpoints are complete.
-   Remote Desktop Commander is not an approved validation mechanism.
-4. **Session continuity is mandatory.** Reuse one persistent signed-in Flow profile with an
-   explicit lease/lock. Never clear cookies/storage, sign out, silently switch profiles, or commit
-   browser profile data/tokens/cookies.
-5. **KBS stays generic.** `kabin_browser_semantic` owns generic browser semantics, resolver,
-   network/body/replay/settle capabilities. Flow-specific selectors, RPC meaning and product rules
-   remain in FlowKit/ComicReels adapters.
-6. **Browser-first is hybrid, not click-only.** Prefer validated browser-authenticated recipes,
-   deterministic actions, network observation/replay, then semantic resolution as needed.
-7. **Paid effects keep strict receipt/idempotency gates.** Never use paid generation as a transport
-   diagnostic. Never resend an unknown paid outcome until it is reconciled.
-8. **Do not delete the extension early.** FBR-0 through FBR-4 keep the extension transport as
-   fallback. Browser-first becomes default only after FBR-5 owner acceptance. Extension/WS removal
-   is a separate FBR-6 cleanup checkpoint.
-9. **Current pre-flight remains valid until cutover.** While the extension backend is selected,
-   `extension_connected: true` is still required. Do not rewrite operational health rules ahead
-   of the accepted checkpoint.
-10. **Repository state is the handoff.** Architecture authority:
-    `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`. Current accepted state:
-    `docs/comicreels/CHECKPOINTS.md`. No conversation-only decision is durable until documented.
+1. **Browser is the only Flow transport.** Do not restore the retired Chrome
+   extension/WebSocket RPC bridge as a fallback, rollback path, health dependency
+   or alternate backend.
+2. **GITHUB DEVELOPMENT FIRST.** Finish the approved source plan on GitHub before
+   tests, runtime validation, EXE build or Stable mutation.
+3. **Persistent profile continuity is mandatory.** `COMICREELS_FLOW_PROFILE_CONFIG`
+   points to an existing profile binding. Never create a replacement profile,
+   clear cookies/storage, sign out, silently switch profiles, or persist
+   credentials/profile data in the repository.
+4. **Browser health is explicit.** Safe transport preflight requires
+   `backend_ready=true`, `browser_session_ready=true`,
+   `authentication="authenticated"` and `lease_held=true`.
+5. **Paid authorization is separate from readiness.** Browser readiness never
+   grants paid generation. `paid_dispatch_enabled` is an independent switch and
+   remains locked unless an explicitly approved validation/activation path grants
+   it.
+6. **Unknown effects are never replayed automatically.**
+   `RECONCILIATION_REQUIRED` / `effect=unknown` must be reconciled before any
+   paid resend.
+7. **Dashboard WebSocket is independent.** `/ws/dashboard` carries dashboard
+   events only; it is not Flow transport and must not be used as Flow readiness.
+8. **KBS stays generic.** Flow-specific RPC meaning and product rules remain in
+   FlowKit adapters; KBS owns generic browser semantics.
+9. **Repository state is the handoff.** Architecture authority:
+   `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`. Current source plan:
+   `docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md`.
 
 """
 
@@ -184,7 +180,7 @@ _PIPELINE_OVERVIEW = """\
 
 ```
 0. Research          /fk-research "topic" (fact-check via web search, save to .omc/research/)
-1. Health check      GET  /health → extension_connected: true
+1. Health check      GET  /health → backend_ready + browser_session_ready + authenticated + lease held
 2. Create project    POST /api/projects (with entities + material, story from research)
 3. Create video      POST /api/videos
 4. Create scenes     POST /api/scenes (with character_names, chain_type)
@@ -239,11 +235,13 @@ def _agents_md_body(skills, title):
         f"Before ANY workflow:\n"
         f"```bash\n"
         f"curl -s http://127.0.0.1:8100/health\n"
-        f"# Must return: {{\"extension_connected\": true}}\n"
+        f"# Require: backend_ready=true, browser_session_ready=true,\n"
+        f"#          authentication=authenticated, lease_held=true\n"
+        f"# paid_dispatch_enabled is a separate authorization gate.\n"
         f"```\n\n"
         f"{_CRITICAL_RULES}\n"
         f"{_DEVELOPMENT_EXECUTION_POLICY}\n"
-        f"{_BROWSER_FIRST_MIGRATION}\n"
+        f"{_BROWSER_ONLY_TRANSPORT}\n"
         f"{_PIPELINE_OVERVIEW}\n"
         f"{_BATCH_API}\n"
         f"## Skills\n\n"

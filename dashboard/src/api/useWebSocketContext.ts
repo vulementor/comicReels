@@ -11,7 +11,7 @@ export interface WebSocketContextValue {
   lastEvent: WSEvent | null
   /** Rolling log of real event_bus events (request_update, worker_tick, urls_refreshed), newest first. */
   events: WSEvent[]
-  /** From the initial /ws/dashboard snapshot message: real active/slots worker counts. */
+  /** From the independent /ws/dashboard event snapshot: real active/slots worker counts. */
   worker: WorkerSnapshot | null
 }
 
