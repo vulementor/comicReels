@@ -92,13 +92,17 @@ def verify_staged_validation(stage: Path) -> dict:
     for module in ('comicreels','services'):
         shutil.copytree(repo/'agent'/module,source/module,
                         ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+    local_kat = repo.parent / 'kabin_affiliate_toolkit' / 'src'
+    if not local_kat.is_dir():
+        raise FileNotFoundError(f'Canonical sibling KAT source is required for staged smoke: {local_kat}')
     binaries = stage / 'runtime/bin'
     binaries.mkdir(parents=True)
     for name in ('ffmpeg.exe', 'ffprobe.exe'):
         shutil.copy2(installed / 'runtime/bin' / name, binaries / name)
     shutil.copy2(installed / 'ThoRemix.exe', stage / 'ThoRemix.exe')
     env = os.environ.copy()
-    env.update(PYTHONPATH=str(stage / 'source'), PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1',
+    env.update(PYTHONPATH=os.pathsep.join((str(stage / 'source'), str(local_kat))),
+               PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1',
                PYTHONTZPATH=str(installed / 'runtime/python/Lib/site-packages/tzdata/zoneinfo'),
                THOREMIX_BUILD_ROOT=str(stage / 'settings-target'), THOREMIX_BUILD_STAGE=str(stage),
                THOREMIX_AFF_PROFILE='', THOREMIX_SMOKE_RUNTIME=str(installed / 'runtime/python'),
