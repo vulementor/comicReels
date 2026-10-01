@@ -71,7 +71,7 @@ def test_enabled_gate_still_requires_exact_authorization_object(rig):
 
 def test_one_shot_intent_is_durable_before_exactly_one_dispatch(rig):
     store, calls, dispatch = rig
-    digest = hashlib.sha256(one_shot()['freq'].encode()).hexdigest()
+    expected_digest = gate_digest = None
 
     def guarded(command, timeout):
         saved = store.load()
@@ -81,7 +81,7 @@ def test_one_shot_intent_is_durable_before_exactly_one_dispatch(rig):
         assert entry['kind'] == 'paid_image'
         assert entry['state'] == 'SUBMITTING'
         assert entry['attributes']['project_id'] == PROJECT
-        assert entry['attributes']['request_sha256'] == digest
+        assert entry['attributes']['request_sha256'] == command.request_sha256
         assert PRIVATE not in json.dumps(saved)
         return dispatch(command, timeout)
 
@@ -204,3 +204,19 @@ def test_multi_variant_or_non_image_generation_is_rejected_before_state(rig):
         'effect': 'not_submitted',
     }
     assert calls == [] and not store.path.exists()
+
+
+def test_image_request_digest_ignores_only_ephemeral_client_uuids(rig):
+    store, _calls, dispatch = rig
+    gate = FlowPaidImageGate(store, dispatch, dispatch_enabled=True, authorization=AUTH)
+
+    first_params = one_shot("same semantic request")
+    second_params = one_shot("same semantic request")
+    assert first_params["freq"] != second_params["freq"]
+
+    first = gate.validate(first_params)
+    second = gate.validate(second_params)
+    changed = gate.validate(one_shot("different prompt"))
+
+    assert first.request_sha256 == second.request_sha256
+    assert first.request_sha256 != changed.request_sha256
