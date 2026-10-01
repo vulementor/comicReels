@@ -282,6 +282,38 @@ function Assert-DependencyCheckout {
     }
 }
 
+function Assert-StagedPackageMatchesSource {
+    param(
+        [Parameter(Mandatory=$true)][string]$SourcePackageRoot,
+        [Parameter(Mandatory=$true)][string]$InstalledPackageRoot,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+    if (-not (Test-Path -LiteralPath $SourcePackageRoot -PathType Container) -or
+            -not (Test-Path -LiteralPath $InstalledPackageRoot -PathType Container)) {
+        throw ($Label + '_PIN_VERIFICATION_FAILED')
+    }
+    $sourceFiles = @(
+        Get-ChildItem -LiteralPath $SourcePackageRoot -Recurse -File |
+        Where-Object { $_.Extension -in @('.py','.json','.js') } |
+        ForEach-Object {
+            [pscustomobject]@{
+                relative=$_.FullName.Substring($SourcePackageRoot.Length + 1)
+                hash=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+        }
+    )
+    if ($sourceFiles.Count -eq 0) { throw ($Label + '_PIN_VERIFICATION_FAILED') }
+    foreach ($row in $sourceFiles) {
+        $installed = Join-Path $InstalledPackageRoot $row.relative
+        if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) {
+            throw ($Label + '_PIN_VERIFICATION_FAILED')
+        }
+        $actual = (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $row.hash) { throw ($Label + '_PIN_VERIFICATION_FAILED') }
+    }
+    return $true
+}
+
 function Assert-KbsSourcePinMatchesRequirements {
     param(
         [Parameter(Mandatory=$true)][string]$Repo,
@@ -449,7 +481,7 @@ try {
         if ($LASTEXITCODE -gt 7) { throw 'Python runtime staging failed.' }
         & "$runtime\python.exe" -m ensurepip --upgrade | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Staged pip bootstrap failed.' }
-        & "$runtime\python.exe" -m pip install --disable-pip-version-check 'httpx==0.28.1' 'pillow==12.3.0' 'tzdata==2026.4' 'pydantic==2.13.5' 'PyYAML==6.0.3' 'camoufox==0.5.6' $dependencies.krp.path
+        & "$runtime\python.exe" -m pip install --disable-pip-version-check 'httpx==0.28.1' 'pillow==12.3.0' 'tzdata==2026.4' 'pydantic==2.13.5' 'PyYAML==6.0.3' 'camoufox==0.5.6'
         if ($LASTEXITCODE -ne 0) { throw 'Staged dependencies failed.' }
         foreach ($binary in @('ffmpeg.exe', 'ffprobe.exe')) {
             Copy-Item -LiteralPath (Join-Path 'C:\ffmpeg\bin' $binary) -Destination (Join-Path $stage 'runtime\bin') -Force
@@ -458,6 +490,11 @@ try {
 
     & "$runtime\python.exe" -m pip install --disable-pip-version-check 'pystray==0.19.5' 'faster-whisper==1.2.1' 'aiosqlite==0.22.1' 'ffpyplayer==4.5.3' $dependencies.gpt_fullproxy.path $dependencies.kbs.path
     if ($LASTEXITCODE -ne 0) { throw 'Staged system tray dependency installation failed.' }
+    & "$runtime\python.exe" -m pip install --disable-pip-version-check --force-reinstall --no-deps $dependencies.krp.path
+    if ($LASTEXITCODE -ne 0) { throw 'Staged KRP refresh failed; installed bundle was not replaced.' }
+    $krpSourcePackage = Join-Path $dependencies.krp.path 'src\kabin_reel_poster'
+    $krpInstalledPackage = Join-Path $runtime 'Lib\site-packages\kabin_reel_poster'
+    Assert-StagedPackageMatchesSource -SourcePackageRoot $krpSourcePackage -InstalledPackageRoot $krpInstalledPackage -Label 'KRP' | Out-Null
     & "$runtime\python.exe" -m pip install --disable-pip-version-check --force-reinstall --no-deps $dependencies.kat.path
     if ($LASTEXITCODE -ne 0) { throw 'Staged KAT refresh failed; installed bundle was not replaced.' }
 
