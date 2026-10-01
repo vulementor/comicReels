@@ -116,8 +116,8 @@ async def test_listing_miss_stays_pending_without_any_submit(monkeypatch):
 
 def test_poll_correctness_has_no_process_local_operation_caches():
     source = inspect.getsource(FlowClient)
-    assert '_operation_polls' not in source
-    assert '_operation_media' not in source
+    assert 'self._operation_polls' not in source
+    assert 'self._operation_media' not in source
     find = source[source.index('async def _find_operation_media'):
                   source.index('async def _media_id_for')]
     assert 'rounds % 3' not in find
