@@ -103,6 +103,7 @@ def main(argv=None) -> int:
     s = commands.add_parser('status')
     s.add_argument('--probe', action='store_true')
     commands.add_parser('login')
+    commands.add_parser('flow-login')
     commands.add_parser('auth-status')
     commands.add_parser('affiliate')
     fb = commands.add_parser('configure-facebook')
@@ -248,6 +249,11 @@ def main(argv=None) -> int:
             result = status(settings, probe=getattr(args, 'probe', False))
             print(json.dumps(result, ensure_ascii=False, default=str))
             return 0
+        if args.command == 'flow-login':
+            from agent.services.flow_browser_login import run_flow_login_session
+            result = run_flow_login_session()
+            print(json.dumps(result, ensure_ascii=False, default=str))
+            return 0
         with root_operation(args.root.resolve() / 'data'):
             settings = Settings.load(args.root, create=args.command == 'init')
             with campaign_operation(settings):
@@ -324,7 +330,13 @@ def main(argv=None) -> int:
         result = {'state': 'needs_input', 'error_type': type(exc).__name__}
         if isinstance(exc, RunnerBusyError):
             result.update(state='busy', reason='Một lượt Thỏ Remix hoặc cửa sổ đăng nhập đang mở; chờ lượt đó hoàn tất.')
-        elif isinstance(exc, (ValueError, FileNotFoundError, KeyError)):
+        else:
+            from agent.services.flow_browser_session import FlowBrowserError
+            if isinstance(exc, FlowBrowserError):
+                result['reason'] = exc.code
+            elif isinstance(exc, (ValueError, FileNotFoundError, KeyError)):
+                result['reason'] = str(exc)[:300]
+        if isinstance(exc, (ValueError, FileNotFoundError, KeyError)) and 'reason' not in result:
             result['reason'] = str(exc)[:300]
         # A failed lock grants no right to write state during another operation
         # or bundle promotion. The invoking controller receives this JSON.
