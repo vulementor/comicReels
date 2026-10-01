@@ -12,6 +12,7 @@ class FlowBackend(Protocol):
     kind: str
     ready: bool
     paid_dispatch_enabled: bool
+    paid_video_dispatch_enabled: bool
     session_owner_key: str
 
     async def start(self) -> None: ...
