@@ -17,6 +17,7 @@ import GalleryPage from './pages/GalleryPage'
 import GuidePage from './pages/GuidePage'
 import SettingsPage from './pages/SettingsPage'
 import ComicStudioPage from './pages/ComicStudioPage'
+import FlowBackendStatus from './components/FlowBackendStatus'
 
 const NAV: { to: string; icon: typeof LayoutDashboard; labelKey: TranslationKey; exact: boolean }[] = [
   { to: '/', icon: LayoutDashboard, labelKey: 'nav.dashboard', exact: true },
@@ -93,11 +94,6 @@ function LanguageSwitcher() {
 function Sidebar() {
   const { t } = useTranslation()
   const { worker } = useWebSocketContext()
-  const [health, setHealth] = useState<{ extension_connected: boolean } | null>(null)
-
-  useEffect(() => {
-    fetchAPI<{ extension_connected: boolean }>('/health').then(setHealth).catch(() => setHealth(null))
-  }, [])
 
   return (
     <aside className="w-52 flex-shrink-0 flex flex-col border-r" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
@@ -150,13 +146,7 @@ function Sidebar() {
           <span>{t('app.workers')}</span>
           <span style={{ color: 'var(--text)' }}>{worker ? `${worker.active}/${worker.active + worker.slots}` : '—'}</span>
         </div>
-        <div className="flex items-center gap-1.5 text-[10px]" style={{ color: 'var(--muted)' }}>
-          <span
-            className="w-1.5 h-1.5 rounded-full"
-            style={{ background: health?.extension_connected ? 'var(--green)' : 'var(--red)' }}
-          />
-          {health?.extension_connected ? t('app.extensionConnected') : health ? t('app.extensionDisconnected') : t('app.extensionChecking')}
-        </div>
+        <FlowBackendStatus />
       </div>
     </aside>
   )
