@@ -1038,3 +1038,65 @@ Desktop action occurred.
 diagnostic in `agent/api/flow.py` with browser session readiness semantics. Keep
 generation paid lock/reconciliation explicit and do not create a validation
 authorization route.
+
+
+## Browser-only Task 6b — direct Flow API browser preflight
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; Task 6 still in progress**.
+
+Source commits:
+- Authored direct-API browser preflight requirements:
+  `b016441f642472553a3d22b72f627ab218a1c82a`.
+- Replace extension preflight/status surface in `agent/api/flow.py`:
+  `8c69a2f756d31645050c59644ab8c7e136e2b499`.
+
+### Direct API preflight contract
+
+- All direct Flow routes that previously checked cached `client.connected` and
+  returned `"Extension not connected"` now call one
+  `_require_browser_session(client)` helper.
+- The helper reads fresh `read_backend_status()` evidence and requires
+  `backend_ready=True`. It returns a fixed HTTP 503
+  `"Browser session not ready"` when the current browser session preflight is
+  not satisfied.
+- Browser readiness remains transport/session-only. A visible
+  `RECONCILIATION_REQUIRED` warning does not by itself block safe read/session
+  preflight while the browser lease/auth/session remain healthy.
+- `/api/flow/status` is now browser-only and exposes:
+  browser session readiness, authentication, lease state, reconciliation,
+  pending intents, explicit paid-dispatch switch, browser preflight, generation
+  throttle and session-project state.
+- The old `extension_connected`, `extension_session`, `flow_key_present`,
+  `client.ws_stats`, `client._flow_key` and extension wording are removed
+  from `agent/api/flow.py`.
+- Normal HTTP routes do not import `flow_paid_validation`, do not create a
+  validation session and do not pass `paid_authorization`. Browser readiness
+  therefore cannot manufacture paid authorization.
+- Production paid generation remains locked by the Task 4 boundary. A ready
+  browser session means only that the transport/session is usable; it does not
+  mean paid dispatch is approved.
+
+### Source read-back
+
+At this checkpoint `agent/api/flow.py` contains:
+- 0 occurrences of `Extension not connected`;
+- 0 `extension_connected` / `extension_session` / `flow_key_present`;
+- 0 `client.ws_stats` or `client._flow_key`;
+- 0 `if not client.connected` legacy preflights;
+- 0 paid-validation imports or `paid_authorization=` calls;
+- 15 direct route calls to `await _require_browser_session(client)`.
+
+### Deferred validation
+
+Tests executed: **none**. No pytest/import smoke/compile/lint/build, browser/profile
+launch, paid/CAPTCHA request, EXE launch, Stable/ThoRemix mutation or Remote
+Desktop action occurred.
+
+### Next short sub-task
+
+**Task 6c — root health/status API surface and Task 6 source closure.** Remove
+extension-specific fields/wording from `agent/main.py` health/dashboard snapshot
+and the remaining `agent/api/flow_backend_status.py` legacy description. Keep
+the independent dashboard event WebSocket itself. Then reconcile Task 6 checklist
+and mark Task 6 source-complete.
