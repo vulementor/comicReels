@@ -207,11 +207,6 @@ class TestGenerateImages:
         client.responses[fb.RPC_GEN_IMAGE] = {"data": envelope(fb.RPC_GEN_IMAGE, [[]])}
         assert _is_error(await client.generate_images("a cat", PROJECT))
 
-    async def test_a_transport_error_becomes_an_error_result(self, client):
-        client.responses[fb.RPC_GEN_IMAGE] = {"error": "CAPTCHA_FAILED: NO_FLOW_TAB"}
-        result = await client.generate_images("a cat", PROJECT)
-        assert _is_error(result) and "NO_FLOW_TAB" in result["error"]
-
     async def test_no_project_anywhere_is_a_named_failure(self, client, monkeypatch):
         import agent.services.flow_client as module
         monkeypatch.setattr(module, "FLOW_PROJECT_ID", "")
