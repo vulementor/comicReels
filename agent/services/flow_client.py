@@ -1150,9 +1150,10 @@ def _is_ws_error(result: dict) -> bool:
     return bool(result.get("error")) or (isinstance(result.get("status"), int) and result["status"] >= 400)
 
 
-# Singleton. Selection is fixed after its first valid resolution, even if a
-# selected backend cannot be constructed. Recovery/rollback requires a process
-# restart; neither an environment edit nor another getter call is failover.
+# Browser-only singleton. The first valid selection is immutable for the process.
+# There is no extension fallback/rollback transport. A construction failure is
+# sticky until process restart so repeated getters cannot create multiple profiles
+# or silently revive a removed backend.
 _client: Optional[FlowClient] = None
 _client_selection: Optional[BackendSelection] = None
 _client_initialization_error: Optional[str] = None
@@ -1160,7 +1161,7 @@ _client_lock = threading.Lock()
 
 
 def get_flow_client() -> FlowClient:
-    """Construct one configured client without starting or switching backends."""
+    """Construct the sole browser-backed Flow client without launching it."""
     global _client, _client_selection, _client_initialization_error
     with _client_lock:
         if _client is not None:
@@ -1168,20 +1169,15 @@ def get_flow_client() -> FlowClient:
         if _client_initialization_error is not None:
             raise RuntimeError(_client_initialization_error) from None
         if _client_selection is None:
-            # Invalid configuration fails before construction. Store only a
-            # successfully resolved immutable selection, not raw environment data.
+            # Reject obsolete/invalid backend configuration before importing
+            # browser dependencies or touching the persistent profile.
             _client_selection = resolve_backend_selection()
         try:
-            if _client_selection.kind == "extension":
-                candidate = FlowClient()
-            else:
-                # Keep browser-only imports/profile configuration off the
-                # extension rollback path. Never start a browser in this getter.
-                from agent.services.flow_browser_backend import BrowserFlowBackend
-                candidate = FlowClient(backend=BrowserFlowBackend())
+            from agent.services.flow_browser_backend import BrowserFlowBackend
+            candidate = FlowClient(backend=BrowserFlowBackend())
         except Exception:
-            # Retain a fixed error, not a native exception/traceback containing
-            # profile paths or credentials. Do not retry or construct a fallback.
+            # Retain only a fixed public code; never store profile paths, auth
+            # details or native exceptions. Do not retry or fall back.
             _client_initialization_error = "FLOW_BACKEND_INITIALIZATION_FAILED"
             raise RuntimeError(_client_initialization_error) from None
         _client = candidate
