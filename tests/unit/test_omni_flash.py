@@ -116,7 +116,6 @@ async def test_unknown_paid_reference_result_is_returned_without_binding_or_retr
 
 
 @pytest.mark.parametrize(
-    ("duration", "expected"),@pytest.mark.parametrize(
     ("duration", "expected"),
     [
         (4, "abra_r2v_4s"),
