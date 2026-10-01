@@ -5,8 +5,13 @@ Authority: `FLOW-BROWSER-FIRST-ARCHITECTURE.md` and
 Base: `607ec0a482de544c1175ae7bf636d6f30a0b9b16`.
 Branch: `feat/fbr-2-driver-lifecycle-20260930`.
 
-Overall status: **CODE_IN_PROGRESS — production default NOT accepted here**.
-Latest slice: **FBR-5-code-2b — selected-backend API/sidebar wired, NOT VALIDATED**.
+Overall status: **SUPERSEDED BY BROWSER-ONLY CUTOVER PLAN — CODE_IN_PROGRESS, NOT VALIDATED**.
+Latest authority: `docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md`.
+
+> **Supersession notice (2026-10-01):** every earlier section in this ledger that
+> describes the Flow extension as a default, fallback, rollback target or supported
+> transport is historical only. The owner directive is browser-only: extension is
+> no longer a valid FlowKit transport. Do not implement or restore those old paths.
 
 ## Forward coding breakdown
 
@@ -246,3 +251,58 @@ removal and production default acceptance remain separate, unactivated gates.
 
 Source rollback boundary for code-2b is
 `47dea841ec52f0f7a75a2c88f3c86f3d03e846b4`. No runtime rollback is needed.
+
+
+## Browser-only Task 1 — sole backend selection
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED**.
+Plan: `docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md`.
+
+Source commits:
+- Browser-only plan: `e6db6bf7035c6e41ff496c722055116c0507862a`.
+- Authored selection requirements: `b6596b57d665f1c06db07b671c5d8ab284ac6c69`.
+- Authored singleton requirements: `a9cfd12cb5060a607bf4154c7a6c25ca5bf3ce65`.
+- Browser-only selection resolver: `f8abddb9d3e773a0163f131fd9ab309ada74b067`.
+- Browser-only singleton construction: `91968dc421cb3c142d01b88369beb17b1a6f4d2a`.
+
+### Browser-only selection contract
+
+- No configuration means browser.
+- Explicit `COMICREELS_FLOW_BACKEND=browser` remains accepted for compatibility.
+- Explicit `COMICREELS_FLOW_BACKEND=extension` now fails with
+  `FLOW_EXTENSION_BACKEND_REMOVED`; it is not a rollback path.
+- Any other backend token fails with the fixed
+  `FLOW_BACKEND_SELECTION_INVALID` code.
+- The old `COMICREELS_FLOW_BROWSER_DEFAULT_ACCEPTED` marker no longer controls
+  transport selection. It may remain in old deployments without changing browser-only
+  behavior.
+- Selection metadata declares `extension_transport_supported=False` and never
+  claims runtime readiness or paid authorization.
+- `get_flow_client()` constructs only `BrowserFlowBackend`, caches a fixed
+  initialization failure, and never creates an extension fallback.
+- Browser construction remains side-effect bounded: the getter constructs the
+  backend object but does not start the persistent browser; application lifespan
+  remains responsible for start/close.
+- Direct `FlowClient(backend=...)` dependency injection remains temporarily
+  available for authored tests and later Task 3 cleanup; no production selection
+  path uses extension.
+
+### Deferred validation
+
+Tests executed: **none**, by owner development-first rule. No pytest/import
+smoke/compile/lint/build, browser/profile launch, EXE launch, Stable/ThoRemix
+mutation, paid request or Remote Desktop action occurred.
+
+Ruling: old extension fallback/rollback semantics are superseded rather than
+maintained for backward compatibility. Cost if wrong: old deployments that still
+force `COMICREELS_FLOW_BACKEND=extension` will fail fast and require config cleanup;
+this is intentional under the browser-only directive.
+
+### Next task
+
+**Browser-only Task 2 — application lifecycle.** Keep the queue worker running for
+browser mode, remove the Flow extension WebSocket startup/callback lifecycle, and
+preserve graceful worker/browser shutdown. The already-authored worker-start fix
+must be reconciled into this browser-only lifecycle task; no local test or Stable
+restart is authorized until all source tasks are complete.
