@@ -14,7 +14,7 @@ _MAX_RECORDS = 4096
 _UUID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _ATTRIBUTES = {"project_id", "image_sha256", "request_sha256", "idempotency_sha256", "title", "file_name", "mime_type", "rpcid"}
-_RECEIPT = {"project_id", "media_id", "title", "operation_id"}
+_RECEIPT = {"project_id", "media_id", "title", "operation_id", "workflow_id"}
 _ERROR_CODES = {
     "INVALID_INPUT", "INVALID_STATE", "OWNER_MISMATCH", "STATE_READ_FAILED",
     "STATE_WRITE_FAILED", "STATE_LIMIT_EXCEEDED", "INVALID_TRANSITION",
@@ -103,7 +103,7 @@ class BrowserStateStore:
         return state
 
     def begin(self, key: str, kind: str, attributes: dict) -> dict:
-        _require(_key(key) and isinstance(kind, str) and kind in {"create", "upload", "paid_image"})
+        _require(_key(key) and isinstance(kind, str) and kind in {"create", "upload", "paid_image", "paid_video"})
         _require(_fields(attributes, _ATTRIBUTES))
         state = self.load()
         existing = state["intents"].get(key)
@@ -146,14 +146,16 @@ class BrowserStateStore:
         """Resolve a durable operation/project binding without remote effects.
 
         Returns ("bound", project_id), ("receipt", project_id), ("missing", None)
-        or ("conflict", None). Only COMPLETED upload receipts participate.
+        or ("conflict", None). COMPLETED upload and paid-video operation receipts
+        can recover the binding after a narrow post-receipt crash.
         """
         _require(_identifier(operation_id))
         state = self.load()
         direct = state["operation_projects"].get(operation_id)
         receipt_projects = set()
         for entry in state["intents"].values():
-            if entry["kind"] != "upload" or entry["state"] != "COMPLETED":
+            if (entry["kind"] not in {"upload", "paid_video"}
+                    or entry["state"] != "COMPLETED"):
                 continue
             receipt = entry.get("receipt")
             if (isinstance(receipt, dict)
@@ -200,7 +202,7 @@ class BrowserStateStore:
             _require(set(entry) == {"state", "kind", "attributes", "receipt", "created_at"}, code)
             _require(isinstance(entry["state"], str)
                      and entry["state"] in {"SUBMITTING", "UNKNOWN", "COMPLETED"}, code)
-            _require(isinstance(entry["kind"], str) and entry["kind"] in {"create", "upload", "paid_image"}, code)
+            _require(isinstance(entry["kind"], str) and entry["kind"] in {"create", "upload", "paid_image", "paid_video"}, code)
             _require(_fields(entry["attributes"], _ATTRIBUTES), code)
             receipt = entry["receipt"]
             _require(receipt is None or _fields(receipt, _RECEIPT), code)
