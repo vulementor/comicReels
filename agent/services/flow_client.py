@@ -378,17 +378,26 @@ class FlowClient:
         except Exception as exc:
             return _batch_error(exc)
 
-        result = await self._backend.submit_paid_image(
-            {
-                "rpcid": fb.RPC_GEN_IMAGE,
-                "freq": freq,
-                "projectId": pid,
-                "captchaAction": fb.CAPTCHA_IMAGE,
-            },
-            idempotency_key=idempotency_key,
-            authorization=paid_authorization,
-            timeout=300,
-        )
+        try:
+            result = await self._backend.submit_paid_image(
+                {
+                    "rpcid": fb.RPC_GEN_IMAGE,
+                    "freq": freq,
+                    "projectId": pid,
+                    "captchaAction": fb.CAPTCHA_IMAGE,
+                },
+                idempotency_key=idempotency_key,
+                authorization=paid_authorization,
+                timeout=300,
+            )
+        except Exception:
+            # The bridge may fail after the browser accepted the effect. Never
+            # infer non-submission, leak browser details or attempt another paid call.
+            return {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
+            }
         if (not isinstance(result, dict) or result.get("status") != 200
                 or result.get("effect") != "completed"):
             return result if isinstance(result, dict) else {
