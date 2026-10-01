@@ -520,7 +520,7 @@ try {
         $sitePackages = Join-Path $runtime 'Lib\site-packages'
         $ensure = Invoke-IsolatedStagedPython -StageRoot $stage -Interpreter $stagedPython -Arguments @('-m','ensurepip','--upgrade') -EchoOutput
         if ($ensure.ExitCode -ne 0) { throw 'Staged pip bootstrap failed.' }
-        Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallTarget $sitePackages -Options @('--upgrade') -Packages @('httpx==0.28.1','pillow==12.3.0','tzdata==2026.4','pydantic==2.13.5','PyYAML==6.0.3','camoufox==0.5.6','typer>=0.15,<1') | Out-Null
+        Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallPrefix $runtime -Options @('--upgrade') -Packages @('httpx==0.28.1','pillow==12.3.0','tzdata==2026.4','pydantic==2.13.5','PyYAML==6.0.3','camoufox==0.5.6','typer>=0.15,<1') | Out-Null
         foreach ($binary in @('ffmpeg.exe', 'ffprobe.exe')) {
             Copy-Item -LiteralPath (Join-Path 'C:\ffmpeg\bin' $binary) -Destination (Join-Path $stage 'runtime\bin') -Force
         }
@@ -530,12 +530,12 @@ try {
     $sitePackages = Join-Path $runtime 'Lib\site-packages'
     Assert-StagedPythonRuntime -StageRoot $stage -Interpreter $stagedPython -SitePackages $sitePackages | Out-Null
 
-    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallTarget $sitePackages -Options @('--upgrade') -Packages @('pystray==0.19.5','faster-whisper==1.2.1','aiosqlite==0.22.1','ffpyplayer==4.5.3',$dependencies.gpt_fullproxy.path,$dependencies.kbs.path) | Out-Null
-    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallTarget $sitePackages -Options @('--upgrade','--force-reinstall','--no-deps') -Packages @($dependencies.krp.path) | Out-Null
+    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallPrefix $runtime -Options @('--upgrade') -Packages @('pystray==0.19.5','faster-whisper==1.2.1','aiosqlite==0.22.1','ffpyplayer==4.5.3',$dependencies.gpt_fullproxy.path,$dependencies.kbs.path) | Out-Null
+    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallPrefix $runtime -Options @('--upgrade','--force-reinstall','--no-deps') -Packages @($dependencies.krp.path) | Out-Null
     $krpSourcePackage = Join-Path $dependencies.krp.path 'src\kabin_reel_poster'
     $krpInstalledPackage = Join-Path $runtime 'Lib\site-packages\kabin_reel_poster'
     Assert-StagedPackageMatchesSource -SourcePackageRoot $krpSourcePackage -InstalledPackageRoot $krpInstalledPackage -Label 'KRP' | Out-Null
-    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallTarget $sitePackages -Options @('--upgrade','--force-reinstall','--no-deps') -Packages @($dependencies.kat.path) | Out-Null
+    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallPrefix $runtime -Options @('--upgrade','--force-reinstall','--no-deps') -Packages @($dependencies.kat.path) | Out-Null
 
     Copy-Item -LiteralPath (Join-Path $repo 'agent\__init__.py') -Destination (Join-Path $stage 'source\agent')
     Copy-Item -LiteralPath (Join-Path $repo 'agent\config.py') -Destination (Join-Path $stage 'source\agent')
