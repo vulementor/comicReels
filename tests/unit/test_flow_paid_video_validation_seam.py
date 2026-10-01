@@ -15,7 +15,7 @@ class Backend:
     async def start(self): pass
     async def close(self): pass
     async def check_readiness(self):
-        return {"ready": True, "paid_dispatch_enabled": True}
+        return {"ready": True, "paid_video_dispatch_enabled": True}
 
 
 class Client:
