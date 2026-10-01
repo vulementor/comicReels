@@ -273,6 +273,41 @@ async def test_batch_first_frame_video_uses_eb1hjf_abra_i2v(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_operation_receipt_binding_failure_is_unknown_and_not_replayed():
+    client = MagicMock()
+    pid = "11111111-2222-3333-4444-555555555555"
+    client._batch_project_id.return_value = pid
+    client.submit_paid_video = AsyncMock(return_value={
+        "status": 200,
+        "data": {
+            "projectId": pid,
+            "receiptKind": "operation",
+            "operationId": OPERATION,
+        },
+        "effect": "completed",
+        "reused": False,
+    })
+    client._remember_operation = AsyncMock(side_effect=RuntimeError("state write failed"))
+
+    with patch("agent.services.omni_flash.get_flow_client", return_value=client):
+        result = await generate_omni_flash_first_frame_video(
+            start_image_media_id="media-start",
+            prompt="move",
+            project_id=pid,
+            idempotency_key="omni-bind-fail-1",
+            paid_authorization=AUTH,
+        )
+
+    assert result == {
+        "status": 409,
+        "error": "OPERATION_BINDING_REQUIRED",
+        "effect": "unknown",
+    }
+    client.submit_paid_video.assert_awaited_once()
+    client._remember_operation.assert_awaited_once_with(OPERATION, pid)
+
+
+@pytest.mark.asyncio
 async def test_first_frame_rejects_missing_start_before_submit():
     with pytest.raises(ValueError, match="requires start_image_media_id"):
         await generate_omni_flash_first_frame_video(
