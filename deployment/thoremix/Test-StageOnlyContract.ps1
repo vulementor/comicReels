@@ -63,7 +63,7 @@ $krpInstall = $krpInstalls[0]
 Assert-Check ($krpInstall.Extent.Text.Contains("'--force-reinstall'")) 'KRP refresh must force reinstall'
 Assert-Check ($krpInstall.Extent.Text.Contains("'--no-deps'")) 'KRP refresh must not drift dependency pins'
 Assert-Check ($krpInstall.Extent.Text.Contains('-Interpreter $stagedPython')) 'KRP refresh must use staged interpreter'
-Assert-Check ($krpInstall.Extent.Text.Contains('-InstallTarget $sitePackages')) 'KRP refresh must use staged install target'
+Assert-Check ($krpInstall.Extent.Text.Contains('-InstallPrefix $runtime')) 'KRP refresh must use staged runtime prefix'
 $ancestor = $krpInstall.Parent
 while ($null -ne $ancestor) {
     if ($ancestor -is [System.Management.Automation.Language.IfStatementAst]) {
