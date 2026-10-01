@@ -1570,3 +1570,119 @@ without overwriting main, preserve PR #12 staged-KAT changes and later main
 changes, reconcile remaining stale behavioral test contracts, update
 `CHECKPOINTS.md`, record exact source/KBS/rollback revisions, and only after
 Task 9 source closure authorize Phase 3 validation.
+
+
+## Browser-only Task 9a — then-current main/diff integration audit
+
+Date: 2026-10-01.
+Status: **SOURCE AUDIT COMPLETE; NO MERGE YET; NOT VALIDATED**.
+
+### Exact revisions observed
+
+- Browser-only branch pre-9a source head:
+  `0680645484fa311a76173ebeb39b688ade006092`.
+- Then-current `main`:
+  `5aecee7ef007b34e1ec732a3a382c80ff393546c`.
+- Common merge base:
+  `373e0a2e416819774fa88df0517b71868832b138`.
+- Branch relation to current main:
+  **211 commits ahead / 17 commits behind**.
+- PR #12 staged-KAT merge:
+  `18553d3fda9b26105f99951b2c752bc7fe5ca568`.
+- PR #12 remains an ancestor of current main. Current main is exactly **3 commits
+  ahead** of that merge.
+- Browser/KBS pin is identical on current main and the browser branch:
+  `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+
+### Main-only preservation set
+
+From merge base `373e0a2...` to current main, the complete file delta is only
+these eight files:
+
+1. `.github/workflows/tests.yml`;
+2. `.github/workflows/thoremix-kat-staging.yml`;
+3. `agent/thoremix/publishing.py`;
+4. `deployment/thoremix/Build-Stable.ps1`;
+5. `deployment/thoremix/Test-KatStagingContract.ps1`;
+6. `deployment/thoremix/verify_upgrade_lock.py`;
+7. `requirements-dev.txt`;
+8. `tests/unit/test_setup.py`.
+
+The browser-only branch did **not** intentionally modify any of those eight files
+relative to the common merge base. Their branch blobs are older/missing only
+because the branch diverged before those 17 main commits. Therefore the
+integration rule is unambiguous: current-main versions of all eight files must be
+preserved verbatim unless a later explicit source reconciliation proves a
+browser-only change is required. No such requirement exists at this checkpoint.
+
+### PR #12 / post-PR12 details that must survive
+
+PR #12 source `18553d3...` introduced/preserved:
+- portable hosted-test workflow exclusions and local-final-acceptance warning;
+- ThoRemix KAT staging workflow;
+- Python 3.10-compatible publication hashing;
+- canonical KAT refresh in both normal and `-SkipRuntime` Stable builds;
+- fail-closed KAT staging contract;
+- `numpy` dev-test dependency.
+
+The three commits after PR #12 additionally preserve:
+- canonical sibling KAT source in staged ThoRemix upgrade smoke
+  (`deployment/thoremix/verify_upgrade_lock.py`);
+- explicit UTF-8 fixture reads/writes on Windows
+  (`tests/unit/test_setup.py`).
+
+Ruling: integration is **main-preserving**, never branch-overwrite. The rollback
+source candidate for the later final integration is current pre-integration main
+`5aecee7...`; Task 9 final closure will record the actual rollback revision only
+after the integration source commit is created.
+
+### Legacy behavioral-test reconciliation set for Task 9b
+
+`tests/unit/test_flow_client_batch.py` predates Tasks 4/5 and still encodes
+behavior deliberately removed by the browser-only cutover.
+
+Image-generation expectations to retire/migrate:
+- direct `generate_images()` without durable idempotency;
+- multi-variant/count=2/count=4 wave dispatch;
+- `IMAGE_UI_SUBMIT_OFFSETS_S` cadence;
+- transient RPC [8] paid resubmit after cooldown;
+- partial-success multi-wave aggregation;
+- old direct batch/CAPTCHA transport assumptions for image/edit.
+
+The authoritative replacement contract is
+`tests/unit/test_flow_client_paid_one_shot.py`: one paid image, one durable
+idempotency key, one backend paid call, no wave/retry, UNKNOWN no-resend and
+historical media response shape.
+
+Operation/poll expectations to retire/migrate:
+- process-local `client._operation_projects`;
+- every-third-poll listing cadence;
+- process-local known-media cache skipping later listing/poll reads.
+
+The authoritative replacements are
+`tests/unit/test_flow_operation_durable_binding.py`,
+`test_flow_poll_restart_safe.py` and
+`test_flow_restart_resume_contract.py`: durable operation/project binding,
+current listing/media reads after restart, no RAM correctness cache and
+response-shape preservation.
+
+Tests in `test_flow_client_batch.py` that still cover unrelated valid contracts
+(video payloads, unsupported/degraded modes, media parsing, upload, project/credit
+shape, URL refresh) should be preserved or moved rather than deleting the file
+wholesale.
+
+### Integration order
+
+Task 9 source integration will proceed in short slices:
+1. **9b** reconcile the stale multi-wave/poll-cache tests on the browser branch;
+2. **9c** merge/reconcile then-current main into the browser branch with current
+   main winning the eight-file preservation set;
+3. **9d** re-audit browser-only production paths, paid gate/no-resend, source
+   references and exact KBS pin after integration;
+4. **9e** update `CHECKPOINTS.md`, final ledgers and plan with exact integrated
+   source SHA + rollback SHA, then declare source closure.
+
+No Phase 3 test/build/browser/EXE/Stable execution is authorized before 9e.
+
+Tests/builds executed in 9a: **none**. No browser/profile, paid/CAPTCHA,
+Stable/ThoRemix runtime or Remote Desktop action occurred.
