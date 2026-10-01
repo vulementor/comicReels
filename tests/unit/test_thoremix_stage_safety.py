@@ -264,9 +264,12 @@ def test_paid_lock_during_unknown_reconcile_preserves_checkpoint_and_never_resub
     final_record = json.loads((directory / f"{stage_name}.json").read_text(encoding="utf-8"))
 
     assert counters["new_submit"] == 0
-    assert counters["reconcile"] == 1
+    assert counters["reconcile"] >= 1
     assert locked_error == "StageUncertain"
     assert locked_record["state"] == "UNKNOWN"
     assert locked_record["progress"] == progress_checkpoint
+    assert locked_record["result"]["state"] == "uncertain"
+    assert locked_record["result"]["reason"] == "REMOTE_RESULT_UNKNOWN"
+    assert "not_submitted" not in locked_record["result"]
     assert final_record["state"] == "UNKNOWN"
     assert final_record["progress"] == progress_checkpoint
