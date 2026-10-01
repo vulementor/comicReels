@@ -104,6 +104,63 @@ def _batch_media_result(submitted: dict, project_id: str, model: str,
     }
 
 
+def _paid_unknown(code: str = "PAID_RECONCILIATION_REQUIRED") -> dict:
+    return {"status": 409, "error": code, "effect": "unknown"}
+
+
+def _paid_media_shape(result: dict, project_id: str, model: str,
+                      duration_s: int, resolution: str) -> dict:
+    if (not isinstance(result, dict) or result.get("status") != 200
+            or result.get("effect") != "completed"):
+        return result if isinstance(result, dict) else _paid_unknown()
+    data = result.get("data")
+    if (not isinstance(data, dict) or data.get("receiptKind") != "media"
+            or data.get("projectId") != project_id):
+        return _paid_unknown()
+    submitted = {
+        "project_id": project_id,
+        "media_id": data.get("mediaId"),
+        "workflow_id": data.get("workflowId"),
+    }
+    try:
+        shaped = _batch_media_result(
+            submitted, project_id, model, duration_s, resolution,
+        )
+    except Exception:
+        return _paid_unknown()
+    shaped["effect"] = "completed"
+    shaped["reused"] = result.get("reused") is True
+    return shaped
+
+
+async def _paid_operation_shape(client, result: dict, project_id: str, model: str,
+                                duration_s: int, resolution: str) -> dict:
+    if (not isinstance(result, dict) or result.get("status") != 200
+            or result.get("effect") != "completed"):
+        return result if isinstance(result, dict) else _paid_unknown()
+    data = result.get("data")
+    operation_id = data.get("operationId") if isinstance(data, dict) else None
+    if (not isinstance(data, dict) or data.get("receiptKind") != "operation"
+            or data.get("projectId") != project_id
+            or not isinstance(operation_id, str) or not operation_id):
+        return _paid_unknown()
+    try:
+        await client._remember_operation(operation_id, project_id)
+    except Exception:
+        return _paid_unknown("OPERATION_BINDING_REQUIRED")
+    operation = fb.Operation(
+        operation_id=operation_id,
+        project_id=project_id,
+        status=None,
+    )
+    shaped = _batch_operation_result(
+        operation, project_id, model, duration_s, resolution,
+    )
+    shaped["effect"] = "completed"
+    shaped["reused"] = result.get("reused") is True
+    return shaped
+
+
 def _load_model_key(duration_s: int, mode: str = "reference_to_video") -> str:
     """Resolve a configured Omni Flash model key for ``mode`` + duration."""
     _validate_duration(duration_s)
@@ -201,6 +258,8 @@ async def generate_omni_flash_text_video(
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
     user_paygate_tier: str = "PAYGATE_TIER_ONE",
     seed: int | None = None,
+    idempotency_key: str | None = None,
+    paid_authorization=None,
 ) -> dict:
     """Submit Omni 1.1 Flash text-to-video on the migrated Flow batch API."""
     _validate_duration(duration_s)
@@ -217,13 +276,18 @@ async def generate_omni_flash_text_video(
             model=model_key,
             resolution=resolution,
         )
-        payload = await client._batch_payload(
-            fb.RPC_GEN_VIDEO_TEXT, freq, fb.CAPTCHA_VIDEO, timeout=120,
-            project_id=pid)
-        submitted = fb.read_text_video_submit(payload)
-        return _batch_media_result(submitted, pid, model_key, duration_s, resolution)
     except Exception as exc:
         return {"status": 502, "error": f"{type(exc).__name__}: {exc}"}
+
+    result = await client.submit_paid_video(
+        rpcid=fb.RPC_GEN_VIDEO_TEXT,
+        freq=freq,
+        project_id=pid,
+        idempotency_key=idempotency_key,
+        paid_authorization=paid_authorization,
+        timeout=120,
+    )
+    return _paid_media_shape(result, pid, model_key, duration_s, resolution)
 
 
 async def _submit_omni_frame_video(
@@ -238,6 +302,8 @@ async def _submit_omni_frame_video(
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
     user_paygate_tier: str = "PAYGATE_TIER_ONE",
     seed: int | None = None,
+    idempotency_key: str | None = None,
+    paid_authorization=None,
 ) -> dict:
     """Submit Omni first-frame or First+Last generation.
 
@@ -268,14 +334,20 @@ async def _submit_omni_frame_video(
             batch_model = f"omni_flash_i2v_{duration_s}s_first_last" + (
                 "_360p" if resolution == "360p" else ""
             )
-        payload = await client._batch_payload(
-            rpcid, freq, fb.CAPTCHA_VIDEO, timeout=120, project_id=pid,
-        )
-        operation = fb.read_operation(payload)
-        client._remember_operation(operation.operation_id, pid)
     except Exception as exc:
         return {"status": 502, "error": f"{type(exc).__name__}: {exc}"}
-    return _batch_operation_result(operation, pid, batch_model, duration_s, resolution)
+
+    result = await client.submit_paid_video(
+        rpcid=rpcid,
+        freq=freq,
+        project_id=pid,
+        idempotency_key=idempotency_key,
+        paid_authorization=paid_authorization,
+        timeout=120,
+    )
+    return await _paid_operation_shape(
+        client, result, pid, batch_model, duration_s, resolution,
+    )
 
 async def generate_omni_flash_first_frame_video(
     start_image_media_id: str,
@@ -287,6 +359,8 @@ async def generate_omni_flash_first_frame_video(
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
     user_paygate_tier: str = "PAYGATE_TIER_ONE",
     seed: int | None = None,
+    idempotency_key: str | None = None,
+    paid_authorization=None,
 ) -> dict:
     """Submit Omni Flash First frame -> video."""
     return await _submit_omni_frame_video(
@@ -300,6 +374,8 @@ async def generate_omni_flash_first_frame_video(
         aspect_ratio=aspect_ratio,
         user_paygate_tier=user_paygate_tier,
         seed=seed,
+        idempotency_key=idempotency_key,
+        paid_authorization=paid_authorization,
     )
 
 
@@ -314,6 +390,8 @@ async def generate_omni_flash_first_last_video(
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
     user_paygate_tier: str = "PAYGATE_TIER_ONE",
     seed: int | None = None,
+    idempotency_key: str | None = None,
+    paid_authorization=None,
 ) -> dict:
     """Submit Omni Flash First + Last frame -> video."""
     return await _submit_omni_frame_video(
@@ -340,6 +418,8 @@ async def generate_omni_flash_video(
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
     user_paygate_tier: str = "PAYGATE_TIER_ONE",
     seed: int | None = None,
+    idempotency_key: str | None = None,
+    paid_authorization=None,
 ) -> dict:
     """Submit Omni Flash Ingredients/reference-to-video generation.
 
@@ -357,21 +437,24 @@ async def generate_omni_flash_video(
             prompt, pid, refs, duration_s=duration_s,
             resolution=resolution, aspect=aspect_ratio,
         )
-        payload = await client._batch_payload(
-            fb.RPC_GEN_VIDEO_REFERENCES, freq, fb.CAPTCHA_VIDEO, timeout=120,
-            project_id=pid,
-        )
         batch_model = f"abra_r2v_{duration_s}s" + ("_360p" if resolution == "360p" else "")
-        if isinstance(payload, list) and len(payload) > 3 and payload[3] is not None:
-            # Never parse slot 2's workflow as an operation, or resubmit a paid
-            # request when the native media record is malformed.
-            submitted = fb.read_video_submit(payload, require_workflow=True)
-            return _batch_media_result(submitted, pid, batch_model, duration_s, resolution)
-        operation = fb.read_operation(payload)
-        client._remember_operation(operation.operation_id, pid)
     except Exception as exc:
         return {"status": 502, "error": f"{type(exc).__name__}: {exc}"}
-    return _batch_operation_result(operation, pid, batch_model, duration_s, resolution)
+
+    result = await client.submit_paid_video(
+        rpcid=fb.RPC_GEN_VIDEO_REFERENCES,
+        freq=freq,
+        project_id=pid,
+        idempotency_key=idempotency_key,
+        paid_authorization=paid_authorization,
+        timeout=120,
+    )
+    data = result.get("data") if isinstance(result, dict) else None
+    if isinstance(data, dict) and data.get("receiptKind") == "media":
+        return _paid_media_shape(result, pid, batch_model, duration_s, resolution)
+    return await _paid_operation_shape(
+        client, result, pid, batch_model, duration_s, resolution,
+    )
 
 async def _check_omni_batch_media(
     workflows: list[dict],
