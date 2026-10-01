@@ -128,3 +128,16 @@ def test_direct_client_without_injected_backend_defaults_to_browser(monkeypatch)
     assert client.backend is made[0]
     assert client.backend_kind == 'browser'
     assert len(made) == 1
+
+
+def test_flowclient_uuid_validator_matches_strict_browser_uuid_contract():
+    assert FlowClient._UUID_RE.fullmatch("11111111-2222-3333-4444-555555555555")
+    assert FlowClient._UUID_RE.fullmatch("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")
+    for invalid in (
+        "",
+        "11111111-2222-3333-4444",
+        "11111111222233334444555555555555",
+        "g1111111-2222-3333-4444-555555555555",
+        "11111111-2222-3333-4444-555555555555-extra",
+    ):
+        assert FlowClient._UUID_RE.fullmatch(invalid) is None
