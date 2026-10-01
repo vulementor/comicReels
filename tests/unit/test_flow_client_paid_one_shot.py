@@ -200,3 +200,31 @@ def test_flowclient_paid_path_has_no_wave_or_transient_resubmit_policy():
     assert 'retry_indices' not in source
     assert 'IMAGE_UI_SUBMIT_OFFSETS_S' not in source
     assert 'IMAGE_TRANSIENT_RETRY_DELAY_S' not in source
+
+
+@pytest.mark.asyncio
+async def test_backend_exception_becomes_fixed_unknown_without_retry_or_private_leak():
+    class RaisingBackend(PaidBackend):
+        async def submit_paid_image(self, params, *, idempotency_key,
+                                    authorization=None, timeout=300):
+            self.paid_calls.append(idempotency_key)
+            raise RuntimeError('private browser/profile detail')
+
+    backend = RaisingBackend()
+    client = FlowClient(backend=backend)
+    result = await client.generate_images(
+        prompt='single paid image',
+        project_id=PROJECT,
+        count=1,
+        idempotency_key='request-exception',
+        paid_authorization=AUTH,
+    )
+
+    assert result == {
+        'status': 409,
+        'error': 'PAID_RECONCILIATION_REQUIRED',
+        'effect': 'unknown',
+    }
+    assert backend.paid_calls == ['request-exception']
+    assert backend.read_calls == []
+    assert 'private' not in str(result)
