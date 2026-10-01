@@ -1792,3 +1792,109 @@ than overwriting it. Preserve current-main versions of the eight-file main-only
 set (including PR #12 staged-KAT and post-PR12 Windows fixes) while carrying
 browser-only Flow changes forward. Record the actual integration commit and new
 branch/main ancestry. Do not run Phase 3 validation.
+
+
+## Browser-only Task 9c — integrate current main into browser branch
+
+Date: 2026-10-01.
+Status: **SOURCE INTEGRATED; NOT VALIDATED; Task 9 still in progress**.
+
+### Exact integration revisions
+
+- Browser branch before integration:
+  `cb8c970744ab9aed0bb767bb8a359b40297b344d`.
+- Then-current `main` immediately before integration:
+  `5aecee7ef007b34e1ec732a3a382c80ff393546c`.
+- Integration merge commit:
+  `dc6d468fc8057b951440c534315fe962a38bbeda`.
+- Merge tree:
+  `776731c7c20eb7bd8c0c63e63dec832389f0597d`.
+- Merge parents, in order:
+  1. browser branch `cb8c970...`;
+  2. current main `5aecee7...`.
+
+GitHub initially reported the temporary main→feature integration PR as
+non-mergeable. Rather than force a branch overwrite, Task 9c created an explicit
+two-parent merge commit whose tree was built from the browser branch plus the
+eight audited current-main blobs. The feature ref was then fast-forwarded to that
+merge commit. Main itself was never moved.
+
+The temporary integration PR #14 is now closed/recognized as merged against
+`dc6d468...`; it was only an integration vehicle and does not alter main.
+
+### Ancestry result
+
+Post-integration compare:
+- `main 5aecee7...` → browser merge `dc6d468...`:
+  **ahead, 217 ahead / 0 behind**, merge-base exactly `5aecee7...`.
+- PR #12 `18553d3...` → browser merge:
+  **ahead, 220 ahead / 0 behind**, merge-base exactly `18553d3...`.
+
+Therefore current main and PR #12 are both true ancestors of the integrated
+browser branch.
+
+### Eight-file main preservation proof
+
+Post-integration branch blob SHA equals current-main blob SHA for all eight
+main-only files:
+
+| File | Preserved blob SHA |
+|---|---|
+| `.github/workflows/tests.yml` | `5b183976286294912fbf6c4774c5bc3228820125` |
+| `.github/workflows/thoremix-kat-staging.yml` | `795b15d5bf44103343e0822a3ecc919373e05ba8` |
+| `agent/thoremix/publishing.py` | `c571aecad820b2fb102941ceff031b7db552e2c6` |
+| `deployment/thoremix/Build-Stable.ps1` | `4ad5f9858911a2ed11bd495007310565e3d20cf1` |
+| `deployment/thoremix/Test-KatStagingContract.ps1` | `c239c01dfceef3b22d81dd94db9fa36811bc16b9` |
+| `deployment/thoremix/verify_upgrade_lock.py` | `3ef4b0e54f9d478a6869a66855aa63afd760a1c8` |
+| `requirements-dev.txt` | `4a9facf17e60dc722011863ae8595fa278ecc103` |
+| `tests/unit/test_setup.py` | `4e4e7f0c037638cf0f965c712e14b939d748e992` |
+
+This proves PR #12 staged-KAT protections, Python 3.10 publication hashing,
+canonical KAT staged refresh, post-PR12 canonical sibling KAT smoke, and explicit
+UTF-8 Windows fixture fixes were not overwritten by the browser branch.
+
+### Browser-only source preservation proof
+
+Critical browser-only blobs are unchanged across the integration commit:
+
+- `flow_backend_selection.py`:
+  `1374d5dc185d1d2908a7ed5ae069ce9cfb8bed94`;
+- `flow_client.py`:
+  `8c72f78fe1aade34c8b3c50b4973546e278a30cf`;
+- `flow_browser_paid.py`:
+  `f6a21624aa2c2738754dad46c8403a6eaab57e41`;
+- `flow_paid_validation.py`:
+  `f5f95cd87dff5c073d41b13e13e52576861e7f07`;
+- `requirements-flow-browser.txt`:
+  `467cb51367526c670df78e1bdc0b365de815c326`.
+
+KBS pin remains:
+`b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+
+### Main-preserving ruling
+
+Ruling: main wins verbatim for the complete eight-file main-only delta, while the
+browser branch wins for browser-only Flow source because current main had no
+independent changes to those browser-only files after the common merge base.
+The two-parent merge records both histories rather than synthesizing a fake
+linear overwrite.
+
+Cost if wrong: a hidden cross-file semantic dependency could still surface only
+during Phase 3 validation; Task 9d therefore performs a post-integration source
+audit before validation is authorized.
+
+Tests/builds executed: **none**. No pytest/import/compile/lint, browser/profile,
+paid/CAPTCHA, EXE/Stable/ThoRemix runtime or Remote Desktop action occurred.
+
+### Next short sub-task
+
+**Task 9d — post-integration source audit.** Re-read the integrated source tree
+and confirm:
+1. no production path can select/call extension Flow transport;
+2. browser paid path exists but normal production remains locked;
+3. UNKNOWN/no-resend and durable restart binding remain intact;
+4. worker/startup/status/UI/docs remain browser-only after main integration;
+5. KBS pin and current main ancestry are still exact.
+
+Then record any remaining source-only validation obligations for 9e. Do not enter
+Phase 3 yet.
