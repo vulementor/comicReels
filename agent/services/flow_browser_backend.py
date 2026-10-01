@@ -19,7 +19,8 @@ class BrowserFlowBackend:
     kind = 'browser'
 
     def __init__(self, *, config=None, state_path=None, driver_factory=None,
-                 paid_dispatch_enabled=False, paid_authorization=None):
+                 paid_dispatch_enabled=False, paid_authorization=None,
+                 paid_video_dispatch_enabled=False, paid_video_authorization=None):
         self.config = config or FlowProfileConfig.load()
         identity = str(self.config.user_data_dir.resolve()).casefold()
         digest = hashlib.sha256(identity.encode()).hexdigest()
@@ -28,6 +29,8 @@ class BrowserFlowBackend:
         self._factory = driver_factory
         self._paid_dispatch_enabled = paid_dispatch_enabled is True
         self._paid_authorization = paid_authorization
+        self._paid_video_dispatch_enabled = paid_video_dispatch_enabled is True
+        self._paid_video_authorization = paid_video_authorization
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='flow-browser-owner')
         self._pending = set()
         self._pending_lock = threading.Lock()
@@ -43,6 +46,10 @@ class BrowserFlowBackend:
     @property
     def paid_dispatch_enabled(self):
         return self._paid_dispatch_enabled
+
+    @property
+    def paid_video_dispatch_enabled(self):
+        return self._paid_video_dispatch_enabled
 
     def _submit(self, function, *args, closing=False):
         if self._closed or (self._closing and not closing):
@@ -70,6 +77,8 @@ class BrowserFlowBackend:
                 self.config, self._state_path, self.session_owner_key,
                 paid_dispatch_enabled=self._paid_dispatch_enabled,
                 paid_authorization=self._paid_authorization,
+                paid_video_dispatch_enabled=self._paid_video_dispatch_enabled,
+                paid_video_authorization=self._paid_video_authorization,
             )
         else:
             self._driver = self._factory(
@@ -164,7 +173,7 @@ class BrowserFlowBackend:
     async def submit_paid_video(self, params, *, idempotency_key,
                                 authorization=None, timeout=300):
         """Submit one gated paid video on the single browser-owner executor."""
-        if not self.paid_dispatch_enabled:
+        if not self.paid_video_dispatch_enabled:
             return {
                 'status': 403,
                 'error': 'PAID_DISPATCH_DISABLED',
