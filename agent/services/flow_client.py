@@ -677,7 +677,7 @@ class FlowClient:
     async def _media_id_for(self, operation_id: str, project_id: str) -> str | None:
         """Find an operation's media id in the project listing.
 
-        Asks the extension for an 800-byte window around the operation id
+        Requests an 800-byte browser-side window around the operation id
         rather than the whole listing — that payload is past 17 MB and grows
         with every generation, so anything that ships it whole gets truncated
         and loses roughly half of all lookups.
@@ -691,7 +691,7 @@ class FlowClient:
         raw = result.get("data") or ""
         media_id = fb.find_media_id_in_text(raw, operation_id)
         if not media_id and raw.lstrip().startswith(")]}"):
-            # an extension that cannot filter hands back the whole envelope
+            # A backend that cannot filter may hand back the whole envelope.
             try:
                 media_id = fb.find_media_id(
                     fb.first_payload(raw, fb.RPC_PROJECT_MEDIA), operation_id)
