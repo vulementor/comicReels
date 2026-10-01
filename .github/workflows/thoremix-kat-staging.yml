@@ -1,0 +1,33 @@
+name: ThoRemix KAT staging contract
+
+on:
+  pull_request:
+    paths:
+      - 'deployment/thoremix/Build-Stable.ps1'
+      - 'deployment/thoremix/Test-KatStagingContract.ps1'
+      - '.github/workflows/thoremix-kat-staging.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deployment/thoremix/Build-Stable.ps1'
+      - 'deployment/thoremix/Test-KatStagingContract.ps1'
+      - '.github/workflows/thoremix-kat-staging.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: thoremix-kat-staging-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  staging-contract:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Inspect KAT refresh path without executing deployment
+        shell: pwsh
+        run: ./deployment/thoremix/Test-KatStagingContract.ps1
