@@ -42,10 +42,6 @@ class FlowClient:
         # It is never populated and cannot route transport.
         self._flow_key = None
 
-        # Media ids are disposable hints only. Operation -> project ownership
-        # and restart correctness live in durable browser state.
-        self._operation_media: dict[str, str] = {}
-
         # Existing business-level generation guards remain intact. They do not
         # authorize a paid browser effect; the paid gate remains separate.
         self._generation_slots = asyncio.Semaphore(FLOW_GENERATION_MAX_CONCURRENT)
@@ -622,40 +618,11 @@ class FlowClient:
         return {"status": 200, "data": {"operations": out}}
 
     async def _poll_batch_operation(self, operation_id: str) -> dict:
-        """Poll from durable binding; RAM media cache is optimization only."""
+        """Poll from durable binding + current listing; no RAM cache is authoritative."""
         try:
             project_id = await self._operation_project_id(operation_id)
         except Exception as error:
             return _as_pending_operation(operation_id, error=str(error))
-
-        complaint = None
-        cached_media = self._operation_media.get(operation_id)
-
-        # Fast path only: a cached media id may prove SUCCESS, but its absence,
-        # staleness or incomplete URL can never prevent durable rediscovery.
-        if cached_media:
-            try:
-                cached_urls = await self._batch_media_urls(
-                    cached_media, project_id=project_id,
-                )
-                if cached_urls.video:
-                    return {
-                        "operation": {
-                            "name": operation_id,
-                            "metadata": {
-                                "video": {
-                                    "mediaId": cached_media,
-                                    "fifeUrl": cached_urls.video,
-                                },
-                            },
-                        },
-                        "status": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
-                    }
-            except Exception as error:
-                logger.debug(
-                    "Operation %s cached media hint unreadable (%s); rediscovering",
-                    operation_id[:20], error,
-                )
 
         media_id, complaint = await self._find_operation_media(
             operation_id, project_id=project_id,
@@ -663,7 +630,6 @@ class FlowClient:
         if not media_id:
             return _as_pending_operation(operation_id, error=complaint)
 
-        self._operation_media[operation_id] = media_id
         try:
             urls = await self._batch_media_urls(media_id, project_id=project_id)
         except Exception as error:
