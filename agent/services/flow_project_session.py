@@ -68,6 +68,7 @@ def touch_session_project(project_id: str) -> None:
 async def ensure_session_project(client, *, title: str | None = None, force_new: bool = False) -> dict:
     """Project local idle policy onto the backend's durable project authority."""
     async with _lock:
+        raw_local = _read_state()
         local = current_session_project()
         has_local_project = bool(local.get("project_id"))
         rotate = bool(force_new or (has_local_project and not local.get("active")))
@@ -95,7 +96,7 @@ async def ensure_session_project(client, *, title: str | None = None, force_new:
 
         now = time.time()
         same_project = local.get("project_id") == pid
-        created_at = local.get("created_at") if same_project else None
+        created_at = raw_local.get("created_at") if same_project else None
         projected_title = data.get("title")
         if not projected_title and same_project:
             projected_title = local.get("title")
