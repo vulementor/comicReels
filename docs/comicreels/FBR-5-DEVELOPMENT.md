@@ -691,3 +691,72 @@ closure.** Define the explicit opt-in construction/config boundary that can supp
 the exact authorization object to backend + business caller only for an approved
 single-shot validation. Normal production startup remains locked. Do not execute a
 paid request or test/build/Stable action.
+
+
+## Browser-only Task 4d — controlled validation authorization + Task 4 source closure
+
+Date: 2026-10-01.
+Status: **TASK 4 SOURCE_COMPLETE; NOT VALIDATED; PRODUCTION PAID DISPATCH LOCKED**.
+
+Source commits:
+- Authored controlled-validation seam requirements:
+  `5498bb572c23d63c28290363bb354edfbefed481`.
+- Explicit one-shot validation construction seam:
+  `6e4004d45a90e07a39751a921627e9db3b964760`.
+
+### Controlled validation authorization contract
+
+- New `agent/services/flow_paid_validation.py` is isolated from normal startup.
+  Neither `agent/main.py` nor `get_flow_client()` imports it.
+- Normal production singleton still constructs plain `BrowserFlowBackend()`
+  with no paid-enable flag and no authorization object. Production therefore
+  remains `paid_dispatch_enabled=False`.
+- The validation factory does **not** create authorization. Its caller must
+  deliberately supply a fresh in-memory plain `object()`; strings, booleans,
+  numbers, bytes, config values and environment text are rejected.
+- There is no env var, HTTP endpoint, FastAPI route, CLI switch or config-file
+  activation surface for validation paid dispatch.
+- The supplied opaque object is bound by identity into the explicitly constructed
+  `BrowserFlowBackend` and retained privately by `PaidValidationSession`.
+  The session forwards that same object to `FlowClient.generate_images()`.
+- The validation factory builds but does not start the browser. `start()`,
+  readiness observation, paid one-shot and `close()` are explicit harness calls.
+- `PaidValidationSession.generate_one_image()` consumes the one-shot capability
+  **before the first await**. Cancellation, timeout, UNKNOWN or any ambiguous
+  result therefore burns that validation session and cannot trigger a second paid
+  attempt through it.
+- A second call returns `PAID_VALIDATION_SHOT_ALREADY_USED` with
+  `effect=not_submitted`.
+- The validation session does not expose public `client` or `authorization`
+  properties. Its private references exist only in process memory.
+
+### Task 4 source closure
+
+Task 4 source obligations are now represented:
+1. browser-native one-image paid recipe bound to the same leased session;
+2. durable SUBMITTING intent before CAPTCHA/fetch effect;
+3. completed project/media receipt before business success;
+4. FlowClient one-shot route with historical response shape;
+5. durable DB request-id idempotency propagation from worker/SDK;
+6. UNKNOWN/reconciliation automatic retry prohibition;
+7. normal production paid dispatch locked by default;
+8. explicit validation-only one-shot authorization seam with no automatic grant.
+
+This is **source closure only**, not proof that the current live Flow frontend,
+reCAPTCHA recipe, response parsing or packaging works. No paid shot has been run.
+
+### Deferred validation
+
+Tests executed: **none**. No live CAPTCHA/paid request, pytest/import smoke/
+compile/lint/build, browser/profile launch, EXE launch, Stable/ThoRemix mutation
+or Remote Desktop action occurred.
+
+The KAT/ThoRemix acceptance performed in another conversation is not acceptance
+evidence for this browser-only revision.
+
+### Next plan task
+
+Proceed to **Task 5 — browser-only polling/media/operation state alignment**.
+Reconcile FlowClient's remaining in-memory operation caches with the durable
+browser journal, preserve response shapes and restart/resume semantics, and do not
+run tests/build/Stable until the full browser-only source plan is complete.
