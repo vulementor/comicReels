@@ -231,7 +231,7 @@ function Read-DependencyLock {
     try { $lock = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json }
     catch { throw 'DEPENDENCY_LOCK_INVALID' }
     if ($lock.schema_version -ne 1 -or
-            [string]$lock.source_validated_base -notmatch '^[0-9a-f]{40}$') {
+            ([string]$lock.source_validated_base) -notmatch '^[0-9a-f]{40}$') {
         throw 'DEPENDENCY_LOCK_INVALID'
     }
     $expected = @('krp','gpt_fullproxy','kbs','kat')
@@ -240,8 +240,8 @@ function Read-DependencyLock {
     foreach ($name in $expected) {
         $entry = $lock.dependencies.$name
         if ($null -eq $entry -or
-                [string]$entry.repository -notmatch '^https://github\.com/[^/]+/[^/]+\.git$' -or
-                [string]$entry.commit -notmatch '^[0-9a-f]{40}$' -or
+                ([string]$entry.repository) -notmatch '^https://github\.com/[^/]+/[^/]+\.git$' -or
+                ([string]$entry.commit) -notmatch '^[0-9a-f]{40}$' -or
                 [string]::IsNullOrWhiteSpace([string]$entry.package)) {
             throw 'DEPENDENCY_LOCK_INVALID'
         }
@@ -270,7 +270,7 @@ function Assert-DependencyCheckout {
     $dirty = @(& git -C $sourcePath status --porcelain)
     if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw ('DEPENDENCY_' + $codeName + '_DIRTY') }
     $head = (& git -C $sourcePath rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0 -or $head -ne [string]$Spec.commit) { throw ('DEPENDENCY_' + $codeName + '_SHA_MISMATCH') }
+    if ($LASTEXITCODE -ne 0 -or $head -ne ([string]$Spec.commit)) { throw ('DEPENDENCY_' + $codeName + '_SHA_MISMATCH') }
     $origin = (& git -C $sourcePath remote get-url origin).Trim()
     if ($LASTEXITCODE -ne 0 -or
             (Normalize-GitRemote $origin) -ne (Normalize-GitRemote ([string]$Spec.repository))) {
@@ -291,7 +291,7 @@ function Assert-KbsSourcePinMatchesRequirements {
     $matches = [regex]::Matches(
         $requirements,
         'kabin-browser-semantic\s*@\s*git\+https://github\.com/vulementor/kabin_browser_semantic\.git@(?<sha>[0-9a-f]{40})')
-    if ($matches.Count -ne 1 -or $matches[0].Groups['sha'].Value -ne [string]$KbsSpec.commit) {
+    if ($matches.Count -ne 1 -or $matches[0].Groups['sha'].Value -ne ([string]$KbsSpec.commit)) {
         throw 'KBS_PIN_MISMATCH_WITH_FLOW_REQUIREMENTS'
     }
 }
