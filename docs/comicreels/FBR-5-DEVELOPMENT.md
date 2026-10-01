@@ -2351,3 +2351,80 @@ image safety model where appropriate: explicit disabled-by-default authorization
 durable idempotency/intent before effect, verified receipt, UNKNOWN no-resend,
 and awaited durable operation binding. Do not add new video models, upscale
 support or unrelated behavior.
+
+
+## Browser-only Task 9d-repair-3 — interruption recovery checkpoint
+
+Date: 2026-10-01.
+Status: **SOURCE PARTIALLY IMPLEMENTED; NOT VALIDATED; no duplicate rework after stream interruption**.
+
+Exact branch head recovered after the interrupted response:
+`8c712f5b4949fe3f03596750d59a5cc953821a6d`.
+
+Comparison from repair-2 checkpoint `e41bdd8f54e53f76b4f009e58ac1a5edab603847`
+shows the interrupted repair-3 work is already persisted on GitHub across 28
+commits / 18 files. No revert or replay was performed.
+
+### Confirmed persisted paid-video work
+
+Present at recovered head:
+- `flow_browser_paid_video.py`: durable one-shot paid-video gate for the four
+  already-supported video RPC ids only;
+- `flow_browser_paid_video.js`: same leased project page, VIDEO_GENERATION
+  CAPTCHA, one fetch, bounded response body, unknown outcome after possible submit;
+- `flow_browser_state.py`: `paid_video` intents/receipts and completed
+  operation-receipt recovery into durable operation→project binding;
+- `FlowBackend.submit_paid_video()`, BrowserFlowBackend async/shield boundary,
+  and FlowBrowserDriver paid-video dispatch;
+- `FlowClient.submit_paid_video()` and Veo i2v routing through the paid gate,
+  with durable idempotency required and generic paid `_batch_payload` bypassed;
+- Omni text/frame/first+last/reference modes routed through
+  `submit_paid_video()`, preserving existing builders/models only;
+- direct API request schemas carry caller-supplied idempotency keys but normal
+  HTTP paths still do not manufacture paid authorization;
+- isolated `flow_paid_video_validation.py` exists as a one-shot, opaque
+  in-memory authorization capability separate from normal startup/API.
+
+### Confirmed durable request-id / binding layer already persisted
+
+No missing patch was required after recovery:
+- worker `_dispatch()` already sends the durable request row id `rid` into
+  `generate_scene_video(..., request_id=rid)` and
+  `generate_scene_video_refs(..., request_id=rid)`;
+- OperationService already forwards `idempotency_key=request_id` into the
+  corresponding video submit path;
+- the authored propagation regression is present in
+  `tests/unit/test_paid_idempotency_propagation.py`;
+- Omni `_paid_operation_shape()` already executes
+  `await client._remember_operation(operation_id, project_id)`;
+- failure to persist that post-submit binding returns
+  `OPERATION_BINDING_REQUIRED/effect=unknown`, preserving no-resend;
+- Omni authored regression uses `assert_awaited_once_with` and covers the
+  post-submit binding-failure UNKNOWN case.
+
+### Confirmed isolated validation layer already persisted
+
+`agent/services/flow_paid_video_validation.py` exists and:
+- requires a plain opaque in-memory authorization object;
+- constructs its own explicitly paid-enabled BrowserFlowBackend;
+- exposes at most one `submit_one_video()` attempt per validation session;
+- consumes the one-shot capability before awaiting the Flow client;
+- is not imported by normal main/API/worker/OperationService source.
+
+Therefore this recovery slice intentionally made **no duplicate production patch**.
+
+### Still remaining in repair-3 before source closure
+
+A short source audit/cleanup slice is still required before declaring B2/B3
+closed:
+1. reconcile any remaining stale Omni/FlowClient tests that still assert generic
+   `_batch_payload(CAPTCHA_VIDEO)` rather than the paid-video boundary;
+2. verify all direct/worker video submit call sites supply a durable idempotency
+   key while normal production provides no paid authorization;
+3. read back default paid lock + generic execute rejection + UNKNOWN/no-resend
+   after the new video gate;
+4. update the repair-3 ledger with exact closure SHA and remaining Task 9e
+   obligations.
+
+No pytest/build/browser/profile/paid/CAPTCHA/Stable/ThoRemix/Remote Desktop action
+was executed during this recovery checkpoint.
