@@ -317,7 +317,8 @@ class OperationService:
     # Scene image operations
     # ------------------------------------------------------------------
 
-    async def generate_scene_image(self, scene: dict, orientation: str) -> dict:
+    async def generate_scene_image(self, scene: dict, orientation: str,
+                                   request_id: str = "") -> dict:
         """Generate a scene image with reference imageInputs."""
         project = await crud.get_project(scene.get("_project_id", "0"))
         aspect = "IMAGE_ASPECT_RATIO_PORTRAIT" if orientation == "VERTICAL" else "IMAGE_ASPECT_RATIO_LANDSCAPE"
@@ -364,10 +365,12 @@ class OperationService:
         return await self._client.generate_images(
             prompt=prompt, project_id=pid, aspect_ratio=aspect,
             user_paygate_tier=tier, character_media_ids=char_media_ids,
+            idempotency_key=request_id,
         )
 
     async def edit_scene_image(self, scene: dict, orientation: str,
-                               source_media_id: str | None = None) -> dict:
+                               source_media_id: str | None = None,
+                               request_id: str = "") -> dict:
         """Edit an existing scene image using IMAGE_INPUT_TYPE_BASE_IMAGE.
 
         Resolves character refs from scene's character_names and passes them
@@ -420,6 +423,7 @@ class OperationService:
             project_id=pid, aspect_ratio=aspect,
             user_paygate_tier=tier,
             character_media_ids=char_media_ids,
+            idempotency_key=request_id,
         )
 
     # ------------------------------------------------------------------
@@ -687,7 +691,8 @@ class OperationService:
     # Reference image operations
     # ------------------------------------------------------------------
 
-    async def generate_reference_image(self, char: dict, project_id: str) -> dict:
+    async def generate_reference_image(self, char: dict, project_id: str,
+                                       request_id: str = "") -> dict:
         """Generate a reference image for a character/entity.
 
         Handles fast-path (image exists, just upload) and normal path (generate + upload).
@@ -732,6 +737,7 @@ class OperationService:
         result = await self._client.generate_images(
             prompt=prompt, project_id=pid, aspect_ratio=aspect,
             user_paygate_tier=tier,
+            idempotency_key=request_id,
         )
 
         if not _is_error(result):
