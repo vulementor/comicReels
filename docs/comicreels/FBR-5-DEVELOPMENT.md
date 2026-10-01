@@ -1686,3 +1686,109 @@ No Phase 3 test/build/browser/EXE/Stable execution is authorized before 9e.
 
 Tests/builds executed in 9a: **none**. No browser/profile, paid/CAPTCHA,
 Stable/ThoRemix runtime or Remote Desktop action occurred.
+
+
+## Browser-only Task 9b — reconcile legacy FlowClient batch tests
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; integration with main not started**.
+
+Source commits:
+- Migrate image payload/edit/project contracts into paid one-shot suite:
+  `76ea6f8b2e2ec652ec2e5d857f08ca027fcc51c2`.
+- Migrate valid polling semantics into durable/restart-safe suite:
+  `0011f5caef72488d7d2b8abf5c1024ff9cc6958c`.
+- Reconcile legacy `test_flow_client_batch.py` with one-shot + durable state:
+  `ec88af22d9ce5ad4100390fbd732a90b18d48048`.
+
+### Coverage migration — paid image/edit
+
+The old `TestGenerateImages` / `TestEditImage` classes were not merely deleted.
+Their still-valid contracts were moved to
+`tests/unit/test_flow_client_paid_one_shot.py` before removal:
+
+- historical business media response shape remains covered;
+- exact `ogiZ0b` RPC + image CAPTCHA action + target project remain covered;
+- image model wire id is preserved rather than silently replaced;
+- explicit seed remains in the paid one-shot request;
+- character references remain in Flow's REFERENCE_IMAGE slots;
+- image edit source remains BASE_IMAGE and is deduplicated from reference inputs;
+- the legacy configured project fallback remains covered for callers passing the
+  historical sentinel project id;
+- no configured/explicit project fails before paid submission;
+- known `effect=not_submitted` provider rejection is returned after exactly one
+  paid backend call with no media read/retry.
+
+Superseded behavior is now explicitly covered by the replacement one-shot suite:
+- count > 1 fails with `PAID_SINGLE_SHOT_REQUIRED`;
+- missing durable key fails with `PAID_IDEMPOTENCY_REQUIRED`;
+- no `IMAGE_UI_SUBMIT_OFFSETS_S` / multi-wave cadence;
+- no transient RPC paid resubmit;
+- UNKNOWN/backend exception maps to reconciliation and no second submission;
+- a completed durable receipt with no fresh signed URL stays completed rather
+  than causing paid regeneration.
+
+Therefore old multi-wave, count-2/count-4, partial-wave and retry-after-[8]
+expectations were removed because keeping them would require reintroducing behavior
+the browser-only safety contract explicitly forbids.
+
+### Coverage migration — durable polling/restart
+
+Valid poll behaviors were migrated/strengthened in
+`tests/unit/test_flow_poll_restart_safe.py`:
+
+- restart with empty RAM state discovers the current listing on the first poll;
+- a listing media id with only a poster remains PENDING;
+- a Flow operation complaint remains visible while listing is still pending;
+- project listing lookup still requests an operation-specific match window rather
+  than requiring the full large listing payload;
+- unreadable/decayed operation polling still consults the durable project listing;
+- a finished operation remains successful when re-polled, with each round rebuilt
+  from durable binding/current reads rather than RAM media cache.
+
+The legacy suite was updated accordingly:
+- `_operation_projects` assertion became durable backend binding assertion plus
+  a negative assertion that the RAM map does not exist;
+- the old every-third-poll listing cadence became first-poll listing authority;
+- tests requiring quiet-poll listing suppression or cached media-id bypass were
+  removed because they directly contradict restart-safe correctness.
+
+### Contracts intentionally retained in test_flow_client_batch.py
+
+The file still covers non-superseded contracts:
+- synchronous image upscale request/response shape;
+- video submit response and durable operation binding;
+- documented unsupported/degraded video mode behavior;
+- current operation success/pending/complaint/listing-window/nameless shapes;
+- media reads and validation;
+- upload request/response shape;
+- project creation/project-id/tier behavior;
+- signed URL refresh behavior including partial failures.
+
+Its fixture now uses a minimal browser backend stub with durable
+operation→project binding. Paid image submission through that fixture is forbidden,
+so a future test cannot accidentally fall back to the removed direct image path.
+
+### Source-only verification
+
+Readback of `test_flow_client_batch.py` at this checkpoint:
+- `generate_images(`: 0 calls;
+- `edit_image(`: 0 calls;
+- `IMAGE_UI_SUBMIT_OFFSETS_S`: 0;
+- `IMAGE_TRANSIENT_RETRY_DELAY_S`: 0;
+- `_operation_media`: 0;
+- `_operation_polls`: 0;
+- `_operation_projects`: one occurrence, solely the negative
+  `not hasattr(...)` regression assertion.
+
+Tests executed: **none**. No pytest/import/compile/lint, browser/profile,
+paid/CAPTCHA, build/EXE/Stable or Remote Desktop action occurred.
+
+### Next short sub-task
+
+**Task 9c — integrate then-current main into the browser-only branch.** Re-read
+`main` immediately before integration, then reconcile from current main rather
+than overwriting it. Preserve current-main versions of the eight-file main-only
+set (including PR #12 staged-KAT and post-PR12 Windows fixes) while carrying
+browser-only Flow changes forward. Record the actual integration commit and new
+branch/main ancestry. Do not run Phase 3 validation.
