@@ -66,26 +66,41 @@ def touch_session_project(project_id: str) -> None:
 
 
 async def ensure_session_project(client, *, title: str | None = None, force_new: bool = False) -> dict:
+    """Project local idle policy onto the backend's durable project authority."""
     async with _lock:
-        state = current_session_project()
-        if not force_new and state.get("active") and state.get("project_id"):
-            touch_session_project(state["project_id"])
-            return current_session_project()
+        local = current_session_project()
+        has_local_project = bool(local.get("project_id"))
+        rotate = bool(force_new or (has_local_project and not local.get("active")))
 
-        if not title:
-            title = "FlowKit session " + datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
-        result = await client.create_project(title)
-        if result.get("error"):
-            raise RuntimeError(result["error"])
+        resolved_title = title or local.get("title")
+        if not resolved_title:
+            resolved_title = (
+                "FlowKit session "
+                + datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+            )
+
+        result = await client.ensure_session_project(
+            title=resolved_title,
+            force_new=rotate,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Flow session project returned invalid response")
+        if result.get("error") or result.get("status") != 200:
+            raise RuntimeError(result.get("error") or "Flow session project failed")
+
         data = result.get("data") or {}
         pid = str(data.get("projectId") or "")
         if not _UUID_RE.fullmatch(pid):
             raise RuntimeError("Flow did not return a valid project id")
+
+        now = time.time()
+        same_project = local.get("project_id") == pid
+        created_at = local.get("created_at") if same_project else None
         state = {
             "project_id": pid,
-            "title": str(data.get("title") or title),
-            "created_at": time.time(),
-            "last_activity_at": time.time(),
+            "title": str(data.get("title") or resolved_title),
+            "created_at": float(created_at or now),
+            "last_activity_at": now,
         }
         _write_state(state)
         return current_session_project()
