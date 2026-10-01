@@ -2088,3 +2088,126 @@ video paid bridge in the same sub-task.
 
 Tests/builds executed during 9d audit: **none**. No browser/profile launch,
 paid/CAPTCHA call, EXE/Stable/ThoRemix runtime or Remote Desktop action occurred.
+
+
+## Browser-only Task 9d-repair-1 — worker/resume boundary
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; source closure still blocked by remaining 9d findings**.
+
+Source commits:
+- Authored paid-lock-independent worker lifecycle regression:
+  `66f21097a191080a27704fa8796ce215ca018a12`.
+- Keep worker alive while paid dispatch is locked; retire extension transient retry:
+  `2b7d606162675ec5c6cdb392ba30d9787330531c`.
+- Refine authored source contract so paid status may be observed/logged but cannot
+  gate lifecycle or manufacture authorization:
+  `e62064ca075face73a6111cbf74e5d3b475b32bf`.
+
+### Repair result
+
+`WorkerController.start()` no longer returns when
+`paid_dispatch_enabled=False`.
+
+Instead:
+- worker cleanup still runs;
+- stale PROCESSING rows are reset to PENDING without overwriting the persisted
+  remote operation id stored in `request.request_id`;
+- worker loop still starts, allowing `OperationService._resume_saved_operation()`
+  to re-poll already-submitted operations through the browser-only durable binding;
+- the paid switch is observed only for an informational log.
+
+This restores the plan contract that worker lifecycle/business queue processing is
+independent from Flow paid authorization.
+
+### Paid boundary remains locked
+
+No source in this repair:
+- sets `paid_dispatch_enabled=True`;
+- imports/constructs `build_paid_validation_session`;
+- passes `paid_authorization` from the worker;
+- modifies the paid image gate.
+
+Normal `BrowserFlowBackend()` therefore remains paid-disabled. New paid image
+submits reaching the backend still fail closed at
+`PAID_DISPATCH_DISABLED/effect=not_submitted`.
+
+### UNKNOWN/no-resend preserved
+
+The worker's first failure gate is unchanged:
+
+`effect == "unknown" or error == "PAID_RECONCILIATION_REQUIRED"`
+
+still:
+- removes retry scheduling;
+- marks the request FAILED with fixed reconciliation error;
+- marks the scene failed where applicable;
+- returns before ordinary retry logic.
+
+The durable paid gate itself remains unchanged and refuses replay of existing
+SUBMITTING/UNKNOWN intents.
+
+### Extension retry compatibility removed
+
+The obsolete worker branch that special-cased:
+- “extension reconnected”;
+- “extension disconnected”;
+- “extension not connected”
+
+as no-increment transient retry has been deleted. Browser-only failures must now
+surface through current fixed browser/reconciliation semantics instead of reviving
+extension-era retry behavior.
+
+### Authored regression coverage
+
+`tests/unit/test_worker_starts_with_browser_backend.py` now specifies:
+- with a fake browser client reporting `paid_dispatch_enabled=False`,
+  `WorkerController.start()` still calls cleanup then enters the worker loop;
+- worker start has no old “Worker disabled” paid-lock early return;
+- worker lifecycle cannot manufacture a paid validation capability;
+- retired extension transient retry phrases are absent.
+
+Existing
+`tests/unit/test_flow_restart_resume_contract.py`
+continues to specify that a saved remote operation id re-polls without calling
+`generate_video()`, and
+`tests/unit/test_paid_idempotency_propagation.py`
+continues to specify UNKNOWN/reconciliation as terminal for automatic retry.
+
+### Source-only readback
+
+At repair checkpoint:
+- old paid-lock worker early-return phrase: absent;
+- extension transient retry phrases: 0;
+- paid validation factory import in worker: absent;
+- UNKNOWN/reconciliation terminal guard: present.
+
+Tests/builds executed: **none**, per owner phase rule. No browser/profile,
+paid/CAPTCHA, EXE/Stable/ThoRemix runtime or Remote Desktop action occurred.
+
+Owner-reported fresh canonical KAT `b89c2b71` remains reserved for the final
+validation phase after source closure; it is not acceptance evidence for this
+browser branch yet.
+
+### Remaining blockers before source closure
+
+Still open from Task 9d:
+- **B2:** dedicated safe browser paid boundary for existing video/Omni submit
+  capabilities; generic CAPTCHA video RPC path is not allowed by browser backend;
+- **B3:** Omni operation branches must await durable operation binding and fail
+  closed after uncertain post-submit binding;
+- **B4:** direct session-project helper must use backend durable
+  `ensure_session_project()`, not raw create RPC;
+- **B5:** known project scope must propagate through refresh/Omni/media reads;
+- **C2:** update `requirements-flow-browser.txt` comment from obsolete optional
+  FBR-0 shadow wording while retaining the exact KBS pin.
+
+B1 and C1 are now source-repaired.
+
+### Next short sub-task
+
+**Task 9d-repair-2 — session-project + project-scoped media reads (B4/B5/C2).**
+This is a non-paid repair slice: route session project creation/reuse through the
+browser backend durable helper, propagate known project ids into media reads, and
+update only the stale KBS requirement comment. Do not touch video paid dispatch in
+the same sub-task.
