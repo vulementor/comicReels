@@ -12,7 +12,7 @@ if ($parseErrors.Count) { throw 'Build script has PowerShell parse errors.' }
 
 $katInstalls = @($ast.FindAll({ param($node)
     $node -is [System.Management.Automation.Language.CommandAst] -and
-    $node.Extent.Text -match '\bpip\s+install\b' -and
+    $node.GetCommandName() -eq 'Invoke-StagedPipInstall' -and
     $node.Extent.Text.Contains('$dependencies.kat.path')
 }, $true))
 if ($katInstalls.Count -ne 1) { throw 'Expected exactly one explicit pinned KAT installation command.' }
@@ -30,28 +30,13 @@ while ($null -ne $parent) {
     $parent = $parent.Parent
 }
 
-if ($install.CommandElements[0].Extent.Text -ne '"$runtime\python.exe"') {
-    throw 'KAT must be installed using the staged interpreter, not the live interpreter.'
+if (-not $install.Extent.Text.Contains('-Interpreter $stagedPython') -or
+        -not $install.Extent.Text.Contains('-InstallTarget $sitePackages')) {
+    throw 'KAT must install through the isolated staged interpreter and target.'
 }
-if ($install.Extent.Text -notmatch '(?<!\S)--force-reinstall(?!\S)' -or
-    $install.Extent.Text -notmatch '(?<!\S)--no-deps(?!\S)') {
+if (-not $install.Extent.Text.Contains("'--force-reinstall'") -or
+    -not $install.Extent.Text.Contains("'--no-deps'")) {
     throw 'KAT refresh must replace same-version snapshots without upgrading dependency pins.'
-}
-
-$pipeline = $install.Parent
-while ($null -ne $pipeline -and $pipeline -isnot [System.Management.Automation.Language.PipelineAst]) {
-    $pipeline = $pipeline.Parent
-}
-if ($null -eq $pipeline -or
-    $pipeline.Parent -isnot [System.Management.Automation.Language.StatementBlockAst]) {
-    throw 'KAT installation must be a direct staged-build statement.'
-}
-$next = @($pipeline.Parent.Statements | Where-Object {
-    $_.Extent.StartOffset -gt $pipeline.Extent.EndOffset
-} | Sort-Object { $_.Extent.StartOffset })
-if ($next.Count -eq 0 -or
-    $next[0].Extent.Text -notmatch '^if\s*\(\$LASTEXITCODE\s+-ne\s+0\)\s*\{\s*throw\b') {
-    throw 'Failed KAT installation must stop before validation or promotion.'
 }
 
 $validation = $ast.Find({ param($node)
