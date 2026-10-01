@@ -254,6 +254,8 @@ async def test_browser_backend_paid_video_is_locked_by_default_without_driver_su
     backend._driver = Driver()
     backend._paid_dispatch_enabled = False
     backend._paid_authorization = None
+    backend._paid_video_dispatch_enabled = False
+    backend._paid_video_authorization = None
 
     result = await backend.submit_paid_video(
         operation_params(),
@@ -266,3 +268,52 @@ async def test_browser_backend_paid_video_is_locked_by_default_without_driver_su
         "error": "PAID_DISPATCH_DISABLED",
         "effect": "not_submitted",
     }
+
+
+def test_paid_video_gate_rejects_project_only_present_outside_context(tmp_path):
+    state = BrowserStateStore(tmp_path / "state.json", "owner")
+    params = operation_params()
+    outer = json.loads(params["freq"])
+    body = json.loads(outer[0][0][1])
+    body[1][5] = "22222222-3333-4444-5555-666666666666"
+    body[0][0][0][2][0][0].append(PROJECT)  # project string elsewhere must not count
+    outer[0][0][1] = json.dumps(body)
+    params["freq"] = json.dumps(outer)
+
+    gate = FlowPaidVideoGate(
+        state, lambda *_args: completed(operation_body()),
+        dispatch_enabled=True, authorization=AUTH,
+    )
+    result = gate.submit(
+        params, idempotency_key="video-bad-context", authorization=AUTH,
+    )
+
+    assert result == {
+        "status": 409,
+        "error": "PAID_RECIPE_UNVERIFIED",
+        "effect": "not_submitted",
+    }
+
+
+def test_paid_video_gate_reraises_non_exception_interrupt_after_marking_unknown(tmp_path):
+    state = BrowserStateStore(tmp_path / "state.json", "owner")
+
+    class Stop(BaseException):
+        pass
+
+    def interrupt(_command, _timeout):
+        raise Stop()
+
+    gate = FlowPaidVideoGate(
+        state, interrupt, dispatch_enabled=True, authorization=AUTH,
+    )
+
+    with pytest.raises(Stop):
+        gate.submit(
+            operation_params(),
+            idempotency_key="video-interrupt",
+            authorization=AUTH,
+        )
+
+    entry = next(v for v in state.load()["intents"].values() if v["kind"] == "paid_video")
+    assert entry["state"] == "UNKNOWN"
