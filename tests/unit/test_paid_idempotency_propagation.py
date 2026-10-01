@@ -134,3 +134,21 @@ def test_effect_unknown_is_always_an_error_even_with_http_200():
         "effect": "unknown",
         "data": {"media": []},
     }) is True
+
+
+def test_worker_routes_durable_request_id_into_video_submit_paths():
+    source = Path("agent/worker/processor.py").read_text(encoding="utf-8")
+    sdk = Path("agent/sdk/services/operations.py").read_text(encoding="utf-8")
+
+    assert "ops.generate_scene_video(scene, orientation, request_id=rid)" in source
+    assert "ops.generate_scene_video_refs(scene, orientation, request_id=rid)" in source
+
+    video = sdk[sdk.index("async def generate_scene_video"):
+                sdk.index("async def generate_scene_video_refs")]
+    refs = sdk[sdk.index("async def generate_scene_video_refs"):
+               sdk.index("async def upscale_scene_video")]
+
+    assert "idempotency_key=request_id" in video
+    assert "idempotency_key=request_id" in refs
+    assert "paid_authorization=" not in video
+    assert "paid_authorization=" not in refs
