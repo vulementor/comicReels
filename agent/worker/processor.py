@@ -1,4 +1,4 @@
-"""Background worker — processes pending requests via Chrome extension.
+"""Background worker — processes pending requests via the browser-only Flow backend.
 
 Thin dispatcher: picks up PENDING requests, delegates to OperationService
 for actual API work, handles status transitions + retry + scene updates.
