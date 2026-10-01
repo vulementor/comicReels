@@ -76,15 +76,18 @@ class FlowPaidVideoGate:
             if not isinstance(body, list):
                 raise ValueError
 
-            seen_project = False
-            captcha_slots = 0
-            for node in self._walk(body):
-                if node == project_id:
-                    seen_project = True
-                if (isinstance(node, list) and len(node) == 2
-                        and node[0] == fb.CAPTCHA_SLOT and node[1] == 1):
-                    captcha_slots += 1
-            if not seen_project or captcha_slots < 1:
+            if (len(body) != 3
+                    or not isinstance(body[0], list) or len(body[0]) != 1
+                    or body[1] != fb._context(project_id)
+                    or not isinstance(body[2], list) or len(body[2]) != 2
+                    or body[2][1] != 2):
+                raise ValueError
+            captcha_slots = sum(
+                isinstance(node, list) and len(node) == 2
+                and node[0] == fb.CAPTCHA_SLOT and node[1] == 1
+                for node in self._walk(body)
+            )
+            if captcha_slots != 1:
                 raise ValueError
 
             return PaidVideoCommand(
@@ -217,11 +220,13 @@ class FlowPaidVideoGate:
             if not isinstance(entry, dict):
                 raise BrowserCommandError("PAID_RECONCILIATION_REQUIRED")
             return self._completed(entry, attributes, reused=False)
-        except BaseException:
+        except BaseException as error:
             try:
                 current = self._state.lookup(key)
                 if current is not None and current.get("state") == "SUBMITTING":
                     self._state.mark_unknown(key)
             except Exception:
                 pass
+            if not isinstance(error, Exception):
+                raise
             return self._error("PAID_RECONCILIATION_REQUIRED", "unknown")
