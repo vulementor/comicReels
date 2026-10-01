@@ -177,7 +177,7 @@ function Header() {
             className="w-1.5 h-1.5 rounded-full"
             style={{ background: isConnected ? 'var(--green)' : 'var(--red)', animation: isConnected ? 'pulse 2s ease-in-out infinite' : 'none' }}
           />
-          {isConnected ? t('app.wsLive') : t('app.wsDisconnected')}
+          {isConnected ? t('app.dashboardLive') : t('app.dashboardDisconnected')}
         </span>
       </div>
     </header>
