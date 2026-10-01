@@ -31,7 +31,12 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile(
             (Resolve-Path 'deployment/thoremix/Build-Stable.ps1').Path,
             [ref]$tokens,[ref]$errors) | Out-Null
-          if($errors.Count){ $errors | Format-List | Out-String | Write-Error; exit 1 }
+          if($errors.Count){
+            foreach($e in $errors){
+              Write-Host ("PARSE|line={0}|col={1}|extent={2}|id={3}|msg={4}" -f $e.Extent.StartLineNumber,$e.Extent.StartColumnNumber,$e.Extent.Text,$e.ErrorId,$e.Message)
+            }
+            exit 1
+          }
 
       - name: StageOnly and dependency contracts
         shell: powershell
