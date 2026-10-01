@@ -306,3 +306,69 @@ browser mode, remove the Flow extension WebSocket startup/callback lifecycle, an
 preserve graceful worker/browser shutdown. The already-authored worker-start fix
 must be reconciled into this browser-only lifecycle task; no local test or Stable
 restart is authorized until all source tasks are complete.
+
+
+## Browser-only Task 2 — application lifecycle
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED**.
+Plan: `docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md`.
+
+Source lineage:
+- Pre-plan worker root-cause requirement: `c60d3688db37eacb8627f75a422ff11533b5574c`.
+- Pre-plan worker startup fix retained by this task:
+  `296c8dca0aba1114b3bd497a5b13279335cc2684`.
+- Browser-only lifecycle requirements:
+  `9803f58c4a0d3540d6a4f028aafe354915a58ed6`.
+- Browser-only lifespan authored coverage:
+  `5d7a5d3cf1b8965c8413bc208e648f9208cc4f4f`.
+- Extension lifecycle/callback removal:
+  `b02533aec839c4c355aff584b36ff331d6274e6d`.
+
+### Lifecycle contract
+
+- Application startup obtains the browser-only Flow client, initializes the DB,
+  starts the browser backend, initializes the SDK, then starts the business queue
+  worker unconditionally. Queue consumption is not tied to extension transport.
+- The old Flow extension `ws_handler` and `run_ws_server` are removed from
+  `agent/main.py`; the application no longer opens that Flow extension WebSocket
+  server during startup.
+- The old `/api/ext/callback` endpoint and callback-secret lifecycle are removed
+  from `agent/main.py`.
+- The independent dashboard event WebSocket `/ws/dashboard` remains. It is not
+  the removed Flow extension transport and is preserved for the existing UI event
+  channel; extension-specific wording/status on that channel is a later Task 6/7
+  cleanup.
+- Shutdown requests the worker to stop, awaits `controller.drain()`, cancels
+  application tasks, closes the browser backend, then closes the DB.
+- Browser startup failure still aborts startup; no extension fallback/retry is
+  introduced.
+- No intent/receipt/idempotency code is changed in this task. Unknown paid outcomes
+  retain the existing no-auto-resend safety boundary.
+
+### External acceptance isolation
+
+The separate KAT/ThoRemix conversation is performing its own final acceptance.
+Its results are **not evidence for this browser-only branch** and must not be copied
+into this ledger as PASS. This branch remains NOT VALIDATED until its own source is
+100% complete and the owner-authorized validation/build/EXE/Stable phase runs at
+the actual browser-only revision.
+
+### Deferred validation
+
+Tests executed: **none**, per owner phased workflow. No pytest/import smoke/compile/
+lint/frontend build/workflow dispatch, browser/profile launch, EXE launch,
+Stable/ThoRemix mutation, paid request or Remote Desktop action occurred.
+
+Ruling: retain the dashboard WebSocket while removing only the Flow extension
+transport. Cost if wrong: Task 7/8 will need to move or remove the dashboard event
+channel; removing it here would unnecessarily break the UI before its independent
+ownership is audited.
+
+### Next task
+
+**Browser-only Task 3 — remove extension transport implementation from
+FlowClient/backend layer.** Remove `ExtensionFlowBackend`, extension WS pending
+maps/session/failover/token machinery and extension send path while preserving the
+FlowClient business API consumed by worker/API. Do not test/build/launch Stable
+until the full browser-only source plan is complete.
