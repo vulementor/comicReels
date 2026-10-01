@@ -93,22 +93,26 @@ def test_core_operator_skills_use_browser_session_diagnostics():
     assert 'PROFILE_' in doctor
 
 
-def test_docs_never_instruct_profile_cookie_or_storage_reset():
+def test_docs_forbid_profile_cookie_or_storage_reset_instead_of_prescribing_it():
     paths = (
         'setup.py', 'AGENTS.md', 'CLAUDE.md', 'README.md',
         'dashboard/src/i18n/translations.ts', 'skills/fk-doctor.md',
     )
     combined = '\n'.join(text(path) for path in paths).lower()
+
+    # Old recovery recipes actively prescribed destructive profile mutation.
     for marker in (
         'remove all cookies',
-        'delete cookies',
-        'clear cookies',
-        'clear storage',
-        'sign out and',
-        'create a new profile',
-        'replace the profile',
+        'delete cookies for',
+        'clear cookies for',
+        'clear browser storage and',
+        'create a new profile and',
     ):
         assert marker not in combined
+
+    # Current operator guidance explicitly preserves the bound profile.
+    assert 'do not clear cookies/storage' in combined or 'never clear cookies/storage' in combined
+    assert 'replacement profile' in combined
 
 
 def test_statusline_reads_browser_health_not_extension_or_flow_key():
