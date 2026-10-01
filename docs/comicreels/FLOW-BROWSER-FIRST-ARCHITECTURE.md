@@ -1,7 +1,8 @@
-# Flow Browser-First Refactor Architecture
+# Flow Browser-Only Refactor Architecture
 
-Status: **OWNER APPROVED — DESIGN BASELINE**
-Date: 2026-09-27
+Status: **OWNER APPROVED — BROWSER-ONLY SOURCE AUTHORITY**
+Original baseline: 2026-09-27
+Browser-only owner directive: 2026-10-01
 Scope: ComicReels / FlowKit transport refactor only.
 
 ## 1. Goal
@@ -114,8 +115,9 @@ class FlowBackend(Protocol):
     def download_media(...) -> FlowDownload: ...
 ```
 
-The current extension transport may implement the same interface temporarily as a fallback during
-migration. No FlowKit creative skill should need to know which transport is active.
+The Chrome extension transport is retired. `BrowserFlowBackend` is the sole
+Flow backend. No FlowKit creative skill may select, depend on or fall back to an
+extension transport.
 
 ## 7. Paid-effect and receipt rules
 
@@ -150,15 +152,16 @@ Never store cookies, tokens, raw auth headers, local browser databases or profil
 
 ## 9. Extension retirement policy
 
-The extension is **not deleted at the start**.
+The Flow Chrome extension/WebSocket RPC bridge is retired from runtime source.
 
-- FBR-0 through FBR-2: extension remains the known fallback; browser backend is shadow/read-only or
-  capability-limited.
-- FBR-3: browser backend may perform one explicitly approved paid single-shot test.
-- FBR-4: parity is proven for the required ComicReels/FlowKit capability matrix.
-- FBR-5: owner explicitly approves browser backend as default.
-- Only after FBR-5 may extension/WebSocket transport code be removed in a separate cleanup change.
-- Rollback must remain possible until the cleanup checkpoint is accepted.
+- It is not a fallback, rollback target, health dependency or supported backend.
+- Browser profile/session readiness is the only Flow transport preflight.
+- The independent `/ws/dashboard` event channel remains because it serves the
+  dashboard, not Flow RPC transport.
+- Historical extension-era commits/docs may remain only when explicitly marked
+  historical/superseded.
+- Rollback for source integration means returning to a known Git revision, not
+  reviving an extension transport inside the running process.
 
 ## 10. FlowKit creative preservation matrix
 
@@ -172,8 +175,8 @@ The extension is **not deleted at the start**.
 | Pipeline/resume | unchanged | unchanged |
 | Gallery/Logs/Guide/Settings | unchanged | unchanged |
 | TTS/concat/branding/SEO/YT | unchanged | unchanged |
-| Flow transport | extension fallback + browser shadow | browser-first |
-| Extension/WS bridge | retained | removable only after FBR-5 |
+| Flow transport | browser-only | browser-only |
+| Dashboard event WebSocket | independent from Flow | preserved independently |
 
 ## 11. Stop conditions
 
@@ -191,7 +194,7 @@ Stop the current checkpoint and do not advance when:
 
 Execution authority:
 - this document defines the browser-first architecture;
-- `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md` defines checkpoint execution;
+- `docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md` defines current checkpoint execution;
 - `docs/comicreels/CHECKPOINTS.md` records current accepted state;
 - generated `AGENTS.md` carries operational invariants for agents;
 - FlowKit creative skills remain their own source of truth.
