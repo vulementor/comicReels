@@ -145,7 +145,13 @@ def test_unknown_paid_video_intent_is_never_dispatched_again(tmp_path):
     state = BrowserStateStore(tmp_path / "state.json", "owner")
     params = operation_params()
     digest = hashlib.sha256("video-unknown".encode()).hexdigest()
-    request_digest = hashlib.sha256(params["freq"].encode()).hexdigest()
+    gate = FlowPaidVideoGate(
+        state,
+        lambda *_args: calls.append(1),
+        dispatch_enabled=True,
+        authorization=AUTH,
+    )
+    request_digest = gate.validate(params).request_sha256
     key = f"paid-video:{digest}"
     state.begin(key, "paid_video", {
         "project_id": PROJECT,
@@ -155,13 +161,6 @@ def test_unknown_paid_video_intent_is_never_dispatched_again(tmp_path):
     })
     state.mark_unknown(key)
 
-    calls = []
-    gate = FlowPaidVideoGate(
-        state,
-        lambda *_args: calls.append(1),
-        dispatch_enabled=True,
-        authorization=AUTH,
-    )
     result = gate.submit(
         params,
         idempotency_key="video-unknown",
@@ -319,3 +318,24 @@ def test_paid_video_gate_reraises_non_exception_interrupt_after_marking_unknown(
 
     entry = next(v for v in state.load()["intents"].values() if v["kind"] == "paid_video")
     assert entry["state"] == "UNKNOWN"
+
+
+def test_video_request_digest_ignores_only_ephemeral_client_uuids(tmp_path):
+    state = BrowserStateStore(tmp_path / "state.json", "owner")
+    gate = FlowPaidVideoGate(
+        state, lambda *_args: None, dispatch_enabled=True, authorization=AUTH,
+    )
+
+    first_params = operation_params()
+    second_params = operation_params()
+    assert first_params["freq"] != second_params["freq"]
+
+    first = gate.validate(first_params)
+    second = gate.validate(second_params)
+
+    changed_params = dict(operation_params())
+    changed_params["freq"] = fb.video_request("different prompt", PROJECT, MEDIA)
+    changed = gate.validate(changed_params)
+
+    assert first.request_sha256 == second.request_sha256
+    assert first.request_sha256 != changed.request_sha256
