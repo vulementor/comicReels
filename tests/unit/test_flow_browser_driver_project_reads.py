@@ -23,10 +23,11 @@ class Page:
     def __init__(self):
         self.url = "https://flow.google.com/"
         self.goto_calls = []
+        self.goto_result_url = None
 
     def goto(self, url, *, wait_until, timeout):
         self.goto_calls.append((url, wait_until, timeout))
-        self.url = url
+        self.url = self.goto_result_url or url
 
 
 class Provider:
@@ -34,6 +35,8 @@ class Provider:
         self.lease = False
         self.page = Page()
         self.session = SimpleNamespace(page=self.page)
+        self.authentication = "authenticated"
+        self.health_sequence = []
 
     def open(self):
         self.lease = True
@@ -46,14 +49,19 @@ class Provider:
         }
 
     def capture_health(self):
+        authentication = (
+            self.health_sequence.pop(0)
+            if self.health_sequence else self.authentication
+        )
+        ready = self.lease and authentication == "authenticated"
         return {
             "state": "open" if self.lease else "closed",
             "lease_held": self.lease,
-            "authentication": "authenticated",
-            "ready": self.lease,
-            "semantic_node_count": 3,
+            "authentication": authentication,
+            "ready": ready,
+            "semantic_node_count": 3 if ready else 1,
             "observed_at": "2026-09-30T09:00:00+00:00",
-            "error": None,
+            "error": None if ready else "BROWSER_NOT_READY",
         }
 
     def close(self):
@@ -107,6 +115,115 @@ def test_open_project_navigates_exact_flow_project_and_persists_identity(rig):
     ]
     assert BrowserStateStore(state_path, owner_key).load()["project_id"] == PROJECT
     driver.close()
+
+
+def test_open_project_waits_for_delayed_fresh_hydration_after_single_navigation(rig):
+    driver, provider, state_path, owner_key = rig
+    provider.health_sequence = [
+        "authenticated",  # fresh pre-navigation gate
+        "unknown",
+        "unknown",
+        "authenticated",
+    ]
+    sleeps = []
+    driver._sleep = lambda seconds: sleeps.append(seconds)
+
+    result = driver.open_project(PROJECT)
+
+    assert result == {
+        "status": 200,
+        "data": {"projectId": PROJECT},
+        "effect": "completed",
+    }
+    assert provider.page.goto_calls == [
+        (f"https://flow.google.com/project/{PROJECT}", "domcontentloaded", 60_000)
+    ]
+    assert len(sleeps) == 2
+    assert BrowserStateStore(state_path, owner_key).load()["project_id"] == PROJECT
+
+
+def test_open_project_same_exact_project_uses_fresh_gate_without_regoto(rig):
+    driver, provider, state_path, owner_key = rig
+    provider.page.url = f"https://flow.google.com/project/{PROJECT}"
+    provider.health_sequence = ["authenticated"]
+
+    result = driver.open_project(PROJECT)
+
+    assert result["status"] == 200
+    assert provider.page.goto_calls == []
+    assert BrowserStateStore(state_path, owner_key).load()["project_id"] == PROJECT
+
+
+def test_open_project_wrong_project_after_navigation_fails_closed(rig):
+    driver, provider, state_path, _, = rig
+    wrong = "99999999-8888-7777-6666-555555555555"
+    provider.health_sequence = ["authenticated"]
+    provider.page.goto_result_url = f"https://flow.google.com/project/{wrong}"
+
+    result = driver.open_project(PROJECT)
+
+    assert result == {
+        "status": 409,
+        "error": "PROJECT_OPEN_FAILED",
+        "effect": "not_submitted",
+    }
+    assert not state_path.exists()
+
+
+def test_open_project_auth_never_ready_times_out_without_state_write(rig):
+    driver, provider, state_path, _ = rig
+    provider.health_sequence = ["authenticated"]
+    provider.authentication = "unknown"
+    now = [0.0]
+    driver._clock = lambda: now[0]
+    driver._project_hydration_timeout_s = 0.5
+    driver._project_hydration_poll_s = 0.25
+    driver._sleep = lambda seconds: now.__setitem__(0, now[0] + seconds)
+
+    result = driver.open_project(PROJECT)
+
+    assert result == {
+        "status": 409,
+        "error": "BROWSER_NOT_READY",
+        "effect": "not_submitted",
+    }
+    assert provider.page.goto_calls == [
+        (f"https://flow.google.com/project/{PROJECT}", "domcontentloaded", 60_000)
+    ]
+    assert not state_path.exists()
+
+
+def test_open_project_redirect_to_login_fails_closed_without_retry(rig):
+    driver, provider, state_path, _ = rig
+    provider.health_sequence = ["authenticated"]
+    provider.page.goto_result_url = (
+        "https://accounts.google.com/v3/signin/accountchooser"
+    )
+    driver._sleep = lambda _seconds: pytest.fail("redirect must fail immediately")
+
+    result = driver.open_project(PROJECT)
+
+    assert result == {
+        "status": 409,
+        "error": "PROJECT_OPEN_FAILED",
+        "effect": "not_submitted",
+    }
+    assert not state_path.exists()
+
+
+def test_open_project_hydration_interrupt_propagates_and_owner_can_release_lease(rig):
+    driver, provider, state_path, _ = rig
+    provider.health_sequence = ["authenticated", "unknown"]
+    driver._sleep = lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt())
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            driver.open_project(PROJECT)
+    finally:
+        driver.close()
+
+    assert provider.lease is False
+    assert not state_path.exists()
 
 
 def test_ensure_session_project_reuses_saved_project_without_create_rpc(rig, monkeypatch):
