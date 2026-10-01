@@ -28,10 +28,16 @@ def _async_function_source(name: str) -> str:
 
 def test_worker_always_starts_after_browser_backend():
     source = _async_function_source("lifespan")
-    assert "await client.start_backend()" in source
-    assert "controller = get_worker_controller()" in source
-    assert "asyncio.create_task(controller.start())" in source
-    assert "client.backend_kind" not in source
+    backend_start = source.index("await client.start_backend()")
+    controller_get = source.index("controller = get_worker_controller()")
+    worker_start = source.index("asyncio.create_task(controller.start())")
+
+    # Browser backend readiness is established first, then the business worker
+    # starts unconditionally. Paid dispatch stays a separate gate inside the
+    # worker/backend and must not suppress restart resume/read-only work.
+    assert backend_start < controller_get < worker_start
+    assert "if client.backend_kind" not in source
+    assert "if not client.paid_dispatch_enabled" not in source
     assert "run_ws_server" not in source
 
 
