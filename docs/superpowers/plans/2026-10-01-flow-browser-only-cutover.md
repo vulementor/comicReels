@@ -99,12 +99,12 @@
 - Produces: browser-native one-shot generation path with idempotency and reconciliation.
 - Keeps: dispatch disabled unless explicit later validation authorization allows it.
 
-- [ ] Add browser-authenticated paid image dispatch recipe bound to the same leased session.
-- [ ] Persist intent before effect and receipt before business-state success.
-- [ ] Route FlowClient single-shot image generation through browser paid gate without extension retry/cadence behavior.
-- [ ] Keep unknown outcomes non-retryable.
-- [ ] Keep validation authorization disabled by default in normal source config.
-- [ ] Update checkpoint docs.
+- [x] Add browser-authenticated paid image dispatch recipe bound to the same leased session.
+- [x] Persist intent before effect and receipt before business-state success.
+- [x] Route FlowClient single-shot image generation through browser paid gate without extension retry/cadence behavior.
+- [x] Keep unknown outcomes non-retryable.
+- [x] Keep validation authorization disabled by default in normal source config.
+- [x] Update checkpoint docs.
 
 ### Task 5: Align polling/media/operation flow with browser-only state
 
