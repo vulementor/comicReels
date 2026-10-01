@@ -79,11 +79,11 @@
 - Produces: one Flow backend contract implemented by browser only.
 - Removes: `ExtensionFlowBackend`, extension WS pending maps, extension failover/session selection.
 
-- [ ] Remove extension backend implementation and extension-specific send/failover paths.
-- [ ] Remove extension connection/token state from FlowClient where no longer used by non-Flow features.
-- [ ] Preserve business method signatures consumed by worker/API.
-- [ ] Confirm no business logic starts depending on browser internals.
-- [ ] Update checkpoint docs.
+- [x] Remove extension backend implementation and extension-specific send/failover paths.
+- [x] Remove extension connection/token state from FlowClient where no longer used by non-Flow features.
+- [x] Preserve business method signatures consumed by worker/API.
+- [x] Confirm no business logic starts depending on browser internals.
+- [x] Update checkpoint docs.
 
 ### Task 4: Complete concrete browser paid-dispatch integration
 
