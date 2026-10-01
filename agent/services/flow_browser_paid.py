@@ -76,7 +76,20 @@ class FlowPaidImageGate:
             if (variant[7][10] != [fb.CAPTCHA_SLOT, 1]
                     or body[3][10] != [fb.CAPTCHA_SLOT, 1]):
                 raise ValueError
-            request_sha256 = hashlib.sha256(freq.encode()).hexdigest()
+            # Flow builders stamp fresh client UUIDs into three non-semantic
+            # request slots on every call. Idempotency must compare the business
+            # request, not those transport-local correlation ids.
+            semantic = json.loads(json.dumps(body))
+            semantic[1][0][12] = "<client-uuid>"
+            semantic[1][0][13] = "<client-uuid>"
+            semantic[4][0] = "<client-uuid>"
+            request_sha256 = hashlib.sha256(
+                json.dumps(
+                    semantic,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode()
+            ).hexdigest()
             return PaidImageCommand(
                 rpcid=fb.RPC_GEN_IMAGE, freq=freq, project_id=project_id,
                 request_sha256=request_sha256,
