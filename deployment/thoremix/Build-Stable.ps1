@@ -556,7 +556,7 @@ try {
     $validation = @'
 import compileall, os, pathlib, subprocess, sys
 from dataclasses import asdict, replace
-import tkinter, ssl, sqlite3, PIL, httpx, tzdata, pydantic, yaml, camoufox, pystray
+import tkinter, ssl, sqlite3, PIL, httpx, tzdata, pydantic, yaml, camoufox, pystray, ffpyplayer
 import kabin_reel_poster, kabin_affiliate_toolkit
 import gpt_fullproxy, kabin_browser_semantic, faster_whisper
 from kabin_reel_poster.sdk import KRPClient
@@ -580,8 +580,16 @@ def inside(path, root):
         return False
 assert inside(sys.executable, stage), 'staged validation interpreter escaped stage'
 assert inside(sys.prefix, stage), 'staged sys.prefix escaped stage'
-for module in (kabin_reel_poster, kabin_affiliate_toolkit, gpt_fullproxy, kabin_browser_semantic):
+for module in (kabin_reel_poster, kabin_affiliate_toolkit, gpt_fullproxy, kabin_browser_semantic, ffpyplayer):
     assert inside(module.__file__, site), f'{module.__name__} imported outside staged site-packages'
+ffmpeg_data = (runtime / 'share' / 'ffpyplayer' / 'ffmpeg' / 'bin').resolve()
+sdl_data = (runtime / 'share' / 'ffpyplayer' / 'sdl' / 'bin').resolve()
+assert ffmpeg_data.is_dir(), 'ffpyplayer ffmpeg data missing from staged sys.prefix'
+assert sdl_data.is_dir(), 'ffpyplayer SDL data missing from staged sys.prefix'
+assert ffpyplayer.dep_bins, 'ffpyplayer did not register staged dependency bins'
+for dependency_bin in map(pathlib.Path, ffpyplayer.dep_bins):
+    resolved = dependency_bin.resolve()
+    assert inside(resolved, runtime), f'ffpyplayer dependency bin escaped staged sys.prefix: {resolved}'
 assert pathlib.Path(core.__file__).resolve().is_relative_to(stage)
 assert callable(getattr(KRPClient, 'recover_pre_submit', None)), 'KRP runtime lacks durable pre-submit recovery'
 kat_fields = SelectionPolicy.model_fields
