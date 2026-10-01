@@ -199,6 +199,8 @@ def test_paid_video_script_is_single_fetch_video_captcha_recipe():
     assert "for (;;)" in source  # response-body reader only
     assert "effect: 'unknown'" in source
     assert "effect: 'not_submitted'" in source
+    assert "inner[1][5] !== projectId" in source
+    assert "inner[2][1] !== 2" in source
 
 
 @pytest.mark.parametrize("record", [
