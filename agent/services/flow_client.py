@@ -1,29 +1,16 @@
 """
-Flow Client — business API over an explicitly selected Flow backend.
+Flow Client — business API over the browser-only Flow backend.
 
-The default extension backend uses the existing WS bridge. The optional browser
-backend owns a persistent signed-in session and is limited to non-paid work.
-
-One transport: Flow's ``batchexecute`` endpoint on flow.google.com, whose calls
-only a signed-in page can sign — the agent builds the envelope, the selected
-backend runs it in the tab (see :mod:`agent.services.flow_batch`).
-
-The REST path against ``aisandbox-pa.googleapis.com`` that preceded it is gone.
-It needed a ``Bearer ya29.…`` that Flow stopped minting in the September 2026
-migration, so it could not run; keeping it only gave the next contributor a
-second place to implement things. Git history has it if a payload is ever needed.
-
-Answers are shaped like the old REST ones, so everything downstream — the
-worker's parsers, the operation poller, the scene/character updaters — reads one
-shape and never learns where it came from.
+FlowKit now has one Flow transport: BrowserFlowBackend owns the persistent
+signed-in browser session and executes validated batchexecute requests in that
+leased session. Business callers keep using FlowClient response shapes and do
+not depend on browser internals.
 """
 import asyncio
 import json
 import logging
-import os
 import threading
 import time
-import uuid
 from typing import Optional
 
 from agent.config import (
@@ -35,7 +22,7 @@ from agent.config import (
 )
 from agent import config as _config
 from agent.services import flow_batch as fb
-from agent.services.flow_backend import ExtensionFlowBackend, FlowBackend
+from agent.services.flow_backend import FlowBackend
 from agent.services.flow_backend_selection import BackendSelection, resolve_backend_selection
 
 logger = logging.getLogger(__name__)
@@ -55,157 +42,34 @@ IMAGE_TRANSIENT_MAX_ATTEMPTS = 2
 
 
 class FlowClient:
-    """Flow business API using one explicitly selected backend."""
+    """Flow business API over one browser backend."""
 
     def __init__(self, backend: FlowBackend | None = None):
-        self._extension_ws = None  # Active authenticated extension connection
-        self._extensions: dict[object, dict] = {}
-        self._pending: dict[str, asyncio.Future] = {}
-        self._pending_ws: dict[str, object] = {}
-        self._flow_key: Optional[str] = None
-        # Per-operation poll state. `_operation_projects` says which project
-        # listing to look a finished media up in; `_operation_media` caches the
-        # id once the listing has it, so later rounds skip the listing entirely;
-        # `_operation_polls` counts rounds, to keep the listing off most of them.
+        if backend is None:
+            # Preserve direct FlowClient() construction as a browser-only API.
+            # get_flow_client() still owns production singleton/error caching.
+            from agent.services.flow_browser_backend import BrowserFlowBackend
+            backend = BrowserFlowBackend()
+        self._backend = backend
+
+        # Compatibility sentinel only until Task 6 removes legacy status fields.
+        # It is never populated and cannot route transport.
+        self._flow_key = None
+
+        # Per-operation business cache. Task 5 will reconcile this with the
+        # browser journal without changing the public business response shape.
         self._operation_projects: dict[str, str] = {}
         self._operation_media: dict[str, str] = {}
         self._operation_polls: dict[str, int] = {}
+
+        # Existing business-level generation guards remain intact. They do not
+        # authorize a paid browser effect; the paid gate remains separate.
         self._generation_slots = asyncio.Semaphore(FLOW_GENERATION_MAX_CONCURRENT)
         self._generation_rate_gate = asyncio.Lock()
         self._generation_last_submit_at = 0.0
         self._generation_unusual_until = 0.0
         self._generation_last_unusual_at: Optional[float] = None
         self._generation_last_unusual_rpc: Optional[str] = None
-        # WS stats
-        self._ws_connect_count = 0
-        self._ws_disconnect_count = 0
-        self._ws_connected_at: Optional[float] = None
-        self._ws_last_disconnect_at: Optional[float] = None
-        self._backend = backend if backend is not None else ExtensionFlowBackend(
-            self._send_extension, lambda: self.extension_connected,
-        )
-
-    def set_extension(self, ws):
-        """Called when extension connects via WS."""
-        self._extensions[ws] = {
-            "connected_at": time.time(),
-            "flow_key": None,
-            "token_captured_at": None,
-            "extension_version": None,
-            "flow_url_supported": None,
-            "unavailable_until": 0,
-        }
-        # A new unauthenticated profile must not displace an already
-        # authenticated extension. It becomes active after token_captured.
-        if self._extension_ws is None:
-            self._extension_ws = ws
-        self._ws_connect_count += 1
-        self._ws_connected_at = time.time()
-        logger.info(
-            "Extension connected #%d (%d active connection(s)); "
-            "waiting for extension_ready/token_captured to sync",
-            self._ws_connect_count,
-            len(self._extensions),
-        )
-
-    def clear_extension(self, ws=None):
-        """Called when extension disconnects."""
-        disconnected_ws = ws or self._extension_ws
-        if disconnected_ws is None:
-            return
-
-        self._extensions.pop(disconnected_ws, None)
-        self._ws_disconnect_count += 1
-        self._ws_last_disconnect_at = time.time()
-
-        # Only cancel requests that were sent through the disconnected socket.
-        # Requests owned by other Chrome profiles are still valid.
-        disconnected_pending = [
-            (req_id, self._pending.get(req_id))
-            for req_id, pending_ws in list(self._pending_ws.items())
-            if pending_ws is disconnected_ws
-        ]
-        for req_id, future in disconnected_pending:
-            if future is not None and not future.done():
-                future.set_exception(ConnectionError("Extension disconnected"))
-            self._pending_ws.pop(req_id, None)
-
-        if self._extension_ws is disconnected_ws:
-            self._extension_ws = self._select_extension(require_token=True)
-            if self._extension_ws is None:
-                self._extension_ws = self._select_extension(require_token=False)
-
-        active_session = self._extensions.get(self._extension_ws, {})
-        self._flow_key = active_session.get("flow_key")
-        logger.warning(
-            "Extension disconnected, cancelled %d owned request(s); "
-            "%d extension connection(s) remain",
-            len(disconnected_pending),
-            len(self._extensions),
-        )
-
-    def _extension_candidates(self, require_token: bool):
-        """Return usable extensions in preferred routing order."""
-        now = time.time()
-        candidates = []
-        for ws, session in self._extensions.items():
-            if require_token and not session.get("flow_key"):
-                continue
-            recency = (
-                session.get("token_captured_at")
-                if require_token
-                else session.get("connected_at")
-            )
-            candidates.append({
-                "ws": ws,
-                "available": session.get("unavailable_until", 0) <= now,
-                "active": ws is self._extension_ws,
-                "recency": recency or 0,
-            })
-
-        # Prefer an available active session, then the most recently
-        # authenticated alternatives. Temporarily unavailable sessions remain
-        # last-resort candidates so a single-profile setup can still recover.
-        candidates.sort(
-            key=lambda item: (
-                item["available"],
-                item["active"] and item["available"],
-                item["recency"],
-            ),
-            reverse=True,
-        )
-        return [item["ws"] for item in candidates]
-
-    def _select_extension(self, require_token: bool):
-        """Choose the preferred authenticated or connected extension."""
-        candidates = self._extension_candidates(require_token)
-        return candidates[0] if candidates else None
-
-    @staticmethod
-    def _should_failover(result: dict) -> bool:
-        """Return true for profile-local failures that another tab can solve."""
-        message = str(result.get("error") or result.get("data") or "").lower()
-        return any(marker in message for marker in (
-            "no_flow_key",
-            "no_flow_tab",
-            # Batch path: this profile's Flow tab cannot sign a request — it is
-            # signed out, still booting, or Chrome discarded it. Another
-            # profile's tab may be perfectly able to.
-            "no_at_token",
-            "flow_tab_discarded",
-            "no current window",
-            "extension not connected",
-            "extension disconnected",
-            "extension_switched",
-            "public_error_per_model_daily_quota_reached",
-            "public_error_user_quota_reached",
-        ))
-
-    def set_flow_key(self, key: str):
-        self._flow_key = key
-        if self._extension_ws in self._extensions:
-            self._extensions[self._extension_ws]["flow_key"] = key
-            self._extensions[self._extension_ws]["token_captured_at"] = time.time()
 
     @property
     def connected(self) -> bool:
@@ -213,7 +77,8 @@ class FlowClient:
 
     @property
     def extension_connected(self) -> bool:
-        return bool(self._extensions)
+        """Temporary read-only compatibility field; Flow extension is removed."""
+        return False
 
     @property
     def backend(self) -> FlowBackend:
@@ -255,171 +120,18 @@ class FlowClient:
 
     @property
     def ws_stats(self) -> dict:
-        uptime = None
-        if self._ws_connected_at and self.extension_connected:
-            uptime = int(time.time() - self._ws_connected_at)
-        versions = sorted({
-            str(session["extension_version"])
-            for session in self._extensions.values()
-            if session.get("extension_version")
-        })
-        flow_url_support = [
-            session.get("flow_url_supported")
-            for session in self._extensions.values()
-            if session.get("flow_url_supported") is not None
-        ]
+        """Temporary legacy status shape with no extension transport behind it."""
         return {
-            "connected": self.extension_connected,
-            "active_connections": len(self._extensions),
-            "authenticated_connections": sum(
-                1 for session in self._extensions.values()
-                if session.get("flow_key")
-            ),
-            "extension_versions": versions,
-            "flow_url_supported": all(flow_url_support) if flow_url_support else None,
-            "connects": self._ws_connect_count,
-            "disconnects": self._ws_disconnect_count,
-            "uptime_s": uptime,
+            "connected": False,
+            "active_connections": 0,
+            "authenticated_connections": 0,
+            "extension_versions": [],
+            "flow_url_supported": None,
+            "connects": 0,
+            "disconnects": 0,
+            "uptime_s": None,
+            "transport_removed": True,
         }
-
-    async def handle_message(self, data: dict, websocket=None):
-        """Handle incoming message from extension."""
-        if data.get("type") == "token_captured":
-            key = data.get("flowKey")
-            source_ws = websocket or self._extension_ws
-            if source_ws is not None and source_ws in self._extensions:
-                self._extensions[source_ws]["flow_key"] = key
-                self._extensions[source_ws]["token_captured_at"] = time.time()
-                self._extension_ws = source_ws
-            self._flow_key = key
-            logger.info("Flow key captured from extension")
-            asyncio.create_task(self._sync_tier())
-            return
-
-        if data.get("type") == "extension_ready":
-            source_ws = websocket or self._extension_ws
-            version = data.get("extensionVersion")
-            flow_supported = data.get("flowUrlSupported")
-            if source_ws is not None and source_ws in self._extensions:
-                self._extensions[source_ws]["extension_version"] = version
-                self._extensions[source_ws]["flow_url_supported"] = flow_supported
-            logger.info(
-                "Extension ready, flowKey=%s version=%s flow.google.com=%s",
-                "yes" if data.get("flowKeyPresent") else "no",
-                version or "unknown",
-                "yes" if flow_supported is True else "no" if flow_supported is False else "unknown",
-            )
-            asyncio.create_task(self._sync_tier())
-            return
-
-        if data.get("type") == "media_urls_refresh":
-            asyncio.create_task(self._refresh_media_urls(data.get("urls", [])))
-            return
-
-        if data.get("type") == "pong":
-            return
-
-        if data.get("type") == "ping":
-            # Respond to keepalive
-            target_ws = websocket or self._extension_ws
-            if target_ws:
-                await target_ws.send(json.dumps({"type": "pong"}))
-            return
-
-        # Response to a pending request
-        req_id = data.get("id")
-        if req_id and req_id in self._pending:
-            if not self._pending[req_id].done():
-                self._pending[req_id].set_result(data)
-            return
-
-    async def _sync_tier(self):
-        """Detect current tier from credits API and update all active projects."""
-        if getattr(self, '_sync_in_progress', False):
-            return
-        self._sync_in_progress = True
-        try:
-            result = await self.get_credits()
-            data = result.get("data", result)
-            tier = data.get("userPaygateTier", "PAYGATE_TIER_ONE")
-            logger.info("Syncing tier: %s", tier)
-
-            from agent.db import crud
-            projects = await crud.list_projects(status="ACTIVE")
-            for p in projects:
-                if p.get("user_paygate_tier") != tier:
-                    await crud.update_project(p["id"], user_paygate_tier=tier)
-                    logger.info("Updated project %s tier: %s -> %s",
-                                p["id"][:12], p.get("user_paygate_tier"), tier)
-        except Exception as e:
-            logger.warning("Failed to sync tier: %s", e)
-        finally:
-            self._sync_in_progress = False
-
-    _UUID_RE = __import__("re").compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
-    # flow-content.google is where the rewritten frontend serves media from;
-    # the other two are the pre-migration hosts, still seen on older media.
-    _SAFE_URL_RE = __import__("re").compile(
-        r'^https://(storage\.googleapis\.com|lh3\.googleusercontent\.com|flow-content\.google)/')
-
-    async def _refresh_media_urls(self, urls: list[dict]):
-        """Update scene/character URLs in DB from fresh TRPC-captured signed URLs.
-
-        Each entry: {mediaId: str, mediaType: 'image'|'video', url: str}
-        """
-        from agent.db import crud
-        from agent.services.event_bus import event_bus
-
-        updated = 0
-        for entry in urls:
-            media_id = entry.get("mediaId", "")
-            media_type = entry.get("mediaType", "")
-            url = entry.get("url", "")
-            if not media_id or not url:
-                continue
-            # Validate media_id is UUID and url is from trusted domains
-            if not self._UUID_RE.match(media_id):
-                logger.warning("Rejected invalid media_id: %s", media_id[:20])
-                continue
-            if not self._SAFE_URL_RE.match(url):
-                logger.warning("Rejected untrusted URL domain for media %s", media_id[:12])
-                continue
-            if media_type not in ("image", "video"):
-                continue
-
-            # Try matching against scenes (check both orientations)
-            scenes = await crud.list_scenes_by_media_id(media_id)
-            for scene in scenes:
-                updates = {}
-                if media_type == "image":
-                    # Update whichever orientation matches
-                    if scene.get("vertical_image_media_id") == media_id:
-                        updates["vertical_image_url"] = url
-                    if scene.get("horizontal_image_media_id") == media_id:
-                        updates["horizontal_image_url"] = url
-                elif media_type == "video":
-                    if scene.get("vertical_video_media_id") == media_id:
-                        updates["vertical_video_url"] = url
-                    if scene.get("horizontal_video_media_id") == media_id:
-                        updates["horizontal_video_url"] = url
-                    if scene.get("vertical_upscale_media_id") == media_id:
-                        updates["vertical_upscale_url"] = url
-                    if scene.get("horizontal_upscale_media_id") == media_id:
-                        updates["horizontal_upscale_url"] = url
-                if updates:
-                    await crud.update_scene(scene["id"], **updates)
-                    updated += 1
-
-            # Try matching against characters
-            chars = await crud.list_characters_by_media_id(media_id)
-            for char in chars:
-                if media_type == "image" and char.get("media_id") == media_id:
-                    await crud.update_character(char["id"], reference_image_url=url)
-                    updated += 1
-
-        if updated:
-            logger.info("Refreshed %d media URLs from TRPC intercept", updated)
-            await event_bus.emit("urls_refreshed", {"count": updated})
 
     async def refresh_project_urls(self, project_id: str) -> dict:
         """Re-sign every stored media url for a project.
@@ -477,73 +189,12 @@ class FlowClient:
         """Dispatch through the selected backend; retain the business API seam."""
         return await self._backend.execute(method, params, timeout)
 
-    async def _send_extension(self, method: str, params: dict, timeout: float = 300) -> dict:
-        """Send request to extension and wait for response.
-
-        Always returns a dict. On error, returns {"error": "<reason>"} — callers
-        must check result.get("error") or use _is_ws_error() before reading data.
-        Never raises; exceptions are caught and returned as error dicts.
-        """
-        if not self.extension_connected:
-            return {"error": "Extension not connected"}
-
-        # No profile needs a bearer any more: batchexecute authenticates in the
-        # page with the session cookie. Demanding a flow key here would reject
-        # every profile, because none on this path ever captures one.
-        extension_candidates = self._extension_candidates(require_token=False)
-        if not extension_candidates:
-            return {"error": "Extension not connected"}
-
-        last_result = {"error": "Extension not connected"}
-        for index, extension_ws in enumerate(extension_candidates):
-            if extension_ws not in self._extensions:
-                continue
-
-            self._extension_ws = extension_ws
-            self._flow_key = self._extensions[extension_ws].get("flow_key")
-            req_id = str(uuid.uuid4())
-            future = asyncio.get_running_loop().create_future()
-            self._pending[req_id] = future
-            self._pending_ws[req_id] = extension_ws
-
-            try:
-                await extension_ws.send(json.dumps({
-                    "id": req_id,
-                    "method": method,
-                    "params": params,
-                }))
-                last_result = await asyncio.wait_for(future, timeout=timeout)
-            except asyncio.TimeoutError:
-                last_result = {"error": f"Timeout ({timeout}s) waiting for {method}"}
-            except Exception as e:
-                last_result = {"error": str(e)}
-            finally:
-                self._pending.pop(req_id, None)
-                self._pending_ws.pop(req_id, None)
-
-            has_alternative = index + 1 < len(extension_candidates)
-            if self._should_failover(last_result) and has_alternative:
-                if extension_ws in self._extensions:
-                    self._extensions[extension_ws]["unavailable_until"] = (
-                        time.time() + 60
-                    )
-                logger.warning(
-                    "Extension profile unavailable for %s; retrying through "
-                    "another authenticated profile",
-                    method,
-                )
-                continue
-
-            return last_result
-
-        return last_result
-
     # ─── batchexecute transport ──────────────────────────────
     #
     # Flow's rewritten frontend signs every call with the session cookie plus a
-    # per-page `at` token, and a generate also carries a single-use reCAPTCHA.
-    # None of that can be replayed from here, so the agent builds the envelope
-    # and the extension runs it inside a signed-in flow.google.com tab.
+    # per-page `at` token, and generation also carries single-use browser proof.
+    # FlowClient builds the business envelope; BrowserFlowBackend executes it in
+    # the leased signed-in flow.google.com session.
 
     async def batch_rpc(self, rpcid: str, freq: str,
                         captcha_action: str | None = None,
@@ -1145,9 +796,6 @@ def _as_pending_operation(operation_id: str, error: str | None = None,
     return entry
 
 
-
-def _is_ws_error(result: dict) -> bool:
-    return bool(result.get("error")) or (isinstance(result.get("status"), int) and result["status"] >= 400)
 
 
 # Browser-only singleton. The first valid selection is immutable for the process.
