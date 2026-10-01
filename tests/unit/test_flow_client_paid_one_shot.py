@@ -228,3 +228,119 @@ async def test_backend_exception_becomes_fixed_unknown_without_retry_or_private_
     assert backend.paid_calls == ['request-exception']
     assert backend.read_calls == []
     assert 'private' not in str(result)
+
+
+def _paid_image_item(backend):
+    freq = backend.paid_calls[-1]['params']['freq']
+    return json.loads(json.loads(freq)[0][0][1])[1][0]
+
+
+@pytest.mark.asyncio
+async def test_one_shot_preserves_model_seed_character_refs_and_target_project():
+    backend = PaidBackend()
+    client = FlowClient(backend=backend)
+
+    result = await client.generate_images(
+        prompt='a cat',
+        project_id=PROJECT,
+        image_model='FUTURE_BANANA_3',
+        character_media_ids=['ref-a', 'ref-b'],
+        seed=101,
+        idempotency_key='payload-contract-1',
+        paid_authorization=AUTH,
+    )
+
+    assert result['status'] == 200
+    item = _paid_image_item(backend)
+    assert item[2] == [
+        ['ref-a', None, None, None, fb.REF_TYPE_IMAGE],
+        ['ref-b', None, None, None, fb.REF_TYPE_IMAGE],
+    ]
+    assert item[3] == 101
+    assert item[5] == 'FUTURE_BANANA_3'
+    assert item[7][5] == PROJECT
+    assert backend.paid_calls[-1]['params']['projectId'] == PROJECT
+    assert backend.paid_calls[-1]['params']['captchaAction'] == fb.CAPTCHA_IMAGE
+
+
+@pytest.mark.asyncio
+async def test_edit_one_shot_preserves_base_image_and_deduplicates_reference():
+    backend = PaidBackend()
+    client = FlowClient(backend=backend)
+
+    result = await client.edit_image(
+        prompt='redraw',
+        source_media_id='src-1',
+        project_id=PROJECT,
+        character_media_ids=['src-1', 'ref-a'],
+        idempotency_key='edit-contract-1',
+        paid_authorization=AUTH,
+    )
+
+    assert result['status'] == 200
+    item = _paid_image_item(backend)
+    assert item[2] == [
+        ['src-1', None, None, None, fb.BASE_TYPE_IMAGE],
+        ['ref-a', None, None, None, fb.REF_TYPE_IMAGE],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_one_shot_keeps_legacy_pinned_project_fallback(monkeypatch):
+    import agent.services.flow_client as module
+
+    backend = PaidBackend()
+    client = FlowClient(backend=backend)
+    monkeypatch.setattr(module, 'FLOW_PROJECT_ID', PROJECT)
+
+    result = await client.generate_images(
+        prompt='a cat',
+        project_id='0',
+        idempotency_key='fallback-project-1',
+        paid_authorization=AUTH,
+    )
+
+    assert result['status'] == 200
+    assert backend.paid_calls[-1]['params']['projectId'] == PROJECT
+    assert _paid_image_item(backend)[7][5] == PROJECT
+
+
+@pytest.mark.asyncio
+async def test_one_shot_without_any_project_fails_before_paid_submission(monkeypatch):
+    import agent.services.flow_client as module
+
+    backend = PaidBackend()
+    client = FlowClient(backend=backend)
+    monkeypatch.setattr(module, 'FLOW_PROJECT_ID', '')
+
+    result = await client.generate_images(
+        prompt='a cat',
+        project_id='0',
+        idempotency_key='missing-project-1',
+        paid_authorization=AUTH,
+    )
+
+    assert 'NO_FLOW_PROJECT' in result['error']
+    assert backend.paid_calls == []
+
+
+@pytest.mark.asyncio
+async def test_known_not_submitted_paid_error_is_returned_once_without_read_or_retry():
+    rejected = {
+        'status': 400,
+        'error': 'PUBLIC_ERROR_MODEL_ACCESS_DENIED',
+        'effect': 'not_submitted',
+    }
+    backend = PaidBackend(paid_result=rejected)
+    client = FlowClient(backend=backend)
+
+    result = await client.generate_images(
+        prompt='a cat',
+        project_id=PROJECT,
+        idempotency_key='rejected-1',
+        paid_authorization=AUTH,
+    )
+
+    assert result == rejected
+    assert len(backend.paid_calls) == 1
+    assert backend.read_calls == []
