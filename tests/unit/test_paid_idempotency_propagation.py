@@ -79,7 +79,7 @@ async def test_unknown_or_reconciliation_required_is_terminal_for_auto_retry(
         req["id"],
         {
             "status": "FAILED",
-            "error_message": result["error"],
+            "error_message": "PAID_RECONCILIATION_REQUIRED",
         },
     )]
     assert failed == [req["id"]]
