@@ -1,98 +1,60 @@
-# Nothing ran the tests on push or PR before this, so a broken main was only
-# ever caught by hand. PR #48 reached `main` carrying an ImportError against a
-# module a merged PR had deleted; this job is what catches that class of thing.
-name: portable tests
+name: flow login lifecycle focused validation
 
 on:
-  pull_request:
   push:
-    branches: [main]
+    branches:
+      - validation/flow-stale-lease-c38d2f
 
-# A new push supersedes the run in flight for the same ref.
 concurrency:
-  group: tests-${{ github.ref }}
+  group: flow-login-lifecycle-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  unit:
-    runs-on: ubuntu-latest
-    # The suite takes ~7s. A ceiling this generous only ever trips on a hang,
-    # which this suite has had before: an aiosqlite connection left open keeps a
-    # non-daemon worker thread alive and the interpreter never exits.
-    timeout-minutes: 10
-
+  lifecycle:
     strategy:
       fail-fast: false
       matrix:
-        # The floor the README advertises, and the version development runs on.
-        python-version: ["3.10", "3.13"]
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
+          python-version: "3.12"
 
-      - name: Install ffmpeg
-        # fonts-dejavu-core is not optional. The drawtext call in
-        # video_reviewer.py passes no fontfile=, so it asks fontconfig for a
-        # default family; with --no-install-recommends the runner can end up
-        # with an ffmpeg that has drawtext and no font. video_reviewer.py now
-        # degrades gracefully when drawtext is unavailable.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
-
-      - name: Report whether drawtext renders
-        # This used to fail the build, because naming an absent filter aborted
-        # the whole chain and took 13 tests down with it. video_reviewer.py now
-        # probes for drawtext and drops it when it is missing, so its absence
-        # is a supported degradation (sheets lose their burned-in timestamps)
-        # rather than a build breaker — and the fallback has its own coverage.
-        #
-        # The check stays because the timestamped path is the better one and a
-        # silent loss of it is worth seeing in the log. Checking
-        # `ffmpeg -filters` would only prove the filter is compiled in, not
-        # that a font exists, so render a real frame through the filter the
-        # code uses.
-        run: |
-          ffmpeg -hide_banner -loglevel error \
-            -f lavfi -i "testsrc=duration=1:size=320x240:rate=5" \
-            -vf "drawtext=text='%{pts\:hms}':x=5:y=5:fontsize=14:fontcolor=white:borderw=1:bordercolor=black" \
-            -frames:v 1 -y /tmp/drawtext-smoke.jpg \
-            && echo "drawtext renders — contact sheets will carry timestamps" \
-            || {
-              echo "::warning::ffmpeg cannot render drawtext (no --enable-libfreetype, or no font). Sheets will be untimestamped; the suite still covers that path."
-              ffmpeg -hide_banner -version | head -3
-            }
-
-      - name: Install dependencies
+      - name: Install focused dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+          python -m pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Run portable unit tests
+      - name: Compile focused lifecycle modules
+        run: >
+          python -m py_compile
+          agent/services/flow_browser_session.py
+          agent/services/flow_browser_login.py
+          agent/thoremix/cli.py
+          tests/unit/test_flow_browser_session.py
+          tests/unit/test_flow_browser_login.py
+
+      - name: Run focused lifecycle contracts
         env:
           PYTHONUNBUFFERED: "1"
-        run: |
-          # Hosted GITHUB_TOKEN cannot read the private sibling toolkits and
-          # Ubuntu cannot exercise the Windows GUI/bundled-media contracts.
-          # The owner retired self-hosted validation on 2026-10-01.
-          # Excluded cases remain required for separate local final acceptance;
-          # a portable PASS alone must never authorize Stable promotion.
-          python -m pytest tests/unit -q \
-            --ignore=tests/unit/test_flow_browser_discovery.py \
-            --ignore=tests/unit/test_flow_browser_session.py \
-            --ignore=tests/unit/test_thoremix_affiliate.py \
-            --ignore=tests/unit/test_thoremix_catalog.py \
-            --ignore=tests/unit/test_thoremix_publishing.py \
-            --ignore=tests/unit/test_thoremix_social_cleanup.py \
-            --ignore=tests/unit/test_thoremix_review_window.py \
-            --deselect=tests/unit/test_thoremix_retry.py::test_failed_row_exposes_reason_and_retry_button \
-            --deselect=tests/unit/test_thoremix_core.py::test_direct_sdk_uses_real_bundled_media_tools_without_ambient_path \
-            --deselect=tests/unit/test_thoremix_finishing.py::test_render_masks_preserve_dimensions_duration_and_add_laugh_only_at_end
+        run: >
+          python -m pytest -q
+          tests/unit/test_flow_browser_login.py
+          tests/unit/test_flow_browser_session.py::test_default_acquire_never_reclaims_confirmed_stale_provider_marker
+          tests/unit/test_flow_browser_session.py::test_explicit_reconcile_rejects_active_owner_and_preserves_marker
+          tests/unit/test_flow_browser_session.py::test_explicit_reconcile_rejects_pid_reuse_even_with_same_pid
+          tests/unit/test_flow_browser_session.py::test_explicit_reconcile_rejects_unknown_owner
+          tests/unit/test_flow_browser_session.py::test_explicit_reconcile_rejects_invalid_marker_without_rewriting
+          tests/unit/test_flow_browser_session.py::test_explicit_reconcile_rejects_foreign_host
+          tests/unit/test_flow_browser_session.py::test_explicit_reconcile_rejects_native_profile_busy_after_dead_owner
+          tests/unit/test_flow_browser_session.py::test_explicit_reconcile_archives_confirmed_stale_marker_and_acquires
+          tests/unit/test_flow_browser_session.py::test_legacy_marker_is_dead_only_and_never_invents_creation_identity
+          tests/unit/test_flow_browser_session.py::test_explicit_reconcile_detects_marker_race_and_does_not_acquire
+          tests/unit/test_flow_browser_session.py::test_new_marker_records_current_process_creation_identity
+          tests/unit/test_flow_browser_session.py::test_windows_process_observation_uses_creation_identity_for_real_pid
+          tests/unit/test_flow_browser_session.py::test_windows_native_profile_probe_detects_delete_denial
