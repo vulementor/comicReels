@@ -72,3 +72,9 @@ def test_worker_docstring_does_not_describe_retired_extension_transport():
     worker = text('agent/worker/processor.py')
     assert 'via Chrome extension' not in worker
     assert 'browser' in worker.splitlines()[0].lower()
+
+
+def test_flow_batch_transport_description_is_browser_only():
+    source = text('agent/services/flow_batch.py')
+    assert 'job of the Chrome extension' not in source
+    assert 'browser' in source.lower()
