@@ -42,10 +42,9 @@ class FlowClient:
         # It is never populated and cannot route transport.
         self._flow_key = None
 
-        # Media/poll observations are disposable caches. Operation -> project
-        # ownership is durable in the browser state store and is never kept here.
+        # Media ids are disposable hints only. Operation -> project ownership
+        # and restart correctness live in durable browser state.
         self._operation_media: dict[str, str] = {}
-        self._operation_polls: dict[str, int] = {}
 
         # Existing business-level generation guards remain intact. They do not
         # authorize a paid browser effect; the paid gate remains separate.
@@ -623,25 +622,57 @@ class FlowClient:
         return {"status": 200, "data": {"operations": out}}
 
     async def _poll_batch_operation(self, operation_id: str) -> dict:
-        media_id = self._operation_media.get(operation_id)
+        """Poll from durable binding; RAM media cache is optimization only."""
+        try:
+            project_id = await self._operation_project_id(operation_id)
+        except Exception as error:
+            return _as_pending_operation(operation_id, error=str(error))
+
         complaint = None
+        cached_media = self._operation_media.get(operation_id)
 
+        # Fast path only: a cached media id may prove SUCCESS, but its absence,
+        # staleness or incomplete URL can never prevent durable rediscovery.
+        if cached_media:
+            try:
+                cached_urls = await self._batch_media_urls(
+                    cached_media, project_id=project_id,
+                )
+                if cached_urls.video:
+                    return {
+                        "operation": {
+                            "name": operation_id,
+                            "metadata": {
+                                "video": {
+                                    "mediaId": cached_media,
+                                    "fifeUrl": cached_urls.video,
+                                },
+                            },
+                        },
+                        "status": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                    }
+            except Exception as error:
+                logger.debug(
+                    "Operation %s cached media hint unreadable (%s); rediscovering",
+                    operation_id[:20], error,
+                )
+
+        media_id, complaint = await self._find_operation_media(
+            operation_id, project_id=project_id,
+        )
         if not media_id:
-            media_id, complaint = await self._find_operation_media(operation_id)
-            if not media_id:
-                return _as_pending_operation(operation_id, error=complaint)
-            self._operation_media[operation_id] = media_id
+            return _as_pending_operation(operation_id, error=complaint)
 
-        urls = await self._batch_media_urls(media_id)
+        self._operation_media[operation_id] = media_id
+        try:
+            urls = await self._batch_media_urls(media_id, project_id=project_id)
+        except Exception as error:
+            return _as_pending_operation(operation_id, error=str(error), media_id=media_id)
+
         if not urls.video:
-            # The id landed but the clip is still being written; downloading
-            # now would save the poster still instead of the video.
+            # The listing has the id but the clip is still being written.
             return _as_pending_operation(operation_id, error=complaint, media_id=media_id)
 
-        # The media id stays cached rather than being cleared here: a batch
-        # with several operations re-polls the finished ones alongside the
-        # pending ones, and a cleared entry would report them PENDING again.
-        # Growth is bounded by _remember_operation.
         return {
             "operation": {
                 "name": operation_id,
@@ -650,24 +681,22 @@ class FlowClient:
             "status": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
         }
 
-    async def _find_operation_media(self, operation_id: str) -> tuple[str | None, str | None]:
-        """Ask the operation how it is going, then the listing where its media is.
+    async def _find_operation_media(
+        self, operation_id: str, *, project_id: str | None = None,
+    ) -> tuple[str | None, str | None]:
+        """Read current operation diagnostics and always consult its project listing.
 
-        The listing is the authority — the poll has been seen to never report a
-        finished job the listing already knows about — but it is also the
-        expensive call, so it is only consulted when the poll says something
-        happened, when the poll is unreadable, or every third round regardless.
+        Durable operation/project binding is the authority. The operation poll is
+        diagnostic only; every round may discover media from the current listing,
+        so restart with empty RAM caches cannot delay correctness.
         """
-        rounds = self._operation_polls.get(operation_id, 0) + 1
-        self._operation_polls[operation_id] = rounds
-
-        try:
-            project_id = await self._operation_project_id(operation_id)
-        except Exception as error:
-            return None, str(error)
+        if project_id is None:
+            try:
+                project_id = await self._operation_project_id(operation_id)
+            except Exception as error:
+                return None, str(error)
 
         complaint = None
-        worth_looking = rounds % 3 == 0
         try:
             operation = fb.read_operation(
                 await self._batch_payload(
@@ -676,16 +705,14 @@ class FlowClient:
             complaint = operation.error
             if operation.project_id and operation.project_id != project_id:
                 raise fb.FlowBatchError("OPERATION_BINDING_CONFLICT")
-            worth_looking = worth_looking or operation.done or operation.complained
-        except Exception as e:
-            # An operation that has decayed to a bare id still shows up in the
-            # listing, so a failed poll is a reason to look there, not to stop.
-            logger.debug("Operation %s poll unreadable (%s), trying the listing",
-                         operation_id[:20], e)
-            worth_looking = True
+        except Exception as error:
+            # A decayed/unreadable operation still remains discoverable in the
+            # durable project's listing, so read failure never blocks discovery.
+            logger.debug(
+                "Operation %s poll unreadable (%s); consulting durable project listing",
+                operation_id[:20], error,
+            )
 
-        if not worth_looking:
-            return None, complaint
         return await self._media_id_for(operation_id, project_id), complaint
 
     async def _media_id_for(self, operation_id: str, project_id: str) -> str | None:
@@ -713,9 +740,13 @@ class FlowClient:
                 media_id = None
         return media_id
 
-    async def _batch_media_urls(self, media_id: str) -> "fb.MediaUrls":
+    async def _batch_media_urls(
+        self, media_id: str, project_id: str | None = None,
+    ) -> "fb.MediaUrls":
         payload = await self._batch_payload(
-            fb.RPC_MEDIA, fb.media_request(media_id), timeout=60)
+            fb.RPC_MEDIA, fb.media_request(media_id), timeout=60,
+            project_id=project_id,
+        )
         return fb.read_media_urls(payload, media_id)
 
     async def get_credits(self) -> dict:
