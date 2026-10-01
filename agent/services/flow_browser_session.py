@@ -1,4 +1,4 @@
-"""Opt-in, read-only Flow session foundation. Extension remains the active transport.
+"""Browser-only persistent Flow session foundation.
 
 Run on one owning thread: both Camoufox and the pinned KBS semantic API are synchronous.
 Authentication requires an explicit, live-evidence-backed probe; absent evidence is UNKNOWN.
