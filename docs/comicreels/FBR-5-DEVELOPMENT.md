@@ -1898,3 +1898,193 @@ and confirm:
 
 Then record any remaining source-only validation obligations for 9e. Do not enter
 Phase 3 yet.
+
+
+## Browser-only Task 9d — post-integration source audit
+
+Date: 2026-10-01.
+Status: **AUDIT COMPLETE; SOURCE CLOSURE NOT READY; NOT VALIDATED**.
+
+Audited integrated branch head:
+`6f90784cbe920576e2ceee979b53bc3fcd742745`.
+
+Current-main ancestor remains:
+`5aecee7ef007b34e1ec732a3a382c80ff393546c`.
+
+KBS pin remains exact:
+`b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+
+Owner also reported a separate live canonical KAT PASS at `b89c2b71`.
+That evidence is explicitly **not** a PASS for this browser-only branch and does
+not satisfy any Phase 3 browser validation gate.
+
+### Confirmed-good source boundaries
+
+- Backend selection is browser-only. Explicit `COMICREELS_FLOW_BACKEND=extension`
+  fails with `FLOW_EXTENSION_BACKEND_REMOVED`; there is no
+  `ExtensionFlowBackend`.
+- Normal `BrowserFlowBackend()` construction keeps
+  `paid_dispatch_enabled=False`.
+- The only explicit paid authorization source currently implemented is the
+  isolated one-shot `flow_paid_validation.py` seam; normal HTTP/startup does
+  not import it or manufacture authorization.
+- Paid image gate writes durable intent before browser fetch, persists receipt
+  before business success, and projects ambiguous post-submit outcomes as
+  `PAID_RECONCILIATION_REQUIRED/effect=unknown`.
+- Paid image replay of SUBMITTING/UNKNOWN is blocked.
+- Browser session requires the existing profile, fresh authentication evidence
+  and held lease; profile replacement/credential persistence is not introduced.
+- Operation polling itself uses durable operation→project binding and no
+  process-local operation/media correctness cache.
+- Root health/backend-status/dashboard Flow status are browser-only and keep
+  readiness, reconciliation and paid lock independent.
+- `/ws/dashboard` remains a separate event channel.
+- Current main/PR #12 ancestry and the eight-file preservation set survived
+  Task 9c integration.
+
+### Source-closure blockers
+
+#### B1 — worker paid-lock check disables restart/reconciliation work
+
+`WorkerController.start()` returns immediately whenever the normal backend has
+`paid_dispatch_enabled=False`.
+
+This conflicts with the plan's Task 2/Review Focus contract that queue processing
+continues under browser-only mode and that existing pre-cutover jobs remain usable.
+A saved remote operation can be resumed read-only by
+`OperationService._resume_saved_operation()`, but the worker never reaches that
+code while normal paid dispatch is locked.
+
+Required repair: let the worker lifecycle run independently from the paid switch.
+Keep paid authorization at the actual new-effect submit boundary. Existing saved
+operations must remain pollable/reconcilable while new paid submits stay locked.
+
+#### B2 — new video/Omni paid submits have no browser paid-dispatch boundary
+
+`FlowClient.generate_video()` and all Omni submit modes still call
+`_batch_payload(..., CAPTCHA_VIDEO)`, which goes through generic
+`BrowserFlowBackend.execute()`.
+
+The generic browser contract allowlist intentionally excludes all paid video RPCs,
+so these production routes currently resolve to `RPC_NOT_ALLOWED`. There is no
+video equivalent of the paid image intent/authorization/receipt gate.
+
+This is not a request for a new product feature: video generation, R2V/Omni and
+pipeline behavior are existing FlowKit business capabilities that the cutover
+contract says must remain transport-independent.
+
+Required repair before source closure: route the already-supported video submit
+modes through a dedicated browser paid boundary with the same invariants as paid
+image:
+- durable business idempotency/intent before effect;
+- explicit authorization, disabled in normal source;
+- no generic CAPTCHA/effect retry;
+- completed/unknown/not_submitted effect classification;
+- durable receipt sufficient for restart/polling;
+- no extension fallback.
+
+Do not broaden this repair into unsupported video upscale or unrelated model work.
+
+#### B3 — Omni operation binding calls omit `await`
+
+Both `_submit_omni_frame_video()` and the operation-receipt branch of
+`generate_omni_flash_video()` call:
+
+`client._remember_operation(operation.operation_id, pid)`
+
+without `await`, even though `_remember_operation()` is async.
+
+If the submit path were reachable, the durable operation→project mapping would
+not be persisted, making subsequent browser polling/restart fail with
+`OPERATION_BINDING_REQUIRED`.
+
+Required repair: await the durable bind and preserve fail-closed UNKNOWN/no-resend
+semantics if binding cannot be committed after a remote submit.
+
+#### B4 — direct session-project helper bypasses the durable browser create path
+
+`flow_project_session.ensure_session_project()` calls
+`client.create_project()`. `FlowClient.create_project()` uses generic raw
+`RPC_CREATE_PROJECT`.
+
+The browser driver deliberately returns
+`BROWSER_CAPABILITY_NOT_IMPLEMENTED` for raw create because safe project creation
+belongs to `BrowserFlowBackend.ensure_session_project()`, which journals the
+create intent/receipt.
+
+Therefore project-less direct Flow endpoints and
+`/session-project/rotate` cannot use the browser driver's implemented durable
+create/reuse path.
+
+Required repair: route the business/session helper through
+`client.backend.ensure_session_project()` (via a stable FlowClient method), not
+through raw generic create. Preserve the existing external response shape and
+session-project convenience state without creating a second remote-effect path.
+
+#### B5 — project-scoped media reads lose project scope in two restart paths
+
+Two current read paths know the correct project id but discard it:
+
+1. `FlowClient.refresh_project_urls(project_id)` calls
+   `_batch_media_urls(media_id)` without `project_id`.
+2. Omni workflow polling resolves `resolved_project_id` but calls
+   `client.get_media(media_id)` without project scope.
+
+`RPC_MEDIA` then falls back to whichever project is saved/active in the browser
+state. After restart or multi-project activity this can read against the wrong
+project.
+
+Required repair: make `get_media` accept an optional project scope, propagate
+the known project id through refresh/Omni/paid-receipt read paths, and keep
+unscoped behavior only for callers that genuinely have no project context.
+
+### Required cleanup before closure, not capability expansion
+
+#### C1 — live worker still contains extension-era transient retry strings
+
+`_handle_failure()` still has a reachable branch matching
+“extension reconnected/disconnected/not connected”. It is obsolete in a
+browser-only runtime and contradicts the Task 8 source-retirement claim.
+
+Remove this compatibility branch. Do not replace it with browser effect retry.
+Browser readiness failures should follow fixed browser codes and must never turn
+an uncertain effect into a resend.
+
+#### C2 — KBS requirements header still says FBR-0 shadow/optional browser
+
+The pin itself is correct and exact, but the comments in
+`requirements-flow-browser.txt` still describe an “Optional FBR-0 shadow
+browser”. Update wording to browser-only/current authority without changing the
+KBS SHA.
+
+### Non-blockers / intentionally deferred behavior
+
+- Normal production paid image dispatch being locked is **expected**, not a
+  blocker. Source closure is for a validation-ready branch, not implicit
+  production authorization.
+- Normal HTTP generation routes not manufacturing the paid validation capability
+  is **correct**.
+- `RECONCILIATION_REQUIRED` not making safe read transport “down” is deliberate.
+- Dashboard event WebSocket is independent and remains intentionally present.
+- Explicitly unsupported video-upscale behavior is not expanded by this audit.
+- No KAT result, including owner-reported canonical PASS `b89c2b71`, is used as
+  browser-branch acceptance evidence.
+
+### Source-closure readiness verdict
+
+**NOT READY FOR TASK 9e / PHASE 3.**
+
+The five blockers above are source correctness gaps inside the already-approved
+browser-only cutover scope. They must be repaired on GitHub first, with authored
+regression coverage, before the final checkpoint can truthfully state source
+completion.
+
+Recommended next short sub-task:
+**Task 9d-repair-1 — worker/resume boundary.**
+Remove the paid-switch early return from worker startup, preserve read-only resume
+of saved operations while paid dispatch is locked, remove the obsolete extension
+retry branch, and author source regression coverage. Do not yet implement the
+video paid bridge in the same sub-task.
+
+Tests/builds executed during 9d audit: **none**. No browser/profile launch,
+paid/CAPTCHA call, EXE/Stable/ThoRemix runtime or Remote Desktop action occurred.
