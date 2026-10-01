@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "source_validated_base": "f2a98ca2c623304f5952792139175d53127913b4",
+  "dependencies": {
+    "krp": {
+      "repository": "https://github.com/vulementor/kabin_reel_poster.git",
+      "commit": "1a0d6d0004cbe522483890d87743522243221719",
+      "package": "kabin_reel_poster"
+    },
+    "gpt_fullproxy": {
+      "repository": "https://github.com/vulementor/gpt_fullproxy.git",
+      "commit": "412c3642ef0065b256a6bb2befe22a043a839d05",
+      "package": "gpt_fullproxy"
+    },
+    "kbs": {
+      "repository": "https://github.com/vulementor/kabin_browser_semantic.git",
+      "commit": "b539e9820d433c8c9d667b4e5d9007b6a80b8abd",
+      "package": "kabin_browser_semantic"
+    },
+    "kat": {
+      "repository": "https://github.com/vulementor/kabin_affiliate_toolkit.git",
+      "commit": "b89c2b71e6d81b82c24e41bf185d53f0f5682708",
+      "package": "kabin_affiliate_toolkit"
+    }
+  }
+}
