@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -88,6 +89,10 @@ class FlowBrowserDriver:
         self._store = BrowserStateStore(Path(state_path), owner_key)
         self._factory = session_factory or FlowBrowserSessionProvider
         self._provider = None
+        self._clock = time.monotonic
+        self._sleep = time.sleep
+        self._project_hydration_timeout_s = 15.0
+        self._project_hydration_poll_s = 0.25
         self._thread = None
         self._phase = 'new'
         self._error = None
@@ -244,25 +249,69 @@ class FlowBrowserDriver:
             report['error'] = _public_error(error, 'DRIVER_OBSERVATION_FAILED')
         return report
 
+    @staticmethod
+    def _exact_project_url(url: str, project_id: str) -> bool:
+        """Match only the normalized pinned Flow project URL, never a redirect."""
+        try:
+            location = urlsplit(url)
+            path = location.path[:-1] if location.path.endswith('/') else location.path
+            return bool(
+                location.scheme == 'https'
+                and location.hostname == 'flow.google.com'
+                and location.port in {None, 443}
+                and not location.username
+                and not location.password
+                and path == f'/project/{project_id}'
+                and not location.query
+                and not location.fragment
+            )
+        except Exception:
+            return False
+
+    def _wait_for_project_session(self, page, project_id: str):
+        """Wait for fresh auth/session evidence after project navigation.
+
+        Every successful return passes through _require_session(), so a cached
+        pre-navigation auth observation can never authorize project reads.
+        Redirects and project mismatches fail immediately; transient hydration
+        may retry only until the bounded deadline.
+        """
+        deadline = self._clock() + self._project_hydration_timeout_s
+        while True:
+            if not self._exact_project_url(getattr(page, 'url', ''), project_id):
+                raise BrowserCommandError('PROJECT_OPEN_FAILED')
+            try:
+                current = self._require_session()
+            except BrowserCommandError as error:
+                if str(error) != 'BROWSER_NOT_READY':
+                    raise BrowserCommandError('PROJECT_OPEN_FAILED') from None
+                if self._clock() >= deadline:
+                    raise
+                self._sleep(self._project_hydration_poll_s)
+                continue
+            if current is not page:
+                raise BrowserCommandError('SESSION_UNVERIFIED')
+            if not self._exact_project_url(getattr(page, 'url', ''), project_id):
+                raise BrowserCommandError('PROJECT_OPEN_FAILED')
+            return page
+
     def _open_project_page(self, project_id: str):
         project_id = uuid_value(project_id)
         page = self._require_session()
+        if self._exact_project_url(getattr(page, 'url', ''), project_id):
+            # _require_session() above is a fresh auth/session observation.
+            return page
         try:
-            page.goto(f'https://flow.google.com/project/{project_id}',
-                      wait_until='domcontentloaded', timeout=60_000)
-            location = urlsplit(page.url)
-            if (location.scheme != 'https' or location.hostname != 'flow.google.com'
-                    or location.port not in {None, 443}
-                    or location.username or location.password
-                    or location.path != f'/project/{project_id}'):
-                raise ValueError
-            # Navigation can change identity/session state. Require fresh evidence.
-            self._require_session()
+            page.goto(
+                f'https://flow.google.com/project/{project_id}',
+                wait_until='domcontentloaded',
+                timeout=60_000,
+            )
+            return self._wait_for_project_session(page, project_id)
         except BrowserCommandError:
             raise
         except Exception:
             raise BrowserCommandError('PROJECT_OPEN_FAILED') from None
-        return page
 
     def open_project(self, project_id: str) -> dict:
         self._check_thread()
