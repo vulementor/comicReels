@@ -2811,3 +2811,95 @@ Perform the final source-closure handoff only:
 5. declare **SOURCE_COMPLETE; NOT VALIDATED**.
 
 Only after 9e may Phase 3 validation begin.
+
+
+## Task 9e — final source closure handoff
+
+Date: 2026-10-01.
+Status: **SOURCE_COMPLETE; NOT VALIDATED**.
+
+### Exact source/rollback/dependency pins
+
+- **Validation source cut:** `4bb11a676766b418a0317b1ae24e509a5ba0936d`.
+  This is the exact browser-only runtime/source implementation revision audited
+  before closure metadata commits.
+- **Rollback source revision:** `5aecee7ef007b34e1ec732a3a382c80ff393546c`.
+  This is the then-current/current `main` revision integrated as an ancestor
+  during Task 9c and left untouched throughout the browser-only repairs.
+- **KBS canonical pin:**
+  `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+- Closure metadata commits after the runtime source cut:
+  - CHECKPOINTS publication: `d9df0487d1c1e1307cfa51bf7f72ed976d226422`;
+  - Task 9 plan checklist closure: `94bffff497281d8013188ba5b72214fed8034b28`.
+  These commits change documentation only and do not alter runtime source.
+
+### Final ancestry/integration state
+
+Immediately before Task 9e metadata:
+- current `main` remained
+  `5aecee7ef007b34e1ec732a3a382c80ff393546c`;
+- source cut `4bb11a...` compared against that main was **278 commits ahead /
+  0 behind** with merge-base exactly `5aecee7...`.
+
+Therefore the integrated browser branch contains current main, PR #12 staged-KAT
+history and post-PR12 fixes without overwriting them.
+
+### Final source audit verdict
+
+No remaining source blocker was found inside the approved browser-only cutover
+scope.
+
+Confirmed at the source cut:
+- explicit extension Flow backend is rejected and `ExtensionFlowBackend` is absent;
+- browser backend is the sole production Flow transport;
+- default image paid dispatch is locked;
+- default video paid dispatch is separately locked;
+- generic browser execute does not bypass dedicated paid gates;
+- existing Veo/Omni paid video modes use `submit_paid_video()`;
+- Veo/Omni no longer use generic CAPTCHA-video `_batch_payload` submit;
+- paid image/video gates journal intent before effect and reuse only verified
+  completed receipts;
+- UNKNOWN/SUBMITTING/reconciliation-required effects are not automatically resent;
+- worker lifecycle remains alive under paid lock for read-only resume/poll;
+- worker uses durable DB request id as paid idempotency key;
+- saved remote operations are re-polled before any new submit;
+- operation receipt/project binding is awaited before success;
+- post-submit binding failure is `effect=unknown`;
+- durable paid-video operation receipt can recover operation→project binding;
+- session-project create/reuse goes through the browser backend durable journal;
+- known project context is retained through media reads;
+- normal HTTP/worker startup cannot manufacture image/video validation authorization;
+- image and video paid validation capabilities are separate, explicit and one-shot;
+- dashboard WebSocket remains independent from Flow transport;
+- runtime/package/operator docs contain no active extension Flow transport path.
+
+### Validation boundary
+
+The development phase intentionally did **not** execute tests or runtime
+acceptance. All authored regressions are source specifications until Phase 3.
+
+Required Phase 3 order:
+1. compile/import + focused source/unit contracts;
+2. full pytest;
+3. dashboard TypeScript/build/lint;
+4. browser read-only persistent-profile/lease/session/project/poll/media/restart
+   validation;
+5. explicit isolated paid validation, only with approved one-shot authorization,
+   reconciling any UNKNOWN rather than resending;
+6. canonical KAT/ThoRemix integration validation, including owner-reported
+   canonical KAT `b89c2b71` as separate integration evidence;
+7. build EXE/Stable only after source test gates are green;
+8. final installed acceptance, with Remote Desktop Commander allowed only at that
+   final stage under launch → release → inspect.
+
+Any Phase 3 defect must return to GitHub source for a source fix before rebuild or
+Stable retry.
+
+### Task 9e verdict
+
+**SOURCE_COMPLETE; NOT VALIDATED.**
+
+Task 1 through Task 9 source obligations are closed. Phase 3 may begin on the
+pinned source cut/closure branch. No runtime PASS is implied by this ledger entry.
+
+Tests/builds/runtime actions executed in Task 9e: **none**.
