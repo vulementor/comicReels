@@ -1,4 +1,4 @@
-"""Selected transport status, separate from legacy extension diagnostics."""
+"""Browser transport status and preflight projection."""
 from fastapi import APIRouter, Response
 
 from agent.services.flow_backend_status import read_backend_status
