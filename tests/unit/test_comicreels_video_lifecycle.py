@@ -48,7 +48,9 @@ async def comic(tmp_path, monkeypatch):
     calls = {"uploads": [], "submits": []}
 
     async def status():
-        return {"connected": True, "flow_project_id": FLOW_PROJECT, "transport": "batch",
+        return {"connected": True, "flow_project_id": FLOW_PROJECT, "transport": "browser",
+                "backend_ready": True, "browser_session_ready": True,
+                "authentication": "authenticated", "lease_held": True,
                 "session_project": {"project_id": "other-session", "active": True}}
 
     async def upload(body):
@@ -62,7 +64,7 @@ async def comic(tmp_path, monkeypatch):
         return {"operations": [{"operation": {"name": "op-1"}}],
                 "flowkitPolling": {"mode": "batch_operation", "project_id": body.project_id}}
 
-    monkeypatch.setattr(api, "flowkit_extension_status", status)
+    monkeypatch.setattr(api, "flowkit_status", status)
     monkeypatch.setattr(api, "flowkit_upload_image", upload)
     monkeypatch.setattr(api, "flowkit_generate_video", generate)
     monkeypatch.setattr(api, "flowkit_generate_video_refs", generate)
@@ -185,7 +187,7 @@ async def test_status_uses_flowkit_and_retains_ai_availability(comic, monkeypatc
     assert result["flow"]["ready"] is True
     assert result["flow"]["project_id"] == FLOW_PROJECT
     assert result["ai"]["configured"] is True
-    assert (await api.flow_preflight())["flowkit"]["transport"] == "batch"
+    assert (await api.flow_preflight())["flowkit"]["transport"] == "browser"
 
 
 async def test_three_references_use_one_flowkit_project_and_exact_script(comic):
