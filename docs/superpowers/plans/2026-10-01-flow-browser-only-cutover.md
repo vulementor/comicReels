@@ -61,11 +61,11 @@
 - Consumes: browser-only singleton from Task 1.
 - Produces: worker startup independent of extension transport.
 
-- [ ] Keep queue worker startup unconditional after backend start.
-- [ ] Remove extension WebSocket server startup and shutdown paths.
-- [ ] Remove extension callback lifecycle from application startup.
-- [ ] Preserve graceful worker shutdown.
-- [ ] Update checkpoint docs.
+- [x] Keep queue worker startup unconditional after backend start.
+- [x] Remove extension WebSocket server startup and shutdown paths.
+- [x] Remove extension callback lifecycle from application startup.
+- [x] Preserve graceful worker shutdown.
+- [x] Update checkpoint docs.
 
 ### Task 3: Remove extension transport implementation from FlowClient/backend layer
 
