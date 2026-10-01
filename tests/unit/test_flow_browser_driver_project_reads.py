@@ -144,7 +144,7 @@ def test_open_project_waits_for_delayed_fresh_hydration_after_single_navigation(
 
 def test_open_project_same_exact_project_uses_fresh_gate_without_regoto(rig):
     driver, provider, state_path, owner_key = rig
-    provider.page.url = f"https://flow.google.com/project/{PROJECT}"
+    provider.page.url = f"https://flow.google.com/project/{PROJECT}/"
     provider.health_sequence = ["authenticated"]
 
     result = driver.open_project(PROJECT)
@@ -190,6 +190,26 @@ def test_open_project_auth_never_ready_times_out_without_state_write(rig):
     assert provider.page.goto_calls == [
         (f"https://flow.google.com/project/{PROJECT}", "domcontentloaded", 60_000)
     ]
+    assert not state_path.exists()
+
+
+def test_open_project_signed_out_after_navigation_fails_closed_on_timeout(rig):
+    driver, provider, state_path, _ = rig
+    provider.health_sequence = ["authenticated"]
+    provider.authentication = "signed_out"
+    now = [0.0]
+    driver._clock = lambda: now[0]
+    driver._project_hydration_timeout_s = 0.5
+    driver._project_hydration_poll_s = 0.25
+    driver._sleep = lambda seconds: now.__setitem__(0, now[0] + seconds)
+
+    result = driver.open_project(PROJECT)
+
+    assert result == {
+        "status": 409,
+        "error": "BROWSER_NOT_READY",
+        "effect": "not_submitted",
+    }
     assert not state_path.exists()
 
 
