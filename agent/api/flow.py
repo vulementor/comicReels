@@ -46,6 +46,8 @@ class GenerateVideoRequest(BaseModel):
     model_family: Literal["veo", "omni_flash"] = "veo"
     duration_s: int = 8
     resolution: Literal["360p", "720p"] = "720p"
+    idempotency_key: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 class GenerateVideoRefsRequest(BaseModel):
@@ -71,6 +73,7 @@ class GenerateOmniFlashVideoRequest(BaseModel):
     resolution: Literal["360p", "720p"] = "720p"
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
     user_paygate_tier: str = "PAYGATE_TIER_ONE"
+    idempotency_key: Optional[str] = None
 
 
 class GenerateOmniFlashTextVideoRequest(BaseModel):
@@ -81,6 +84,7 @@ class GenerateOmniFlashTextVideoRequest(BaseModel):
     resolution: Literal["360p", "720p"] = "720p"
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
     user_paygate_tier: str = "PAYGATE_TIER_ONE"
+    idempotency_key: Optional[str] = None
 
 
 class UpscaleVideoRequest(BaseModel):
@@ -247,6 +251,7 @@ async def generate_video(body: GenerateVideoRequest):
                 resolution=body.resolution,
                 aspect_ratio=body.aspect_ratio,
                 user_paygate_tier=body.user_paygate_tier,
+                idempotency_key=body.idempotency_key,
             )
             if body.end_image_media_id:
                 result = await generate_omni_flash_first_last_video(
@@ -293,6 +298,7 @@ async def generate_video_refs(body: GenerateVideoRefsRequest):
                 resolution=body.resolution,
                 aspect_ratio=body.aspect_ratio,
                 user_paygate_tier=body.user_paygate_tier,
+                idempotency_key=body.idempotency_key,
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
