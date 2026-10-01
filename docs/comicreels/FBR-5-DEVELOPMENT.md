@@ -1335,3 +1335,93 @@ dashboard Guide copy so setup/preflight uses the persistent browser profile/sess
 and current browser health fields. Remove extension/token/9222/load-unpacked
 instructions while preserving historical development ledgers where they are
 explicitly marked historical.
+
+
+## Browser-only Task 8b — generated/operator docs + Guide/preflight cutover
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; Task 8 still in progress**.
+
+### Source scope completed
+
+- `setup.py` now generates browser-only AGENTS preflight and invariants.
+- Checked-in `AGENTS.md` is synchronized to that browser-only contract.
+- `CLAUDE.md` now uses current browser/session readiness and separates paid
+  authorization/reconciliation from transport health.
+- `README.md` current operator sections now describe the persistent browser
+  profile, browser-only architecture, browser health fields, paid lock, and
+  no-resend reconciliation policy. Extension-era changelog entries were moved
+  under an explicit **Historical migration notes** heading rather than rewritten
+  as if they were current instructions.
+- Dashboard `GuidePage.tsx` now reads the current `/health` schema:
+  browser readiness, authentication, lease, reconciliation, paid dispatch and
+  the independent dashboard event channel.
+- Guide i18n canonical English and Vietnamese copy were rewritten browser-only.
+  Other locales intentionally fall back to canonical English for Guide copy
+  rather than retaining stale extension-era instructions.
+- `scripts/statusline.sh` now reports browser readiness plus paid-lock and
+  reconciliation state. It no longer reads extension WS counters or Flow-key
+  status.
+- Changed Claude command artifacts were normalized back to the `setup.py`
+  generated stub format so they read current skills instead of embedding stale
+  copies.
+- Operator skills updated in this slice:
+  `fk-doctor`, `fk-dashboard`, `fk-status`, `fk-pipeline`,
+  `fk-gen-refs`, `fk-monitor`, `fk-refresh-urls`,
+  `fk-review-video`, and `fk-upload-image`.
+- Root/current architecture docs were aligned:
+  `ARCHITECTURE.md`, `docs/CAPTURE.md`, `docs/OMNI_FLASH.md`,
+  `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`.
+- Legacy root `PLAN.md` is preserved for history but now begins with a clear
+  **HISTORICAL / SUPERSEDED** warning and points to the 2026-10-01 browser-only
+  cutover plan.
+
+### Current operator preflight
+
+Safe transport readiness requires all current positive evidence:
+- `backend_ready=true`;
+- `browser_session_ready=true`;
+- `authentication=authenticated`;
+- `lease_held=true`.
+
+`paid_dispatch_enabled`, `reconciliation_required` and
+`pending_intents` are separate dimensions. A healthy browser session never
+grants paid authorization.
+
+### Profile/data preservation
+
+No source in this slice instructs operators to delete/reset profile data as a
+recovery action. Current guidance explicitly says to preserve the existing bound
+profile, cookies/storage and credentials. If authentication is signed out, stop
+effects and use the approved interactive sign-in on the same profile rather than
+creating/replacing one.
+
+No browser profile, cookies, storage, credentials or user data were read or
+modified during this GitHub-only source pass.
+
+### Dashboard channel preservation
+
+`/ws/dashboard` remains an independent event channel. Statusline/Guide/health
+do not treat it as Flow readiness and no Flow transport fallback points to it.
+
+### Source-only audit observations
+
+Targeted operator surfaces now contain zero positive stale preflight references
+to `extension_connected`, `flow_key_present`, `NO_FLOW_KEY`, port 9222,
+load-unpacked/reload-extension recovery, or extension WebSocket transport.
+Negative phrases such as “do not clear cookies/storage” are intentional safety
+requirements, not legacy recovery instructions.
+
+### Deferred validation
+
+Tests, TypeScript build/lint, shell execution, browser/profile launch,
+paid/CAPTCHA calls, EXE build, Stable/ThoRemix mutation and Remote Desktop
+actions executed: **none**.
+
+### Next short sub-task
+
+**Task 8c — repo-wide stale-reference audit + Task 8 source closure.** Scan
+remaining non-historical docs/generated artifacts/config/package references for
+Flow-extension transport strings; classify explicit historical records versus
+current operator/runtime references; repair only current stale references. Then
+mark Task 8 source-complete and hand off to Task 9 final integration audit.
