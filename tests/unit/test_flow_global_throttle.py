@@ -78,33 +78,42 @@ async def test_non_generation_rpc_bypasses_generation_guard(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_flow_status_exposes_extension_version(monkeypatch):
+async def test_flow_status_exposes_browser_readiness_reconciliation_and_paid_lock(monkeypatch):
     class FakeClient:
-        connected = True
-        extension_connected = True
-        backend_kind = "extension"
-        paid_dispatch_enabled = True
-        _flow_key = None
         generation_guard_status = {
             "cooldown_active": False,
             "cooldown_remaining_s": 0.0,
             "last_unusual_activity_at": None,
             "last_unusual_activity_rpc": None,
         }
-        ws_stats = {
-            "connected": True,
-            "active_connections": 1,
-            "authenticated_connections": 0,
-            "extension_versions": ["0.5.2"],
-            "flow_url_supported": True,
-            "connects": 1,
-            "disconnects": 0,
-            "uptime_s": 3,
+
+    async def browser_status():
+        return {
+            "backend_kind": "browser",
+            "backend_ready": True,
+            "session_ready": True,
+            "authentication": "authenticated",
+            "lease_held": True,
+            "reconciliation_required": False,
+            "pending_intents": 0,
+            "paid_dispatch_enabled": False,
+            "error": None,
+            "preflight": {
+                "ready": True,
+                "transport": "browser",
+                "session_required": True,
+            },
         }
 
     monkeypatch.setattr(flow_api, "get_flow_client", lambda: FakeClient())
+    monkeypatch.setattr(flow_api, "read_backend_status", browser_status)
     monkeypatch.setattr(flow_api, "current_session_project", lambda: {"project_id": None})
 
-    status = await flow_api.extension_status()
-    assert status["extension_session"]["extension_versions"] == ["0.5.2"]
-    assert status["extension_session"]["active_connections"] == 1
+    status = await flow_api.flow_status()
+    assert status["transport"] == "browser"
+    assert status["browser_session_ready"] is True
+    assert status["authentication"] == "authenticated"
+    assert status["lease_held"] is True
+    assert status["reconciliation_required"] is False
+    assert status["paid_dispatch_enabled"] is False
+    assert "extension_session" not in status
