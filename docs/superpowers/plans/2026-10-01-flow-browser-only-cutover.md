@@ -135,11 +135,11 @@
 **Interfaces:**
 - Produces: browser-only health/preflight semantics.
 
-- [ ] Remove `extension_connected` as a Flow readiness requirement.
-- [ ] Remove extension session/token fields from selected-backend status where obsolete.
-- [ ] Replace extension-specific 503 messages with browser/session readiness messages.
-- [ ] Keep reconciliation and paid-dispatch states separately visible.
-- [ ] Update checkpoint docs.
+- [x] Remove `extension_connected` as a Flow readiness requirement.
+- [x] Remove extension session/token fields from selected-backend status where obsolete.
+- [x] Replace extension-specific 503 messages with browser/session readiness messages.
+- [x] Keep reconciliation and paid-dispatch states separately visible.
+- [x] Update checkpoint docs.
 
 ### Task 7: Remove extension-specific dashboard UI
 
