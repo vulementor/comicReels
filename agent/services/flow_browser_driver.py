@@ -22,6 +22,7 @@ from agent.services.flow_browser_contract import (
     validate_command,
 )
 from agent.services.flow_browser_paid import FlowPaidImageGate
+from agent.services.flow_browser_paid_video import FlowPaidVideoGate
 from agent.services.flow_browser_session import FlowBrowserSessionProvider, FlowProfileConfig
 from agent.services.flow_browser_state import BrowserStateStore
 from agent.services.flow_browser_upload import execute_upload
@@ -577,6 +578,76 @@ class FlowBrowserDriver:
         gate = FlowPaidImageGate(
             self._store,
             lambda cmd, wait: self._paid_image_dispatch(page, script, cmd, wait),
+            dispatch_enabled=True,
+            authorization=self._paid_authorization,
+        )
+        return gate.submit(
+            params, idempotency_key=idempotency_key,
+            authorization=authorization, timeout=timeout,
+        )
+
+
+    def _paid_video_dispatch(self, page, script: str, command, timeout: float) -> dict:
+        """Execute one already-journaled paid video request on the owned page."""
+        self._require_lease()
+        current_page = self._require_session()
+        if current_page is not page:
+            raise BrowserCommandError('SESSION_UNVERIFIED')
+        try:
+            result = page.evaluate('mw:' + script, {
+                'projectId': command.project_id,
+                'rpcid': command.rpcid,
+                'freq': command.freq,
+                'timeoutMs': max(1000, min(int(float(timeout) * 1000), 120000)),
+            })
+        except Exception:
+            raise BrowserCommandError('PAID_RECONCILIATION_REQUIRED') from None
+        if not isinstance(result, dict):
+            raise BrowserCommandError('PAID_RECONCILIATION_REQUIRED')
+        return result
+
+    def submit_paid_video(self, params: dict, *, idempotency_key: str,
+                          authorization=None, timeout: float = 300) -> dict:
+        """Submit exactly one existing video mode through the paid browser gate."""
+        self._check_thread()
+        gate = FlowPaidVideoGate(
+            self._store, lambda _command, _timeout: {
+                'status': 403, 'error': 'PAID_DISPATCH_DISABLED',
+                'effect': 'not_submitted',
+            },
+            dispatch_enabled=self.paid_dispatch_enabled,
+            authorization=self._paid_authorization,
+        )
+        if (not self.paid_dispatch_enabled or self._paid_authorization is None
+                or authorization is not self._paid_authorization):
+            return gate.submit(
+                params, idempotency_key=idempotency_key,
+                authorization=authorization, timeout=timeout,
+            )
+
+        try:
+            command = gate.validate(params)
+            page = self._require_session()
+            self._open_project_page(command.project_id)
+            script = Path(__file__).with_name(
+                'flow_browser_paid_video.js'
+            ).read_text(encoding='utf-8')
+        except BrowserCommandError as error:
+            return {
+                'status': 409,
+                'error': _public_error(error, 'PAID_RECIPE_UNVERIFIED'),
+                'effect': 'not_submitted',
+            }
+        except Exception:
+            return {
+                'status': 409,
+                'error': 'PAID_BROWSER_RECIPE_UNAVAILABLE',
+                'effect': 'not_submitted',
+            }
+
+        gate = FlowPaidVideoGate(
+            self._store,
+            lambda cmd, wait: self._paid_video_dispatch(page, script, cmd, wait),
             dispatch_enabled=True,
             authorization=self._paid_authorization,
         )
