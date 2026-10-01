@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from typing import Optional
@@ -35,6 +36,7 @@ from agent.config import (
 from agent import config as _config
 from agent.services import flow_batch as fb
 from agent.services.flow_backend import ExtensionFlowBackend, FlowBackend
+from agent.services.flow_backend_selection import BackendSelection, resolve_backend_selection
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +356,7 @@ class FlowClient:
         finally:
             self._sync_in_progress = False
 
-    _UUID_RE = __import__("re").compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+    _UUID_RE = __import__("re").compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
     # flow-content.google is where the rewritten frontend serves media from;
     # the other two are the pre-migration hosts, still seen on older media.
     _SAFE_URL_RE = __import__("re").compile(
@@ -740,7 +742,7 @@ class FlowClient:
             async def run_wave(indices: list[int]) -> dict[int, object]:
                 # Flow's UI starts variants as separate single-image RPCs with a
                 # short cadence instead of a burst. Apply the cadence relative
-                # to each wave, while Google still performs the generation work
+                # to each wave, while Google performs the generation work
                 # concurrently after each request has been accepted.
                 tasks = [
                     submit_once(index, IMAGE_UI_SUBMIT_OFFSETS_S[position])
@@ -1148,19 +1150,39 @@ def _is_ws_error(result: dict) -> bool:
     return bool(result.get("error")) or (isinstance(result.get("status"), int) and result["status"] >= 400)
 
 
-# Singleton
+# Singleton. Selection is fixed after its first valid resolution, even if a
+# selected backend cannot be constructed. Recovery/rollback requires a process
+# restart; neither an environment edit nor another getter call is failover.
 _client: Optional[FlowClient] = None
+_client_selection: Optional[BackendSelection] = None
+_client_initialization_error: Optional[str] = None
+_client_lock = threading.Lock()
 
 
 def get_flow_client() -> FlowClient:
-    global _client
-    if _client is None:
-        kind = os.environ.get("COMICREELS_FLOW_BACKEND", "extension")
-        if kind == "extension":
-            _client = FlowClient()
-        elif kind == "browser":
-            from agent.services.flow_browser_backend import BrowserFlowBackend
-            _client = FlowClient(backend=BrowserFlowBackend())
-        else:
-            raise ValueError("COMICREELS_FLOW_BACKEND must be 'extension' or 'browser'")
-    return _client
+    """Construct one configured client without starting or switching backends."""
+    global _client, _client_selection, _client_initialization_error
+    with _client_lock:
+        if _client is not None:
+            return _client
+        if _client_initialization_error is not None:
+            raise RuntimeError(_client_initialization_error) from None
+        if _client_selection is None:
+            # Invalid configuration fails before construction. Store only a
+            # successfully resolved immutable selection, not raw environment data.
+            _client_selection = resolve_backend_selection()
+        try:
+            if _client_selection.kind == "extension":
+                candidate = FlowClient()
+            else:
+                # Keep browser-only imports/profile configuration off the
+                # extension rollback path. Never start a browser in this getter.
+                from agent.services.flow_browser_backend import BrowserFlowBackend
+                candidate = FlowClient(backend=BrowserFlowBackend())
+        except Exception:
+            # Retain a fixed error, not a native exception/traceback containing
+            # profile paths or credentials. Do not retry or construct a fallback.
+            _client_initialization_error = "FLOW_BACKEND_INITIALIZATION_FAILED"
+            raise RuntimeError(_client_initialization_error) from None
+        _client = candidate
+        return _client
