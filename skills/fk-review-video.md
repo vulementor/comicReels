@@ -13,15 +13,17 @@ Default mode: `light`. Orientation auto-detected from project `meta.json`.
 ## Step 1: Pre-check
 
 ```bash
-# Verify server + extension connected
+# Verify agent + browser session health.
 curl -s http://127.0.0.1:8100/health
-# Must return: {"extension_connected": true}
+# Require backend_ready=true, browser_session_ready=true,
+# authentication=authenticated and lease_held=true.
 
 # Verify video exists
 curl -s http://127.0.0.1:8100/api/videos/<VID>
 ```
 
-**ABORT** if extension not connected or video not found.
+**ABORT** if the browser session is not ready or the video is not found. Browser
+readiness does not grant paid generation authorization.
 
 ## Step 2: Check scenes have completed videos
 
