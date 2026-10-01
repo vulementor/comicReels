@@ -20,8 +20,12 @@ Usage: `/fk-monitor [project_id] [orientation] [--download] [--interval N]`
 
 ```bash
 curl -s http://127.0.0.1:8100/health
-# extension_connected must be true
+# Require backend_ready=true, browser_session_ready=true,
+# authentication=authenticated and lease_held=true.
 ```
+
+The dashboard/event WebSocket is independent from Flow transport and is not a
+Flow readiness signal.
 
 Telegram notifications require the `mcp__telegram__reply` tool to be available in this session.
 
