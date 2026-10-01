@@ -47,7 +47,6 @@ class GenerateVideoRequest(BaseModel):
     duration_s: int = 8
     resolution: Literal["360p", "720p"] = "720p"
     idempotency_key: Optional[str] = None
-    idempotency_key: Optional[str] = None
 
 
 class GenerateVideoRefsRequest(BaseModel):
@@ -62,6 +61,7 @@ class GenerateVideoRefsRequest(BaseModel):
     model_family: Literal["veo", "omni_flash"] = "veo"
     duration_s: int = 8
     resolution: Literal["360p", "720p"] = "720p"
+    idempotency_key: Optional[str] = None
 
 
 class GenerateOmniFlashVideoRequest(BaseModel):
