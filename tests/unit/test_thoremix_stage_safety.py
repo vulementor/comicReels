@@ -148,3 +148,125 @@ def test_paid_authorized_image_unknown_receipt_does_not_resubmit(tmp_path):
     assert result == {"state": "uncertain", "reason": "BATCH_INCOMPLETE"}
     assert receipt.read_bytes() == before
     client.image.generate_batch.assert_not_called()
+
+
+@pytest.mark.parametrize("stage_name", ["images", "video", "highest"])
+def test_paid_lock_during_unknown_reconcile_preserves_checkpoint_and_never_resubmits(
+    tmp_path, monkeypatch, stage_name
+):
+    from types import SimpleNamespace
+
+    import agent.services.flow_story_browser as flow_story_browser
+    import agent.thoremix.story_operations as story_operations
+    from agent.thoremix.story_stages import StageBlocked, StageJournal, StageUncertain
+
+    source = tmp_path / "source.png"
+    source.write_bytes(b"source")
+    directory = tmp_path / "journal"
+    request = {
+        "source": str(source),
+        "source_sha256": "a" * 64,
+        "analysis": {"panels": [{}]},
+    }
+    progress_checkpoint = {
+        "conversation_url": "https://chatgpt.com/c/existing",
+        "run_id": "rid-existing",
+    }
+    journal = StageJournal(directory, source_sha256="a" * 64)
+
+    def seed_unknown(progress):
+        progress(progress_checkpoint)
+        return {"state": "uncertain", "reason": "REMOTE_RESULT_UNKNOWN"}
+
+    with pytest.raises(StageUncertain):
+        journal.run(stage_name, request, seed_unknown)
+
+    if stage_name == "images":
+        assert not (directory / "images" / "provider.json").exists()
+
+    counters = {"new_submit": 0, "reconcile": 0}
+
+    class Result:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def model_dump(self, mode="json"):
+            assert mode == "json"
+            return dict(self.payload)
+
+    class ImageClient:
+        def generate_batch(self, *_args, **_kwargs):
+            counters["new_submit"] += 1
+            return Result({
+                "state": "uncertain",
+                "conversation_url": progress_checkpoint["conversation_url"],
+            })
+
+        def reconcile_batch(self, url, **_kwargs):
+            counters["reconcile"] += 1
+            assert url == progress_checkpoint["conversation_url"]
+            return Result({"state": "uncertain", "conversation_url": url})
+
+    client = SimpleNamespace(image=ImageClient())
+    runtime = SimpleNamespace(
+        client=lambda: client,
+        chat_profile_dir=tmp_path / "chat-profile",
+        chat_home=tmp_path / "chat-home",
+        chat_min_interval_s=0,
+        chat_rest_after_response_s=0,
+    )
+    settings = SimpleNamespace(
+        paid_operations_authorized=False,
+        path=tmp_path / "missing-settings.json",
+        directory=tmp_path,
+        data=tmp_path / "data",
+    )
+
+    class DirectPacer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def call(self, operation):
+            return operation()
+
+    monkeypatch.setattr(story_operations, "ChatPacer", DirectPacer)
+
+    class FakeFlowStoryBrowser:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, _name, _request, _directory, _progress, *, reconcile=False):
+            if reconcile:
+                counters["reconcile"] += 1
+            else:
+                counters["new_submit"] += 1
+            return {"state": "uncertain", "reason": "REMOTE_RESULT_UNKNOWN"}
+
+    monkeypatch.setattr(flow_story_browser, "FlowStoryBrowser", FakeFlowStoryBrowser)
+    operations = StoryOperations(settings, runtime=runtime)
+
+    def execute(progress):
+        return operations.execute(stage_name, request, directory, progress)
+
+    def reconcile(previous, progress):
+        return operations.reconcile(stage_name, request, directory, previous, progress)
+
+    locked_error = None
+    try:
+        journal.run(stage_name, request, execute, reconcile=reconcile)
+    except (StageUncertain, StageBlocked) as exc:
+        locked_error = type(exc).__name__
+    locked_record = json.loads((directory / f"{stage_name}.json").read_text(encoding="utf-8"))
+
+    settings.paid_operations_authorized = True
+    with pytest.raises(StageUncertain):
+        journal.run(stage_name, request, execute, reconcile=reconcile)
+    final_record = json.loads((directory / f"{stage_name}.json").read_text(encoding="utf-8"))
+
+    assert counters["new_submit"] == 0
+    assert counters["reconcile"] == 1
+    assert locked_error == "StageUncertain"
+    assert locked_record["state"] == "UNKNOWN"
+    assert locked_record["progress"] == progress_checkpoint
+    assert final_record["state"] == "UNKNOWN"
+    assert final_record["progress"] == progress_checkpoint
