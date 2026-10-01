@@ -1,4 +1,4 @@
-# Optional FBR-0 shadow browser. Install only for the explicit browser test/runtime.
-# KBS stays generic; consume a durable exact canonical revision, never an editable checkout.
+# Browser-only Flow transport runtime dependency.
+# KBS stays generic; consume the exact pinned canonical revision, never an editable checkout.
 kabin-browser-semantic @ git+https://github.com/vulementor/kabin_browser_semantic.git@b539e9820d433c8c9d667b4e5d9007b6a80b8abd
 camoufox>=0.4.11
