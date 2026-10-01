@@ -89,7 +89,7 @@ async def test_worker_runs_cleanup_and_loop_when_paid_dispatch_is_locked(monkeyp
     assert calls == ["cleanup", "loop"]
 
 
-def test_worker_start_does_not_gate_lifecycle_on_paid_dispatch():
+def test_worker_start_does_not_return_when_paid_dispatch_is_locked():
     source = ast.get_source_segment(
         Path("agent/worker/processor.py").read_text(encoding="utf-8"),
         next(
@@ -99,7 +99,18 @@ def test_worker_start_does_not_gate_lifecycle_on_paid_dispatch():
             if isinstance(node, ast.AsyncFunctionDef) and node.name == "start"
         ),
     )
-    assert "paid_dispatch_enabled" not in source
+    assert "Worker disabled" not in source
+    assert "paid_dispatch_enabled" in source
+    assert "await self._cleanup_stale_processing()" in source
+    assert "await self._run_loop()" in source
+    assert source.index("await self._cleanup_stale_processing()") < source.index("await self._run_loop()")
+
+
+def test_worker_lifecycle_cannot_manufacture_paid_authorization():
+    source = Path("agent/worker/processor.py").read_text(encoding="utf-8")
+    assert "build_paid_validation_session" not in source
+    assert "paid_dispatch_enabled=True" not in source
+    assert "paid_authorization=" not in source
 
 
 def test_worker_has_no_retired_extension_transient_retry_branch():
