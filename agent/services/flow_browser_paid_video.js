@@ -22,7 +22,14 @@ async ({ projectId, rpcid, freq, timeoutMs }) => {
       return refuse('PAID_RECIPE_UNVERIFIED');
     }
     inner = JSON.parse(item[1]);
-    if (!Array.isArray(inner)) return refuse('PAID_RECIPE_UNVERIFIED');
+    if (!Array.isArray(inner) || inner.length !== 3 ||
+        !Array.isArray(inner[0]) || inner[0].length !== 1 ||
+        !Array.isArray(inner[1]) || inner[1][5] !== projectId ||
+        !Array.isArray(inner[1][10]) || inner[1][10][0] !== '__CAPTCHA__' ||
+        inner[1][10][1] !== 1 ||
+        !Array.isArray(inner[2]) || inner[2].length !== 2 || inner[2][1] !== 2) {
+      return refuse('PAID_RECIPE_UNVERIFIED');
+    }
   } catch {
     return refuse('PAID_RECIPE_UNVERIFIED');
   }
