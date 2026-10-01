@@ -21,9 +21,10 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Verify ffmpeg availability
+      - name: Install ffmpeg with bounded apt retries
         run: |
-          command -v ffmpeg
+          timeout 180s sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          timeout 180s sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg fonts-dejavu-core
           ffmpeg -hide_banner -version | head -3
 
       - name: Install dependencies
