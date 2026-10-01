@@ -32,6 +32,7 @@ class BatchBackendStub:
 
     def __init__(self):
         self.bindings = {OPERATION: PROJECT}
+        self.session_project_calls = []
 
     async def bind_operation(self, operation_id, project_id):
         existing = self.bindings.get(operation_id)
@@ -81,7 +82,12 @@ class BatchBackendStub:
         return {"status": 200, "data": {"projectId": project_id}}
 
     async def ensure_session_project(self, *, title=None, force_new=False):
-        return {"status": 200}
+        self.session_project_calls.append({"title": title, "force_new": force_new})
+        return {
+            "status": 200,
+            "data": {"projectId": PROJECT, "title": title, "reused": False},
+            "effect": "completed",
+        }
 
 
 @pytest.fixture
@@ -298,17 +304,14 @@ class TestMediaAndUpload:
 
 
 class TestProjectAndCredits:
-    async def test_create_project_uses_current_batch_rpc(self, client):
-        client.responses[fb.RPC_CREATE_PROJECT] = {
-            "data": envelope(fb.RPC_CREATE_PROJECT, [PROJECT, ["My Film"]])
-        }
+    async def test_create_project_uses_durable_backend_session_project_path(self, client):
         result = await client.create_project("My Film")
         assert result["data"]["projectId"] == PROJECT
         assert result["data"]["title"] == "My Film"
-        assert client.calls[0]["rpcid"] == fb.RPC_CREATE_PROJECT
-        outer = json.loads(client.calls[0]["freq"])
-        inner = json.loads(outer[0][0][1])
-        assert inner == ["projects/*", [None, ["My Film"]], [None, fb.SURFACE_ID]]
+        assert client.backend.session_project_calls == [
+            {"title": "My Film", "force_new": True},
+        ]
+        assert client.calls == [], "raw RPC_CREATE_PROJECT must stay unavailable"
 
     async def test_flow_project_id_only_accepts_explicit_ids(self, client):
         assert client.flow_project_id(PROJECT) == PROJECT
