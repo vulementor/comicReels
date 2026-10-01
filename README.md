@@ -19,7 +19,7 @@
 > **Browser-only Flow transport.** FlowKit now routes Flow work through
 > `BrowserFlowBackend` using one existing persistent signed-in
 > `flow.google.com` browser profile under an explicit lease. The old Chrome
-> extension/WebSocket RPC bridge has been retired from runtime source.
+> extension and WebSocket RPC bridge have been retired from runtime source.
 >
 > The browser-only cutover is currently **source-authored, not runtime-validated**
 > on this branch. Browser readiness and paid authorization are intentionally
