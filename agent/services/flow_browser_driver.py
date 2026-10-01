@@ -492,14 +492,18 @@ class FlowBrowserDriver:
         data = response.get('data')
         if not isinstance(data, str):
             return {'status': 502, 'error': 'RPC_READ_FAILED', 'effect': 'unknown'}
-        if command.match is None:
+        # Project/media reads are raw transport reads. Their business parser
+        # lives in FlowClient, which may intentionally use match-scoped/raw
+        # response bodies. Operation reads are different: the durable binding
+        # makes project + operation identity part of the transport safety
+        # boundary, so verify that receipt here before reporting completion.
+        if command.rpcid == fb.RPC_OPERATION and command.match is None:
             try:
                 payload = fb.first_payload(data, command.rpcid)
-                if command.rpcid == fb.RPC_OPERATION:
-                    operation = fb.read_operation(payload)
-                    if (operation.operation_id != command.operation_id
-                            or operation.project_id != project_id):
-                        raise BrowserCommandError('OPERATION_RECEIPT_UNVERIFIED')
+                operation = fb.read_operation(payload)
+                if (operation.operation_id != command.operation_id
+                        or operation.project_id != project_id):
+                    raise BrowserCommandError('OPERATION_RECEIPT_UNVERIFIED')
             except BrowserCommandError as error:
                 return {'status': 502, 'error': _public_error(
                     error, 'OPERATION_RECEIPT_UNVERIFIED'), 'effect': 'unknown'}
