@@ -27,20 +27,6 @@ from agent.services.flow_backend_selection import BackendSelection, resolve_back
 
 logger = logging.getLogger(__name__)
 
-# Captured from the current Flow image composer. x4 launches independent
-# ogiZ0b requests at roughly 0.0s, 0.5s, 1.5s and 2.5s rather than bursting
-# all variants at once. The generation work still overlaps after submission.
-IMAGE_UI_SUBMIT_OFFSETS_S = (0.0, 0.5, 1.5, 2.5)
-
-# RPC [8] is a transient Flow-side generation rejection seen under image load.
-# A short 6s retry was still rejected in live testing, so use one bounded
-# cooldown retry rather than hot-looping or multiplying duplicate generations.
-# This is FlowKit resilience policy; the current UI was not observed to retry
-# automatically after the same failure.
-IMAGE_TRANSIENT_RETRY_DELAY_S = 34.0
-IMAGE_TRANSIENT_MAX_ATTEMPTS = 2
-
-
 class FlowClient:
     """Flow business API over one browser backend."""
 
@@ -358,101 +344,102 @@ class FlowClient:
                                image_model: str = None,
                                count: int = 1,
                                seed: int | None = None,
-                               base_media_id: str | None = None) -> dict:
-        """Generate image(s).
+                               base_media_id: str | None = None,
+                               idempotency_key: str | None = None,
+                               paid_authorization=None) -> dict:
+        """Submit exactly one paid image through the durable browser gate.
 
-        ``character_media_ids`` are attached as reference images, which is what
-        keeps an entity the same across scenes. Response is shaped like the
-        old REST one so the parsers downstream do not have to care which
-        transport produced it.
+        The business response keeps the historical media[] shape. Durable state
+        stores only project/media UUIDs; signed URLs are refreshed afterwards by
+        a separate read-only media RPC. Missing URL data never turns a completed
+        paid receipt back into a generation failure.
         """
+        if count != 1:
+            return {
+                "status": 409,
+                "error": "PAID_SINGLE_SHOT_REQUIRED",
+                "effect": "not_submitted",
+            }
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            return {
+                "status": 409,
+                "error": "PAID_IDEMPOTENCY_REQUIRED",
+                "effect": "not_submitted",
+            }
 
         try:
-            if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 4:
-                raise ValueError("image count must be an integer from 1 to 4")
             pid = self._batch_project_id(project_id)
             model = self._batch_image_model(image_model)
             refs = list(character_media_ids or []) or None
+            freq = fb.image_request(
+                prompt, pid, count=1, aspect=aspect_ratio, seed=seed,
+                model=model, ref_media_ids=refs, base_media_id=base_media_id,
+            )
+        except Exception as exc:
+            return _batch_error(exc)
 
-            async def submit_once(index: int, launch_offset: float = 0.0):
-                if launch_offset:
-                    await asyncio.sleep(launch_offset)
-                request_seed = seed + index * 9973 if seed is not None else None
-                freq = fb.image_request(
-                    prompt, pid, count=1, aspect=aspect_ratio, seed=request_seed,
-                    model=model, ref_media_ids=refs, base_media_id=base_media_id,
-                )
-                payload = await self._batch_payload(
-                    fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE, project_id=pid
-                )
-                generated = fb.read_images(payload)
-                if not generated:
-                    raise fb.FlowBatchError("Image generation returned no media url")
-                return generated[0]
-
-            async def run_wave(indices: list[int]) -> dict[int, object]:
-                # Flow's UI starts variants as separate single-image RPCs with a
-                # short cadence instead of a burst. Apply the cadence relative
-                # to each wave, while Google still performs the generation work
-                # concurrently after each request has been accepted.
-                tasks = [
-                    submit_once(index, IMAGE_UI_SUBMIT_OFFSETS_S[position])
-                    for position, index in enumerate(indices)
-                ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                return dict(zip(indices, results))
-
-            results = await run_wave(list(range(count)))
-            retry_indices = [
-                index for index, result in results.items()
-                if isinstance(result, fb.RpcError)
-                and result.rpcid == fb.RPC_GEN_IMAGE
-                and result.detail == [8]
-            ]
-            if retry_indices:
-                logger.warning(
-                    "Flow image wave had transient [8] for variant(s) %s; "
-                    "retrying after %.0fs cooldown once the first wave is fully settled",
-                    ",".join(str(i + 1) for i in retry_indices),
-                    IMAGE_TRANSIENT_RETRY_DELAY_S,
-                )
-                await asyncio.sleep(IMAGE_TRANSIENT_RETRY_DELAY_S)
-                retried = await run_wave(retry_indices)
-                results.update(retried)
-
-            images_by_index = {
-                index: result
-                for index, result in results.items()
-                if not isinstance(result, BaseException)
+        result = await self._backend.submit_paid_image(
+            {
+                "rpcid": fb.RPC_GEN_IMAGE,
+                "freq": freq,
+                "projectId": pid,
+                "captchaAction": fb.CAPTCHA_IMAGE,
+            },
+            idempotency_key=idempotency_key,
+            authorization=paid_authorization,
+            timeout=300,
+        )
+        if (not isinstance(result, dict) or result.get("status") != 200
+                or result.get("effect") != "completed"):
+            return result if isinstance(result, dict) else {
+                "status": 502,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
             }
-            failures = {
-                index: result
-                for index, result in results.items()
-                if isinstance(result, BaseException)
+
+        data = result.get("data")
+        if not isinstance(data, dict):
+            return {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
             }
-            if not images_by_index:
-                first_error = failures[min(failures)] if failures else fb.FlowBatchError(
-                    "Image generation returned no media url"
-                )
-                raise first_error
+        media_id = data.get("mediaId")
+        if not isinstance(media_id, str) or not self._UUID_RE.match(media_id):
+            return {
+                "status": 409,
+                "error": "PAID_RECONCILIATION_REQUIRED",
+                "effect": "unknown",
+            }
 
-            images = [images_by_index[index] for index in sorted(images_by_index)]
+        # Receipt is already durable at this point. URL lookup is read-only and
+        # must never cause a paid resend or downgrade a completed effect.
+        image_url = ""
+        try:
+            media = await self.get_media(media_id)
+            if isinstance(media, dict) and media.get("status") == 200:
+                record = media.get("data")
+                if isinstance(record, dict):
+                    image = record.get("image")
+                    if isinstance(image, dict):
+                        value = image.get("fifeUrl")
+                        if isinstance(value, str):
+                            image_url = value
+        except Exception:
+            image_url = ""
 
-        except Exception as e:
-            return _batch_error(e)
-
-        data = {
-            "media": [_as_media_record(i) for i in images],
-            "requested_count": count,
-            "generated_count": len(images),
-            "complete": len(images) == count,
+        generated = fb.GeneratedImage(media_id=media_id, url=image_url)
+        return {
+            "status": 200,
+            "data": {
+                "media": [_as_media_record(generated)],
+                "requested_count": 1,
+                "generated_count": 1,
+                "complete": True,
+            },
+            "effect": "completed",
+            "reused": result.get("reused") is True,
         }
-        if failures:
-            data["failed_variants"] = [
-                {"index": index + 1, "error": str(error)}
-                for index, error in sorted(failures.items())
-            ]
-        return {"status": 200, "data": data}
 
     async def edit_image(self, prompt: str, source_media_id: str,
                           project_id: str,
@@ -461,7 +448,9 @@ class FlowClient:
                           character_media_ids: list[str] = None,
                           image_model: str = None,
                           count: int = 1,
-                          seed: int | None = None) -> dict:
+                          seed: int | None = None,
+                          idempotency_key: str | None = None,
+                          paid_authorization=None) -> dict:
         """Edit an image with the source encoded as Flow's BASE_IMAGE input.
 
         Additional references remain REFERENCE inputs. Sending the source as a
@@ -480,6 +469,8 @@ class FlowClient:
             count=count,
             seed=seed,
             base_media_id=source_media_id,
+            idempotency_key=idempotency_key,
+            paid_authorization=paid_authorization,
         )
 
     async def upscale_image(self, media_id: str, project_id: str,
