@@ -5,8 +5,6 @@ validation. These tests protect the FlowClient business API while proving the
 extension transport implementation is absent.
 """
 import inspect
-from types import SimpleNamespace
-
 import pytest
 
 from agent.services import flow_backend
@@ -74,21 +72,11 @@ def test_flow_client_has_no_extension_transport_methods_or_mutable_socket_state(
         assert marker not in source
 
 
-def test_compatibility_readouts_are_fixed_and_cannot_route_transport():
+def test_extension_status_compatibility_shims_are_retired():
     client = FlowClient(backend=BrowserStub())
-    assert client.extension_connected is False
-    assert client._flow_key is None
-    assert client.ws_stats == {
-        'connected': False,
-        'active_connections': 0,
-        'authenticated_connections': 0,
-        'extension_versions': [],
-        'flow_url_supported': None,
-        'connects': 0,
-        'disconnects': 0,
-        'uptime_s': None,
-        'transport_removed': True,
-    }
+    assert not hasattr(client, 'extension_connected')
+    assert not hasattr(client, '_flow_key')
+    assert not hasattr(client, 'ws_stats')
 
 
 @pytest.mark.asyncio
