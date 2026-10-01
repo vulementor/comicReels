@@ -9,6 +9,7 @@ import pytest
 
 from agent.services import flow_batch as fb
 from agent.services.flow_client import FlowClient
+from agent.services.flow_browser_driver import FlowBrowserDriver
 
 OPERATION = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 PROJECT = '11111111-2222-3333-4444-555555555555'
@@ -159,3 +160,9 @@ def test_media_read_can_be_scoped_to_durable_operation_project():
     source = inspect.getsource(FlowClient._batch_media_urls)
     assert 'project_id' in source
     assert 'project_id=project_id' in source
+
+
+def test_browser_media_read_prefers_explicit_durable_project_scope():
+    source = inspect.getsource(FlowBrowserDriver._read_project_for)
+    assert "command.rpcid == fb.RPC_MEDIA" in source
+    assert "command.project_id" in source
