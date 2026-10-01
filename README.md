@@ -5,7 +5,7 @@
 <p align="center">
   <a href="#license"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"/></a>
   <img src="https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white" alt="Python 3.10+"/>
-  <img src="https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white" alt="Chrome MV3"/>
+  <img src="https://img.shields.io/badge/Flow-Browser--Only-4285F4?logo=googlechrome&logoColor=white" alt="Flow browser-only"/>
   <img src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white" alt="FastAPI"/>
   <img src="https://img.shields.io/badge/ffmpeg-required-007808?logo=ffmpeg&logoColor=white" alt="ffmpeg"/>
   <a href="CLAUDE.md"><img src="https://img.shields.io/badge/Docs-CLAUDE.md-8A2BE2" alt="Documentation"/></a>
@@ -16,29 +16,25 @@
 
 ---
 
-> **Working against the new Google Flow API.** Flow moved to `flow.google.com`
-> in September 2026 and stopped minting the `Bearer ya29.…` that the old
-> `aisandbox-pa.googleapis.com` REST API needed. The `batchexecute` transport
-> that replaces it is in place and verified end to end against the live API —
-> image generation, 2K image export, and image-to-video all run green. Upgrading
-> from an older Flow Kit: reload the extension (v0.3.2+) and pin
-> `FLOW_PROJECT_ID`; Flow Kit can no longer create the project for you.
+> **Browser-only Flow transport.** FlowKit now routes Flow work through
+> `BrowserFlowBackend` using one existing persistent signed-in
+> `flow.google.com` browser profile under an explicit lease. The old Chrome
+> extension/WebSocket RPC bridge has been retired from runtime source.
 >
-> Every Omni 1.1 Flash video mode is ported and live-verified: text-to-video,
-> first frame, first+last frame, and references. Three capabilities remain
-> unported on the **Veo** path because their payloads were never captured off
-> the new UI — **video upscale**, **Veo reference-to-video**, and **Veo
-> start+end-frame chaining**. They fail loudly with `UNSUPPORTED_ON_BATCH_API`
-> instead of quietly producing the wrong thing. For the latter two, Omni covers
-> the same shot with `model_family=omni_flash`, or `FLOW_ALLOW_DEGRADED=1` drops
-> them to plain i2v; video upscale has no fallback. To restore one properly see
-> [`docs/CAPTURE.md`](docs/CAPTURE.md).
+> The browser-only cutover is currently **source-authored, not runtime-validated**
+> on this branch. Browser readiness and paid authorization are intentionally
+> separate: normal startup keeps paid dispatch locked, and unknown paid outcomes
+> must be reconciled before any resend.
+>
+> Existing operator profile data is authoritative. Setup and diagnostics must
+> not clear cookies/storage, sign out, create a replacement profile, or copy
+> credentials/profile data into the repository.
 
 ---
 
 # FLOW KIT
 
-Standalone system to generate AI videos via Google Flow. Uses a Chrome extension as a browser bridge: it mints reCAPTCHA and runs Flow's batchexecute RPCs inside a signed-in `flow.google.com` tab, which is the only place they can be signed.
+Standalone system to generate AI videos via Google Flow. Flow transport is browser-only: the agent owns a leased persistent signed-in browser session and executes validated Flow requests in that session.
 
 ## Showcase
 
@@ -126,16 +122,6 @@ Each project goes through: **story → entities → reference images → scene i
 
 ---
 
-### Chrome Extension — Live Dashboard
-
-<p align="center">
-  <img src="docs/images/extension_screenshot.jpg" width="800" alt="Chrome extension showing request log, video generation progress, and Google Flow interface" />
-</p>
-
-<sub>The Chrome extension runs alongside Google Flow — showing real-time request log (614 total, 328 success), video generation progress, and token status. The Python agent communicates with the extension via WebSocket to automate all API calls.</sub>
-
----
-
 ### Web Dashboard — Ops Console
 
 A local React dashboard (`dashboard/`) for monitoring and driving the pipeline — real-time KPIs, per-video stage progress, a scene-level pipeline view with AI review, and a setup guide, all backed by the same FastAPI agent. Supports English, Vietnamese, Hindi, Indonesian, Chinese, Korean, and Japanese.
@@ -150,35 +136,44 @@ A local React dashboard (`dashboard/`) for monitoring and driving the pipeline �
 </p>
 
 <p align="center">
-  <img src="docs/images/dashboard_guide.png" width="380" alt="Built-in setup guide with live extension connection status" />
+  <img src="docs/images/dashboard_guide.png" width="380" alt="Built-in setup guide with browser session readiness" />
   <img src="docs/images/dashboard_i18n.png" width="380" alt="Dashboard rendered in Japanese, demonstrating the built-in multi-language support" />
 </p>
 
 ## Architecture
 
 ```
-┌──────────────────┐     WebSocket      ┌──────────────────────┐     ┌──────────────────┐
-│  Python Agent    │◄──────────────────►│  Chrome Extension     │────►│  flow.google.com │
-│  (FastAPI+SQLite)│    localhost:9222  │  (MV3 Service Worker) │     │  (signed-in tab) │
-│                  │                    │                       │     │                  │
-│  - REST API :8100│  ── envelopes ──►  │  - reCAPTCHA mint     │     │  batchexecute    │
-│  - Queue worker  │  ◄── responses ──  │  - runs the RPC in    │     │  cookie + `at`   │
-│  - Post-process  │                    │    the page's world   │     │                  │
-│  - SQLite DB     │                    │                       │     │                  │
-└──────────────────┘                    └──────────────────────┘     └──────────────────┘
+┌──────────────────┐      business API      ┌──────────────────────┐
+│  Python Agent    │───────────────────────►│ BrowserFlowBackend   │
+│  FastAPI+SQLite  │                        │ + FlowBrowserDriver  │
+│                  │                        │ + KBS semantics      │
+│  - Queue worker  │                        └──────────┬───────────┘
+│  - REST API :8100│                                   │ leased session
+│  - Post-process  │                                   ▼
+│  - SQLite DB     │                        ┌──────────────────────┐
+└────────┬─────────┘                        │ Persistent signed-in │
+         │                                  │ browser profile      │
+         │                                  └──────────┬───────────┘
+         │                                             │
+         │                                             ▼
+         │                                  ┌──────────────────────┐
+         │                                  │ flow.google.com      │
+         │                                  │ browser-authenticated│
+         │                                  └──────────────────────┘
+         │
+         └── /ws/dashboard ──► Web dashboard event stream only
 ```
 
-Flow signs every call with the session cookie plus a per-page `at` token, and a
-generate also carries a single-use reCAPTCHA. None of that can be replayed from
-outside the browser, so the agent builds the request and the **page** issues it.
-One signed-in Flow tab has to stay open; nothing here works headless.
+The persistent browser profile is selected by
+`COMICREELS_FLOW_PROFILE_CONFIG` (or the default local binding path), and the
+backend holds an explicit lease while using it. The dashboard WebSocket is a
+separate event channel and is not Flow transport.
 
-> **September 2026 — Flow moved.** It now lives at `flow.google.com` and the old
-> `aisandbox-pa.googleapis.com` REST API has no caller: the `Bearer ya29.…` it
-> needed stopped being minted. If you are upgrading from an older Flow Kit,
-> reload the extension (v0.3.2+) and pin `FLOW_PROJECT_ID` — see
-> [Configuration](#configuration). The REST path has been removed; `git log`
-> has it if a payload is ever needed for reference.
+Flow browser health requires current positive evidence:
+`backend_ready=true`, `browser_session_ready=true`,
+`authentication=authenticated`, and `lease_held=true`.
+`paid_dispatch_enabled` and `reconciliation_required` are separate states.
+A healthy browser does not authorize paid generation.
 
 ## Quick Start
 
@@ -201,35 +196,52 @@ pip install -r requirements.txt
 
 ### Run
 
-```bash
-# 1. Load Chrome extension: chrome://extensions → Developer mode → Load unpacked → extension/
-# 2. Open https://flow.google.com/ and sign in — leave the tab open
-# 3. Create a project in the Flow UI and copy its uuid out of the URL
-export FLOW_PROJECT_ID=<that uuid>
+Bind an **existing** persistent Flow browser profile. Do not create or clear a
+profile as part of startup.
 
-# 4. Start agent
+```bash
+# 1. Point FlowKit at the existing browser binding JSON.
+export COMICREELS_FLOW_PROFILE_CONFIG=/absolute/path/to/flow-browser.local.json
+
+# Example binding shape:
+# {
+#   "schema_version": 1,
+#   "browser_kind": "camoufox",
+#   "profile_logical_name": "flow-main",
+#   "user_data_dir": "/absolute/path/to/existing/profile"
+# }
+
+# 2. Confirm that same profile is already signed in to https://flow.google.com/
+
+# 3. Start agent
 source venv/bin/activate   # if using setup.sh
 python -m agent.main
 
-# 5. Verify
+# 4. Verify browser transport readiness
 curl http://127.0.0.1:8100/health
-# {"status":"ok","extension_connected":true}
-curl http://127.0.0.1:8100/api/flow/status
-# {"connected":true,"transport":"batch","flow_project_id":"…","flow_key_present":false}
+# Require:
+#   "backend_ready": true
+#   "browser_session_ready": true
+#   "authentication": "authenticated"
+#   "lease_held": true
+
+curl http://127.0.0.1:8100/api/flow/backend-status
+# "reconciliation_required" and "paid_dispatch_enabled" are separate gates.
 ```
 
-`flow_key_present: false` is expected — the current transport has no bearer
-token. Step 3 is not optional: Flow's project-creation endpoint went with the
-migration, so without a pinned project every request fails `NO_FLOW_PROJECT`.
-You can also pass `flow_project_id` per project on `POST /api/projects`.
+Normal source startup keeps paid dispatch locked. Do not treat browser readiness
+as permission to run paid generation, and never replay an
+`effect=unknown` / `RECONCILIATION_REQUIRED` outcome automatically.
 
 ### Configuration
 
 | Env var | Default | What it does |
 |---------|---------|--------------|
-| `FLOW_PROJECT_ID` | — | The Flow project every RPC is scoped to. Required. |
-| `FLOW_ALLOW_DEGRADED` | `0` | `1` lets scene chaining and r2v fall back to plain i2v instead of failing. |
-| `DEFAULT_PAYGATE_TIER` | `PAYGATE_TIER_TWO` | Carried for the DB and dashboard; no longer selects a model. |
+| `COMICREELS_FLOW_PROFILE_CONFIG` | platform local binding path | Points to the JSON binding for an existing persistent Flow browser profile. |
+| `COMICREELS_FLOW_BACKEND` | browser-only | Optional compatibility setting; only `browser` is accepted. |
+| `FLOW_PROJECT_ID` | — | Optional legacy/internal project pin for callers that do not supply a project id. |
+| `FLOW_ALLOW_DEGRADED` | `0` | `1` permits explicitly documented degraded Veo fallbacks. |
+| `DEFAULT_PAYGATE_TIER` | `PAYGATE_TIER_TWO` | Carried for DB/dashboard compatibility; does not grant paid authorization. |
 
 ### Image API
 
@@ -642,8 +654,8 @@ drawtext` shows whether yours has it.
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /health` | Server + extension status |
-| `GET /api/flow/status` | Extension connection details |
+| `GET /health` | Server + browser session/readiness status |
+| `GET /api/flow/status` | Browser transport, reconciliation and paid-lock status |
 | `GET /api/flow/credits` | User credits + tier |
 | `GET /api/requests/pending` | Pending request queue |
 | `GET /api/projects/{id}/characters` | Entities linked to project |
@@ -698,8 +710,8 @@ Materials control both entity `image_prompt` style and scene `scene_prefix`. Exa
 |----------|---------|-------------|
 | `API_HOST` | `127.0.0.1` | REST API bind address |
 | `API_PORT` | `8100` | REST API port |
-| `WS_HOST` | `127.0.0.1` | WebSocket server bind |
-| `WS_PORT` | `9222` | WebSocket server port |
+| `COMICREELS_FLOW_PROFILE_CONFIG` | platform local binding path | Existing persistent browser profile binding JSON |
+| `COMICREELS_FLOW_BACKEND` | browser-only | Compatibility setting; `extension` is rejected |
 | `POLL_INTERVAL` | `5` | Worker poll interval (seconds) |
 | `MAX_RETRIES` | `5` | Max retries per request |
 | `VIDEO_POLL_TIMEOUT` | `420` | Video gen poll timeout (seconds) |
@@ -709,7 +721,7 @@ Materials control both entity `image_prompt` style and scene `scene_prefix`. Exa
 
 ```
 agent/
-├── main.py              # FastAPI app + WebSocket server
+├── main.py              # FastAPI app + independent dashboard event WebSocket
 ├── config.py            # Configuration (loads models.json, providers.json)
 ├── models.json          # Video/upscale/image model mappings
 ├── providers.json        # Per-role AI CLI provider/model/effort (claude/agy/codex)
@@ -720,7 +732,7 @@ agent/
 ├── api/                 # REST routes (projects, videos, scenes, characters, requests,
 │                         #   flow, models, providers, reviews, materials, music, tts)
 ├── services/
-│   ├── flow_client.py   # WS bridge to extension
+│   ├── flow_client.py       # Flow business API over BrowserFlowBackend
 │   ├── tts.py           # OmniVoice TTS (subprocess-based)
 │   ├── scene_chain.py   # Continuation scene logic
 │   ├── cli_providers.py  # What each AI CLI accepts; role → provider/model/effort
@@ -729,7 +741,6 @@ agent/
 └── worker/
     └── processor.py     # Queue processor + poller
 
-extension/               # Chrome MV3 extension
 skills/                  # AI agent workflow recipes (CLI-agnostic)
 youtube/
 ├── auth.py              # OAuth2 multi-channel auth
@@ -814,62 +825,37 @@ Upload validation checks: max per day, min gap between uploads, avoid dead hours
 
 ## Error Handling
 
-Errors can originate from four layers — Google Flow backend, Chrome extension, FastAPI layer, and the worker itself. The worker's `_handle_failure` (`agent/worker/processor.py:414-481`) routes recovery by **`error_message` string content, not HTTP status**, because Flow lumps many distinct failures under HTTP 400 with varying `details.reason` values.
+Current Flow failures originate from the browser/session layer, Flow itself,
+FastAPI/business logic, or the worker. Browser transport errors are fixed public
+codes; profile paths, account identity and credentials are not exposed.
 
-### Flow-Native Structured Errors
+### Browser/session and reconciliation errors
 
-These arrive in the response body as `data.error.details[].reason`. The worker appends the reason to `error_message` as `"<msg> [<reason>]"`.
+| Error/code | Meaning | Operator action |
+|---|---|---|
+| `BROWSER_NOT_READY` | Current browser session evidence is not ready | Check `/api/flow/backend-status`: session, authentication and lease must all be healthy |
+| `PROFILE_CONFIG_REQUIRED` / `PROFILE_CONFIG_INVALID` | Browser binding is missing or malformed | Point `COMICREELS_FLOW_PROFILE_CONFIG` at the existing valid binding JSON |
+| `PROFILE_NOT_FOUND` / `PROFILE_CHANGED` | Bound profile directory is missing or no longer the same directory | Stop and reconcile the configured existing profile; do not create a replacement automatically |
+| `PROFILE_BUSY` / `PROFILE_NATIVE_BUSY` | Another owner/browser process holds the profile | Stop the competing owner or use the approved existing-session handoff; do not delete profile locks/files |
+| `PROFILE_RECONCILE_REQUIRED` | Lease ownership is ambiguous | Reconcile ownership explicitly before reopening; do not remove state/profile data as a shortcut |
+| `RECONCILIATION_REQUIRED` / `PAID_RECONCILIATION_REQUIRED` | A mutation outcome may already have happened | **Do not auto-resend.** Reconcile durable intent/receipt before any paid retry |
+| `OPERATION_BINDING_REQUIRED` / `OPERATION_BINDING_CONFLICT` | Durable operation→project state is missing/inconsistent | Reconcile the durable operation/project binding; never guess a project and resubmit |
+| `PAID_DISPATCH_DISABLED` | Normal production/startup paid switch is locked | Expected until a separately approved activation/validation path grants it |
+| `PAID_IDEMPOTENCY_REQUIRED` | Paid image request lacks a durable business key | Use the persisted request id; never generate a retry-specific replacement key |
 
-| Reason string | Meaning | Auto-handling |
-|---------------|---------|---------------|
-| `PUBLIC_ERROR_UNSAFE_GENERATION` | Prompt tripped safety filter (people, violence, nudity) | Mark FAILED — rewrite prompt (use alias names, remove triggers) |
-| `PUBLIC_ERROR_USER_QUOTA_REACHED` | Daily credits exhausted | Mark FAILED — wait for reset or upgrade tier |
-| `PUBLIC_ERROR_MODEL_ACCESS_DENIED` | Tier mismatch (e.g. TIER_ONE trying Veo 3 / upscale) | Mark FAILED — auto-detect should downgrade to allowed model |
-| `Requested entity was not found` | Uploaded `media_id` expired (~1h TTL) | Auto-recover via `_recover_entity_not_found` — re-uploads from `image_url`, re-queues PENDING |
-| `Internal error encountered` | Flow backend transient 500 | Exponential backoff retry: `2^retry * 10s`, capped 300s |
-| `reCAPTCHA failed` / `captcha` | Extension couldn't solve CAPTCHA | Retry up to 10× without incrementing `retry_count` (processor.py:454-464) |
-| `PUBLIC_ERROR_UNUSUAL_ACTIVITY` (403, message `reCAPTCHA evaluation failed`) | Google flagged the session as bot-like — usually rapid bursts of submits, VPN/shared IP, or stale auth cookies | NOT auto-recoverable. Pause submits, clear cookies for `google.com` + `labs.google` in Chrome, sign back in at `flow.google.com`, then resubmit with ≥1s gap and ≤5 concurrent. See `/fk-doctor` for full playbook. |
+### Flow-native errors
 
-### HTTP Status Codes
+| Error | Handling |
+|---|---|
+| `PUBLIC_ERROR_UNSAFE_GENERATION` | Terminal for the request; revise content rather than blind retry |
+| `PUBLIC_ERROR_USER_QUOTA_REACHED` | Terminal until quota resets/account policy changes |
+| `PUBLIC_ERROR_MODEL_ACCESS_DENIED` | Use an allowed model/tier; do not bypass |
+| `Requested entity was not found` | Re-upload only through the existing safe media recovery path |
+| `PUBLIC_ERROR_UNUSUAL_ACTIVITY` | Pause submissions and preserve the current profile/session. Do **not** clear cookies/storage or use paid generation as a diagnostic |
+| read/poll unavailable | Keep polling/reconcile using durable operation state; read uncertainty is not permission to submit again |
 
-| Status | Source | Meaning | Handling |
-|--------|--------|---------|----------|
-| **400** | Flow API | Invalid payload, UNSAFE_GENERATION, entity not found (sometimes) | Route by `details.reason` — some are auto-recoverable, others terminal |
-| **401** | Flow API | Should not occur — batchexecute authenticates in the page, not with a bearer | Check the Flow tab is signed in; see `NO_AT_TOKEN` |
-| **403** | Extension (`background.js:432`) | `CAPTCHA_FAILED`, `NO_FLOW_TAB`, or `MODEL_ACCESS_DENIED` | CAPTCHA → retry loop; NO_FLOW_TAB → fail (user must open Flow); tier → fail |
-| **404** | Flow API | `media_id` not found (expired upload) | Same as "Requested entity was not found" — auto re-upload |
-| **429** | Flow API | Rate limited / quota | Back off + retry; if `USER_QUOTA_REACHED` appears, fail |
-| **500** | Flow backend **or** extension fetch exception (`background.js:504`) | Transient server error OR network drop during fetch | Retry with exponential backoff |
-| **502** | FastAPI default (`agent/api/flow.py:80,92`) | Extension returned error without explicit status | Retry; check extension health |
-| **503** | FastAPI (`api/flow.py`) | "Extension not connected" | Worker waits for reconnect — status set to PENDING, not FAILED |
-| **504** | Agent | 60s timeout waiting for extension WS response | Treated as transient; re-queue PENDING |
-
-Status-code detection logic lives in `agent/worker/_parsing.py:_is_error` — a result is an error if `result.error` is set, `status >= 400`, **or** `data.error` is present.
-
-### Extension / Transport Errors
-
-String patterns in `error_message` that the worker recognizes:
-
-| Error message contains | Cause | Handling |
-|-----------------------|-------|----------|
-| `Extension not connected` | Chrome extension offline or WS dropped | 503 returned; worker re-queues PENDING and waits |
-| `extension reconnected` / `extension disconnected` | WS bounce mid-request | Re-queue PENDING without incrementing `retry_count` |
-| `extension_switched` | User switched Flow tabs mid-generation | Re-queue PENDING |
-| `NO_AT_TOKEN` | Flow tab is signed out, on an interstitial, or still booting | Open `flow.google.com`, sign in, let the app load |
-| `NO_FLOW_PROJECT` | No Flow project to scope the RPC to | Pin `FLOW_PROJECT_ID` — **terminal, not retried** |
-| `UNSUPPORTED_ON_BATCH_API` | Upscale / r2v / chaining — payload never captured | See `docs/CAPTURE.md` — **terminal, not retried** |
-| `NO_FLOW_TAB` | No Google Flow tab available for reCAPTCHA | User must open a Flow tab |
-| `Failed to fetch` | Network drop inside extension service worker | Retry with backoff |
-| `timeout` / WS 60s no response | Extension hung mid-request | Re-queue PENDING |
-
-### Worker Retry Policy
-
-`processor.py:_handle_failure` decides terminal vs retryable:
-
-1. **Auto-recover** if message contains `"not found"` → re-upload media, mark PENDING.
-2. **Transient WS** (`reconnected`/`disconnected`/`switched`) → re-queue PENDING, keep `retry_count`.
-3. **CAPTCHA** → retry up to 10× without counting toward `MAX_RETRIES`.
-4. **Default** → increment `retry_count`; if < `MAX_RETRIES` (5), schedule retry with `2^retry * 10s` backoff (capped 300s). Otherwise mark FAILED.
+Unknown paid effects are terminal for automatic retry. The worker records
+`PAID_RECONCILIATION_REQUIRED` and does not return the request to PENDING.
 
 ### YouTube Upload Errors
 
@@ -888,20 +874,20 @@ From `youtube/upload.py` (HTTP errors from YouTube Data API v3):
 
 | Problem | Solution |
 |---------|----------|
-| Extension shows "Agent disconnected" | Start `python -m agent.main` |
-| Extension shows "No token" | Expected on the batch path — there is no bearer token any more |
-| `CAPTCHA_FAILED: NO_FLOW_TAB` | Open a Google Flow tab |
-| 403 `MODEL_ACCESS_DENIED` | Tier mismatch — check `/api/flow/credits`, downgrade model in `models.json` |
-| 403 `PUBLIC_ERROR_UNUSUAL_ACTIVITY` / `reCAPTCHA evaluation failed` | Pause submits, clear cookies for `google.com` + `labs.google` in Chrome, sign back in, then resubmit with ≥1s gap and ≤5 concurrent. Switch network or wait 1–6 h if still blocked |
-| Scene images inconsistent | Check all refs have UUID `media_id` — run `/fk-fix-uuids` |
-| `media_id` starts with `CAMS...` | Run `/fk-fix-uuids` to extract UUID from URL |
-| Upscale "permission denied" | Requires `PAYGATE_TIER_TWO` account |
-| Request stuck in PROCESSING | Check `error_message` history; if extension dropped, restart extension |
-| "Requested entity was not found" spam | Image URLs expired — re-upload via `POST /api/upload-image` or wait for auto-recovery |
-| YouTube upload `invalidTags` | Tag-char overflow; reduce tags (quote overhead bytes count) |
-| Python `cryptography` arch mismatch | Use `python3.10`, not `python3.13` (x86/arm64 binary mismatch) |
+| Browser status is not ready | Inspect `/api/flow/backend-status` for session/authentication/lease fixed codes; preserve the existing bound profile |
+| Authentication is `signed_out` | Stop the workflow and perform the approved interactive sign-in in the same profile; do not clear cookies/storage |
+| `PROFILE_BUSY` | Stop the competing owner; do not delete profile locks or clone the profile |
+| `RECONCILIATION_REQUIRED` | Reconcile durable intent/receipt; do not resend unknown paid work |
+| 403 `PUBLIC_ERROR_UNUSUAL_ACTIVITY` | Pause submissions and preserve the profile/session; resume only after operator-approved recovery |
+| Scene images inconsistent | Check all refs have UUID `media_id`; run `/fk-fix-uuids` |
+| `media_id` starts with `CAMS...` | Run `/fk-fix-uuids` to recover the UUID from the media URL |
+| Request stuck in PROCESSING | Inspect request history + durable operation binding; restart the agent only when safe, not the paid effect |
+| YouTube upload `invalidTags` | Reduce tags to fit the YouTube API limit |
+| Python `cryptography` arch mismatch | Use the supported Python architecture for the environment |
 
-## Changelog
+## Historical migration notes
+
+Older extension-era entries below are historical only and are not current setup or recovery instructions.
 
 Dates are merge dates. Older releases are tagged; `git log` is the full record.
 
@@ -988,7 +974,7 @@ MIT
 - Share scene templates, prompt recipes, and reference-image setups
 - Ask for help when an output isn't matching what you imagined
 - Request features and report bugs you've hit in the wild
-- Trade tips on Google Flow plan limits, Veo i2v behaviour, and Chrome extension setup
+- Trade tips on Google Flow plan limits, Veo i2v behaviour, and persistent browser-profile setup
 - Facebook Post via Extension MCP
 - Right way to build Mobile Application + System
 
