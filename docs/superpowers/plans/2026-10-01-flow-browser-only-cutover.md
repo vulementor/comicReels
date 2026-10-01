@@ -168,10 +168,10 @@
 **Interfaces:**
 - Produces: no shipped extension dependency for FlowKit.
 
-- [ ] Remove extension build/package/runtime references.
-- [ ] Remove obsolete callback/WS configuration used solely by Flow extension transport.
+- [x] Remove extension build/package/runtime references.
+- [x] Remove obsolete callback/WS configuration used solely by Flow extension transport.
 - [ ] Rewrite preflight to browser profile/session readiness.
-- [ ] Preserve non-Flow dashboard/websocket facilities that remain independently required.
+- [x] Preserve non-Flow dashboard/websocket facilities that remain independently required.
 - [ ] Update checkpoint docs.
 
 ### Task 9: Final source integration and validation handoff
