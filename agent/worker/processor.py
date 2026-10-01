@@ -69,10 +69,18 @@ class WorkerController:
         return len(self._active_ids)
 
     async def start(self):
-        """Start the worker loop."""
-        if not get_flow_client().paid_dispatch_enabled:
-            logger.info("Worker disabled: selected Flow backend does not allow paid dispatch")
-            return
+        """Start the worker loop independently from paid-dispatch authorization.
+
+        The queue must remain alive so durable operations submitted before a
+        restart can resume read-only polling/reconciliation. New paid effects
+        remain blocked by the backend's explicit paid authorization boundary.
+        """
+        client = get_flow_client()
+        if not client.paid_dispatch_enabled:
+            logger.info(
+                "Worker running with paid dispatch locked; saved operations may "
+                "resume, new paid effects remain blocked"
+            )
         await self._cleanup_stale_processing()
         await self._run_loop()
 
@@ -493,12 +501,6 @@ async def _handle_failure(rid: str, req: dict, result: dict, retry_after: dict =
         await crud.update_request(rid, status="FAILED", error_message=str(error_msg))
         await _mark_scene_failed(req)
         logger.error("Request %s FAILED (not retryable): %s", rid[:8], error_msg)
-        return
-
-    # WS transient errors (extension disconnect/reconnect): retry without incrementing count
-    if "extension reconnected" in error_lower or "extension disconnected" in error_lower or "extension not connected" in error_lower:
-        await crud.update_request(rid, status="PENDING", error_message=str(error_msg))
-        logger.info("Request %s transient WS error, will retry (no retry increment): %s", rid[:8], error_msg)
         return
 
     # reCAPTCHA errors: retry up to 10 times — deferred dict in main loop handles delay
