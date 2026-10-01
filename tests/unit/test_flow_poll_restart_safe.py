@@ -4,6 +4,7 @@ Development-first policy: source coverage only; execution is deferred until the
 browser-only source pass is complete.
 """
 import inspect
+from types import SimpleNamespace
 
 import pytest
 
@@ -133,3 +134,34 @@ def test_browser_media_read_prefers_explicit_durable_project_scope():
     source = inspect.getsource(FlowBrowserDriver._read_project_for)
     assert "command.rpcid == fb.RPC_MEDIA" in source
     assert "command.project_id" in source
+
+
+@pytest.mark.asyncio
+async def test_operation_project_mismatch_fails_closed_before_listing(monkeypatch):
+    client = FlowClient(backend=Backend())
+    listed = []
+
+    async def operation_payload(*args, **kwargs):
+        return object()
+
+    def read_operation(_payload):
+        return SimpleNamespace(
+            error=None,
+            project_id='22222222-3333-4444-5555-666666666666',
+        )
+
+    async def listing(operation_id, project_id):
+        listed.append((operation_id, project_id))
+        return MEDIA
+
+    monkeypatch.setattr(client, '_batch_payload', operation_payload)
+    monkeypatch.setattr(fb, 'read_operation', read_operation)
+    monkeypatch.setattr(client, '_media_id_for', listing)
+
+    media_id, complaint = await client._find_operation_media(
+        OPERATION, project_id=PROJECT,
+    )
+
+    assert media_id is None
+    assert complaint == 'OPERATION_BINDING_CONFLICT'
+    assert listed == []
