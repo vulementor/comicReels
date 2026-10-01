@@ -176,3 +176,21 @@ def test_review_and_upload_skills_use_browser_preflight():
         assert 'flow_key_present' not in source
         assert "Chrome extension's" not in source
         assert 'browser' in source.lower()
+
+
+def test_all_generated_claude_flow_commands_have_no_stale_extension_preflight():
+    commands = ROOT / '.claude' / 'commands'
+    forbidden = (
+        'extension_connected',
+        'flow_key_present',
+        'NO_FLOW_KEY',
+        'NO_FLOW_TAB',
+        'Extension not connected',
+        'reload extension',
+        'chrome://extensions',
+        '127.0.0.1:9222',
+    )
+    for path in commands.glob('fk-*.md'):
+        source = path.read_text(encoding='utf-8')
+        for marker in forbidden:
+            assert marker not in source, f'{path.name}: {marker}'
