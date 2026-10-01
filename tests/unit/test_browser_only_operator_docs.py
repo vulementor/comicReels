@@ -163,3 +163,12 @@ def test_additional_flow_skills_drop_extension_preflight():
         assert 'Extension not connected' not in source
         assert 'NO_FLOW_TAB' not in source
         assert 'browser' in source.lower()
+
+
+def test_review_and_upload_skills_use_browser_preflight():
+    for path in ('skills/fk-review-video.md', 'skills/fk-upload-image.md'):
+        source = text(path)
+        assert 'extension_connected' not in source
+        assert 'flow_key_present' not in source
+        assert "Chrome extension's" not in source
+        assert 'browser' in source.lower()
