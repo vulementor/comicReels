@@ -1,9 +1,14 @@
-"""Transport boundary shared by the extension and persistent browser backends."""
-from collections.abc import Awaitable, Callable
+"""Stable business transport boundary for browser-only FlowKit."""
 from typing import Protocol
 
 
 class FlowBackend(Protocol):
+    """Business-facing Flow transport contract.
+
+    BrowserFlowBackend is the sole production implementation. Business/creative
+    code depends on this protocol rather than browser internals.
+    """
+
     kind: str
     ready: bool
     paid_dispatch_enabled: bool
@@ -15,49 +20,3 @@ class FlowBackend(Protocol):
     async def execute(self, method: str, params: dict, timeout: float = 300) -> dict: ...
     async def open_project(self, project_id: str) -> dict: ...
     async def ensure_session_project(self, *, title=None, force_new=False) -> dict: ...
-
-
-class ExtensionFlowBackend:
-    """Preserve extension routing; the application owns the WS server lifecycle."""
-
-    kind = "extension"
-    paid_dispatch_enabled = True
-    session_owner_key = "extension"
-
-    def __init__(
-        self,
-        sender: Callable[[str, dict, float], Awaitable[dict]],
-        ready: Callable[[], bool],
-    ):
-        self._sender = sender
-        self._ready = ready
-
-    @property
-    def ready(self) -> bool:
-        return self._ready()
-
-    async def start(self) -> None:
-        pass
-
-    async def close(self) -> None:
-        pass
-
-    async def check_readiness(self) -> dict:
-        return {
-            "backend_kind": self.kind,
-            "ready": self.ready,
-            "paid_dispatch_enabled": self.paid_dispatch_enabled,
-        }
-
-    async def execute(self, method: str, params: dict, timeout: float = 300) -> dict:
-        return await self._sender(method, params, timeout)
-
-    async def open_project(self, project_id: str) -> dict:
-        return {"status": 501, "error": "Extension project scoping is handled by RPC requests"}
-
-    async def ensure_session_project(self, *, title=None, force_new=False) -> dict:
-        return {
-            "status": 501,
-            "error": "Extension session-project lifecycle is handled by existing RPC callers",
-            "effect": "not_submitted",
-        }
