@@ -96,9 +96,12 @@ async def ensure_session_project(client, *, title: str | None = None, force_new:
         now = time.time()
         same_project = local.get("project_id") == pid
         created_at = local.get("created_at") if same_project else None
+        projected_title = data.get("title")
+        if not projected_title and same_project:
+            projected_title = local.get("title")
         state = {
             "project_id": pid,
-            "title": str(data.get("title") or resolved_title),
+            "title": str(projected_title or resolved_title),
             "created_at": float(created_at or now),
             "last_activity_at": now,
         }
