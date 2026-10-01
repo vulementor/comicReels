@@ -552,7 +552,7 @@ Ready-to-use workflow recipes in `skills/` (also available as `/slash-commands` 
 | `/fk-add-material` | Image material system |
 | `/fk-change-model` | View/switch video, image, and upscale model keys |
 | `/fk-dashboard` | Live status in the Claude Code statusline |
-| `/fk-doctor` | Diagnose any error (Flow API, extension, worker, YouTube) and prescribe a fix |
+| `/fk-doctor` | Diagnose Flow/browser-session, reconciliation, worker and YouTube errors safely |
 
 ### AI CLI Compatibility (Skill Consumption)
 
