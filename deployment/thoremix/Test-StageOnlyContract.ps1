@@ -53,6 +53,26 @@ foreach ($forbidden in @('Stop-Process','Restart-Service','Restart-Computer','pa
     Assert-Check (-not $source.Contains($forbidden)) "forbidden StageOnly/release bypass token: $forbidden"
 }
 
+$krpInstalls = @($ast.FindAll({ param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and
+    $node.Extent.Text -match '\bpip\s+install\b' -and
+    $node.Extent.Text.Contains('$dependencies.krp.path')
+}, $true))
+Assert-Check ($krpInstalls.Count -eq 1) 'exactly one pinned KRP refresh command'
+$krpInstall = $krpInstalls[0]
+Assert-Check ($krpInstall.Extent.Text -match '(?<!\S)--force-reinstall(?!\S)') 'KRP refresh must force reinstall'
+Assert-Check ($krpInstall.Extent.Text -match '(?<!\S)--no-deps(?!\S)') 'KRP refresh must not drift dependency pins'
+$ancestor = $krpInstall.Parent
+while ($null -ne $ancestor) {
+    if ($ancestor -is [System.Management.Automation.Language.IfStatementAst]) {
+        foreach ($clause in $ancestor.Clauses) {
+            Assert-Check ($clause.Item1.Extent.Text -notmatch '\$SkipRuntime\b') 'KRP refresh must run in both SkipRuntime modes'
+        }
+    }
+    $ancestor = $ancestor.Parent
+}
+Assert-Check ($source.Contains('Assert-StagedPackageMatchesSource -SourcePackageRoot $krpSourcePackage -InstalledPackageRoot $krpInstalledPackage -Label ''KRP''')) 'KRP staged bytes must be verified against pinned source'
+
 $lock = Read-DependencyLock -Path $DependencyLock
 $expectedPins = @{
     krp='1a0d6d0004cbe522483890d87743522243221719'
@@ -94,6 +114,18 @@ try {
     Expect-Failure { Assert-StageOutputIsolated -StageOutputRoot (Join-Path $junction 'nested') -LiveRoot $live } 'STAGE_OUTPUT_OVERLAPS_LIVE_STABLE'
     Assert-Check ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -eq $sentinelBefore) 'junction guard leaves live sentinel unchanged'
     $passed++; Write-Output 'PASS|junction_overlap_rejected'
+
+    $krpSourceFixture = Join-Path $owned 'krp-source-fixture'
+    $krpInstalledFixture = Join-Path $owned 'krp-installed-fixture'
+    New-Item -ItemType Directory -Path (Join-Path $krpSourceFixture 'nested'),(Join-Path $krpInstalledFixture 'nested') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $krpSourceFixture 'sdk.py'), 'same-sdk')
+    [IO.File]::WriteAllText((Join-Path $krpSourceFixture 'nested\contract.json'), '{"same":true}')
+    Copy-Item -LiteralPath (Join-Path $krpSourceFixture 'sdk.py') -Destination (Join-Path $krpInstalledFixture 'sdk.py')
+    Copy-Item -LiteralPath (Join-Path $krpSourceFixture 'nested\contract.json') -Destination (Join-Path $krpInstalledFixture 'nested\contract.json')
+    Assert-StagedPackageMatchesSource -SourcePackageRoot $krpSourceFixture -InstalledPackageRoot $krpInstalledFixture -Label 'KRP' | Out-Null
+    [IO.File]::AppendAllText((Join-Path $krpInstalledFixture 'sdk.py'), 'tamper')
+    Expect-Failure { Assert-StagedPackageMatchesSource -SourcePackageRoot $krpSourceFixture -InstalledPackageRoot $krpInstalledFixture -Label 'KRP' } 'KRP_PIN_VERIFICATION_FAILED'
+    $passed++; Write-Output 'PASS|krp_forced_refresh_and_byte_pin_verification'
 
     $dep = Join-Path $owned 'dep'
     New-Item -ItemType Directory -Path $dep | Out-Null
