@@ -170,7 +170,7 @@
 
 - [x] Remove extension build/package/runtime references.
 - [x] Remove obsolete callback/WS configuration used solely by Flow extension transport.
-- [ ] Rewrite preflight to browser profile/session readiness.
+- [x] Rewrite preflight to browser profile/session readiness.
 - [x] Preserve non-Flow dashboard/websocket facilities that remain independently required.
 - [ ] Update checkpoint docs.
 
