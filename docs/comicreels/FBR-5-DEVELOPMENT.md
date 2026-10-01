@@ -822,3 +822,74 @@ binding + current browser project listing/media reads must be sufficient after
 restart, while disposable caches may remain optimization-only. Preserve the
 existing pending/success response shape and never turn read uncertainty into a
 paid resubmit.
+
+
+## Browser-only Task 5b — restart-safe media discovery and polling
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; Task 5 still in progress**.
+
+Source commits:
+- Authored restart-safe polling requirements:
+  `642d7b7665d3ac5fcaf2af826b1e2b1fc916910d`.
+- Restart-safe polling/media source rewrite:
+  `7b6e02316a10c8063e9607629b8a7bec89621d38`.
+- Authored explicit durable-project media-read requirement:
+  `9e5a17ee3884855d94fc77bb0b19bb1049dc189f`.
+- Browser media reads prefer explicit durable project scope:
+  `a2e54491b40bb465ea762dc7dca0ad297f5f94f1`.
+- Tighten authored contract so RAM operation caches are forbidden:
+  `53a7824b9a62910026da66eccb4de7cf6fd5705d`.
+- Remove RAM operation caches from correctness path:
+  `2ae2dc6f33c6b15311816e752d12caf16d4fd527`.
+- Authored operation/project mismatch fail-closed requirement:
+  `9c4c8be19e56211129fa47635767d642d66a8079`.
+- Fail closed on operation project binding conflict:
+  `0f153f7043f85d28c26bb0ae0d6c56df02b97ac4`.
+- Correct source assertion to target instance cache fields:
+  `c6068413882547b068e6e76fac282b008e9a6a63`.
+
+### Restart-safe polling contract
+
+- `FlowClient` no longer has `self._operation_polls` or
+  `self._operation_media` correctness state.
+- Every poll round first resolves the operation's project from durable browser
+  state, then consults the current project listing for the operation/media
+  mapping. A new process therefore does not need any prior RAM poll count or
+  media-id cache to discover completion.
+- Operation RPC status remains diagnostic. An unreadable/decayed operation poll
+  does not block the authoritative project-listing lookup.
+- A project id returned by the operation RPC must agree with the durable binding.
+  Mismatch returns `OPERATION_BINDING_CONFLICT` and does not proceed to a
+  success decision from a different project listing.
+- Media reads used by operation polling now carry the durable project id down to
+  the browser command. The driver explicitly prefers that project scope for
+  `RPC_MEDIA`, opens the exact project route and reuses the same leased browser
+  session rather than whichever project happened to be last active.
+- SUCCESS is emitted only after the current listing yields a media id and the
+  current media record yields a video URL. Listing miss, incomplete media URL or
+  read uncertainty remains the existing PENDING business shape.
+- There is no generation submit, retry, CAPTCHA mint or paid authorization in
+  the polling path. Read uncertainty cannot create a paid resend.
+- Production paid dispatch remains locked and Task 4 UNKNOWN/idempotency rules
+  are unchanged.
+
+### Trade-off ruling
+
+Ruling: remove the old "every third poll" listing cadence rather than preserving
+it as process-local optimization. Restart correctness now has no hidden warm-up
+round. Cost if wrong: polling performs more project-listing reads; however the
+browser path already returns only the bounded operation match window to Python,
+and correctness/restart safety takes precedence during this cutover.
+
+Tests executed: **none**. No pytest/import smoke/compile/lint/build, browser/profile
+launch, paid/CAPTCHA request, EXE launch, Stable/ThoRemix mutation or Remote
+Desktop action occurred.
+
+### Next short sub-task
+
+**Task 5c — response-shape/restart-resume source closure.** Reconcile the remaining
+operation/media public response paths and restart/resume handoff against the Task 5
+plan, remove stale extension-era assumptions/comments in this area, author the
+restart/resume contract, and then mark Task 5 source-complete. Do not enter Task 6
+validation or run build/Stable actions.
