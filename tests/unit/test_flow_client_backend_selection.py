@@ -1,9 +1,8 @@
-"""FBR-5-code-2a requirements; execution deferred until the full coding pass.
+"""Browser-only singleton selection requirements.
 
-Exercise the real FlowClient/get_flow_client wiring and selection resolver.
-Only browser construction is replaced; no profile, browser, network or paid call.
+Authored during the development-first coding phase; execution is deferred until
+the dedicated validation phase. No browser/profile/network/paid call is made here.
 """
-import builtins
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType
@@ -11,7 +10,6 @@ from types import ModuleType
 import pytest
 
 from agent.services import flow_client as implementation
-from agent.services.flow_backend import ExtensionFlowBackend
 from agent.services.flow_backend_selection import (
     BACKEND_ENV, BROWSER_DEFAULT_ACCEPTANCE_ENV,
 )
@@ -62,88 +60,77 @@ def browser_factory(monkeypatch):
     return instances, module
 
 
-@pytest.mark.parametrize('explicit,marker,source', [
-    (None, None, 'extension_default'),
-    (None, '0', 'extension_default'),
-    ('extension', '1', 'explicit'),
-    ('extension', 'broken-private-marker', 'explicit'),
+@pytest.mark.parametrize('explicit,legacy_marker', [
+    (None, None),
+    (None, '0'),
+    (None, '1'),
+    (None, 'legacy-obsolete'),
+    ('browser', None),
+    ('browser', '0'),
 ])
-def test_extension_selection_never_imports_browser(monkeypatch, explicit, marker, source):
+def test_get_flow_client_always_constructs_one_browser_without_launch(
+        monkeypatch, browser_factory, explicit, legacy_marker):
     if explicit is not None:
         monkeypatch.setenv(BACKEND_ENV, explicit)
-    if marker is not None:
-        monkeypatch.setenv(BROWSER_DEFAULT_ACCEPTANCE_ENV, marker)
-    original_import = builtins.__import__
+    if legacy_marker is not None:
+        monkeypatch.setenv(BROWSER_DEFAULT_ACCEPTANCE_ENV, legacy_marker)
 
-    def guarded_import(name, *args, **kwargs):
-        if name == 'agent.services.flow_browser_backend':
-            raise AssertionError('extension selection must not import browser dependencies')
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, '__import__', guarded_import)
-    client = implementation.get_flow_client()
-    assert isinstance(client.backend, ExtensionFlowBackend)
-    assert implementation._client_selection.kind == 'extension'
-    assert implementation._client_selection.source == source
-    assert implementation.get_flow_client() is client
-
-
-@pytest.mark.parametrize('explicit,marker,source', [
-    ('browser', None, 'explicit'),
-    ('browser', 'bad-marker-ignored', 'explicit'),
-    (None, '1', 'accepted_browser_default'),
-])
-def test_browser_is_constructed_once_without_launch(monkeypatch, browser_factory,
-                                                     explicit, marker, source):
-    if explicit is not None:
-        monkeypatch.setenv(BACKEND_ENV, explicit)
-    if marker is not None:
-        monkeypatch.setenv(BROWSER_DEFAULT_ACCEPTANCE_ENV, marker)
     instances, _ = browser_factory
     client = implementation.get_flow_client()
+
     assert implementation.get_flow_client() is client
     assert len(instances) == 1 and client.backend is instances[0]
     assert instances[0].starts == 0 and client.connected is False
+    assert client.backend_kind == 'browser'
     assert client.paid_dispatch_enabled is False
-    assert implementation._client_selection.source == source
+    assert implementation._client_selection.kind == 'browser'
+    assert implementation._client_selection.source == 'browser_only'
 
 
-def test_successful_selection_is_not_recomputed_from_changed_environment(monkeypatch,
-                                                                         browser_factory):
-    monkeypatch.setenv(BACKEND_ENV, 'browser')
-    instances, _ = browser_factory
-    client = implementation.get_flow_client()
-    selection = implementation._client_selection
+def test_extension_configuration_is_rejected_before_browser_construction(
+        monkeypatch, browser_factory):
     monkeypatch.setenv(BACKEND_ENV, 'extension')
-    monkeypatch.setenv(BROWSER_DEFAULT_ACCEPTANCE_ENV, PRIVATE)
-    assert implementation.get_flow_client() is client
-    assert implementation._client_selection is selection
-    assert client.backend_kind == 'browser' and len(instances) == 1
+    instances, _ = browser_factory
 
-
-@pytest.mark.parametrize('explicit,marker,code', [
-    ('invalid-private-backend', None, 'FLOW_BACKEND_SELECTION_INVALID'),
-    (None, 'invalid-private-marker', 'FLOW_BROWSER_DEFAULT_ACCEPTANCE_INVALID'),
-])
-def test_bad_configuration_fails_before_constructing_either_backend(monkeypatch,
-                                                                    explicit, marker, code):
-    if explicit is not None:
-        monkeypatch.setenv(BACKEND_ENV, explicit)
-    if marker is not None:
-        monkeypatch.setenv(BROWSER_DEFAULT_ACCEPTANCE_ENV, marker)
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError('invalid selection must not construct a client')
-
-    monkeypatch.setattr(implementation, 'FlowClient', forbidden)
-    with pytest.raises(ValueError, match='^' + code + '$'):
+    with pytest.raises(ValueError, match='^FLOW_EXTENSION_BACKEND_REMOVED$'):
         implementation.get_flow_client()
+
+    assert instances == []
     assert implementation._client is None
     assert implementation._client_selection is None
 
 
-def test_browser_constructor_failure_is_sticky_without_retry_or_fallback(monkeypatch,
-                                                                          browser_factory):
+def test_invalid_configuration_is_rejected_before_browser_construction(
+        monkeypatch, browser_factory):
+    monkeypatch.setenv(BACKEND_ENV, PRIVATE)
+    instances, _ = browser_factory
+
+    with pytest.raises(ValueError, match='^FLOW_BACKEND_SELECTION_INVALID$') as error:
+        implementation.get_flow_client()
+
+    assert PRIVATE not in str(error.value)
+    assert instances == []
+    assert implementation._client is None
+    assert implementation._client_selection is None
+
+
+def test_successful_browser_selection_is_not_recomputed_from_environment(
+        monkeypatch, browser_factory):
+    instances, _ = browser_factory
+    client = implementation.get_flow_client()
+    selection = implementation._client_selection
+
+    monkeypatch.setenv(BACKEND_ENV, 'extension')
+    monkeypatch.setenv(BROWSER_DEFAULT_ACCEPTANCE_ENV, PRIVATE)
+
+    assert implementation.get_flow_client() is client
+    assert implementation._client_selection is selection
+    assert client.backend_kind == 'browser'
+    assert len(instances) == 1
+
+
+def test_browser_constructor_failure_is_sticky_without_retry_or_extension_fallback(
+        monkeypatch, browser_factory):
     instances, module = browser_factory
     attempted = []
 
@@ -152,24 +139,26 @@ def test_browser_constructor_failure_is_sticky_without_retry_or_fallback(monkeyp
         raise RuntimeError(PRIVATE)
 
     module.BrowserFlowBackend = fail
-    monkeypatch.setenv(BACKEND_ENV, 'browser')
     with pytest.raises(RuntimeError, match='^FLOW_BACKEND_INITIALIZATION_FAILED$') as first:
         implementation.get_flow_client()
+
     assert PRIVATE not in str(first.value)
     assert implementation._client is None
     assert implementation._client_selection.kind == 'browser'
+
     monkeypatch.setenv(BACKEND_ENV, 'extension')
     with pytest.raises(RuntimeError, match='^FLOW_BACKEND_INITIALIZATION_FAILED$'):
         implementation.get_flow_client()
-    assert attempted == ['browser'] and instances == []
+
+    assert attempted == ['browser']
+    assert instances == []
     assert implementation._client is None
 
 
 @pytest.mark.asyncio
-async def test_async_browser_start_failure_does_not_replace_selected_client(monkeypatch,
-                                                                           browser_factory):
+async def test_async_browser_start_failure_never_replaces_selected_client(
+        monkeypatch, browser_factory):
     instances, _ = browser_factory
-    monkeypatch.setenv(BACKEND_ENV, 'browser')
     client = implementation.get_flow_client()
 
     async def fail_start():
@@ -178,6 +167,7 @@ async def test_async_browser_start_failure_does_not_replace_selected_client(monk
     instances[0].start = fail_start
     with pytest.raises(RuntimeError, match='^TEST_BROWSER_START_FAILED$'):
         await client.start_backend()
+
     monkeypatch.setenv(BACKEND_ENV, 'extension')
     assert implementation.get_flow_client() is client
     assert client.backend is instances[0] and len(instances) == 1
@@ -185,37 +175,32 @@ async def test_async_browser_start_failure_does_not_replace_selected_client(monk
 
 
 @pytest.mark.asyncio
-async def test_close_does_not_implicitly_reselect_but_fresh_process_can_rollback(monkeypatch,
-                                                                               browser_factory):
+async def test_close_does_not_create_an_extension_rollback_path(
+        monkeypatch, browser_factory):
     instances, _ = browser_factory
-    monkeypatch.setenv(BACKEND_ENV, 'browser')
     client = implementation.get_flow_client()
     await client.close_backend()
+
     monkeypatch.setenv(BACKEND_ENV, 'extension')
     assert implementation.get_flow_client() is client
     assert len(instances) == 1 and instances[0].closes == 1
-    # Simulate fresh process-only singleton state, not a production reset API.
-    monkeypatch.setattr(implementation, '_client', None)
-    monkeypatch.setattr(implementation, '_client_selection', None)
-    monkeypatch.setattr(implementation, '_client_initialization_error', None)
-    replacement = implementation.get_flow_client()
-    assert replacement is not client
-    assert isinstance(replacement.backend, ExtensionFlowBackend)
-    assert len(instances) == 1
 
 
 def test_concurrent_getters_construct_only_one_browser(monkeypatch, browser_factory):
     instances, _ = browser_factory
-    monkeypatch.setenv(BACKEND_ENV, 'browser')
     with ThreadPoolExecutor(max_workers=4) as pool:
         clients = list(pool.map(lambda _: implementation.get_flow_client(), range(12)))
+
     assert all(client is clients[0] for client in clients)
     assert len(instances) == 1 and instances[0].starts == 0
 
 
-def test_direct_injected_client_does_not_consult_environment(monkeypatch):
-    monkeypatch.setenv(BACKEND_ENV, PRIVATE)
+def test_direct_injected_browser_client_does_not_consult_environment(monkeypatch):
+    monkeypatch.setenv(BACKEND_ENV, 'extension')
     backend = BrowserStub()
     client = implementation.FlowClient(backend=backend)
-    assert client.backend is backend and client.paid_dispatch_enabled is False
-    assert implementation._client is None and implementation._client_selection is None
+    assert client.backend is backend
+    assert client.backend_kind == 'browser'
+    assert client.paid_dispatch_enabled is False
+    assert implementation._client is None
+    assert implementation._client_selection is None
