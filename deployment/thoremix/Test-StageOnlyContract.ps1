@@ -46,8 +46,8 @@ Assert-Check ($ready -ge 0 -and $backup -gt $ready) 'StageOnly return must prece
 $stageReturn = $source.IndexOf('return', $ready)
 Assert-Check ($stageReturn -gt $ready -and $stageReturn -lt $backup) 'StageOnly must return before promotion'
 $lockGuard = $source.IndexOf('if (-not $StageOnly) {')
-$runnerLock = $source.IndexOf("runner.lock")
-Assert-Check ($lockGuard -ge 0 -and $runnerLock -gt $lockGuard) 'live runner lock must be behind non-StageOnly guard'
+$runnerLock = if ($lockGuard -ge 0) { $source.IndexOf("runner.lock", $lockGuard) } else { -1 }
+Assert-Check ($lockGuard -ge 0 -and $runnerLock -gt $lockGuard) 'promotion runner lock must be behind non-StageOnly guard'
 foreach ($forbidden in @('Stop-Process','Restart-Service','Restart-Computer','paid_dispatch_enabled=True',
                           'build_paid_validation_session','build_paid_video_validation_session')) {
     Assert-Check (-not $source.Contains($forbidden)) "forbidden StageOnly/release bypass token: $forbidden"
