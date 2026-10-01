@@ -9,6 +9,18 @@ from pathlib import Path
 from .config import Settings, atomic_json, change_settings
 
 
+def root_operation(*args, **kwargs):
+    """Lazy compatibility seam; importing the CLI must stay smoke-safe."""
+    from .core import root_operation as operation
+    return operation(*args, **kwargs)
+
+
+def campaign_operation(*args, **kwargs):
+    """Lazy compatibility seam retained for existing controller/test injection."""
+    from .core import campaign_operation as operation
+    return operation(*args, **kwargs)
+
+
 def status(settings: Settings, *, probe: bool = False) -> dict:
     from .core import Campaign
 
@@ -39,8 +51,6 @@ def status(settings: Settings, *, probe: bool = False) -> dict:
 
 
 def publish(settings: Settings, package: Path) -> dict:
-    from .core import campaign_operation
-
     with campaign_operation(settings):
         return _publish(settings, package)
 
@@ -181,7 +191,7 @@ def main(argv=None) -> int:
             return 2
 
     # Import effect-capable runtime modules only after the side-effect-free smoke path.
-    from .core import Campaign, RunnerBusyError, campaign_operation, root_operation
+    from .core import Campaign, RunnerBusyError
     from .producer import FlowKitProducer
     try:
         if args.command=='retry-production':
