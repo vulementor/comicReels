@@ -340,12 +340,15 @@ function Assert-ManifestHashes {
     $stageFull = [IO.Path]::GetFullPath($Stage).TrimEnd([IO.Path]::DirectorySeparatorChar)
     foreach ($property in $manifest.files.PSObject.Properties) {
         $candidate = [IO.Path]::GetFullPath((Join-Path $Stage ([string]$property.Name)))
-        if (-not $candidate.StartsWith($stageFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
-                -or -not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        $insideStage = $candidate.StartsWith(
+            $stageFull + [IO.Path]::DirectorySeparatorChar,
+            [StringComparison]::OrdinalIgnoreCase)
+        $exists = Test-Path -LiteralPath $candidate -PathType Leaf
+        if (-not $insideStage -or -not $exists) {
             throw 'BUILD_MANIFEST_HASH_MISMATCH'
         }
         $actual = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actual -ne [string]$property.Value) { throw 'BUILD_MANIFEST_HASH_MISMATCH' }
+        if ($actual -ne ([string]$property.Value)) { throw 'BUILD_MANIFEST_HASH_MISMATCH' }
     }
     return $true
 }
