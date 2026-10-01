@@ -1100,3 +1100,74 @@ extension-specific fields/wording from `agent/main.py` health/dashboard snapshot
 and the remaining `agent/api/flow_backend_status.py` legacy description. Keep
 the independent dashboard event WebSocket itself. Then reconcile Task 6 checklist
 and mark Task 6 source-complete.
+
+
+## Browser-only Task 6c — root health/dashboard snapshot + Task 6 source closure
+
+Date: 2026-10-01.
+Status: **TASK 6 SOURCE_COMPLETE; NOT VALIDATED**.
+
+Source commits:
+- Authored root health/dashboard snapshot requirements:
+  `4d567fff78d23891ff74be58166f06806abcc073`.
+- Browser-only root health + dashboard initial snapshot:
+  `10660ce316b7b9837586b25a781690a5dc35ddea`.
+- Browser-only backend-status route description:
+  `5b6a06d2f8e72b7dc7a84253a9f0eae1e3b883e7`.
+
+### Root health contract
+
+- `/health` no longer exposes `extension_connected`, legacy `ws_stats` or
+  cached `client.connected` as Flow readiness.
+- Root health calls the same fresh `read_backend_status()` projection used by
+  Flow API preflight and reports browser transport/session fields:
+  `backend_ready`, `browser_session_ready`, authentication, lease,
+  reconciliation, pending intents and explicit paid-dispatch switch.
+- Root health does not import or construct the paid validation seam and cannot
+  manufacture paid authorization.
+
+### Dashboard snapshot contract
+
+- `/ws/dashboard` remains present as an **independent dashboard event channel**.
+  It continues using `event_bus.subscribe()/unsubscribe()` and existing client
+  origin handling; Task 6 does not remove this non-Flow event facility.
+- Its initial health snapshot now comes from fresh browser backend status rather
+  than `extension_connected` or cached `client.connected`.
+- The snapshot carries browser transport/session readiness, reconciliation and
+  paid-dispatch state independently.
+- The dashboard event WebSocket docstring no longer describes itself as a Flow
+  extension side panel/transport. UI wording and presentation are Task 7.
+
+### Backend status route
+
+- `agent/api/flow_backend_status.py` is described as browser transport status
+  and preflight projection. It retains `Cache-Control: no-store` and performs
+  no authorization/effect.
+
+### Task 6 source closure
+
+Task 6 source obligations are now represented:
+1. Flow readiness no longer depends on `extension_connected`;
+2. selected-backend status no longer exposes extension session/token fields;
+3. direct API 503 messages use browser-session readiness wording;
+4. reconciliation and paid-dispatch state remain independent status dimensions;
+5. root health/dashboard snapshot use fresh browser readiness evidence.
+
+Ruling: keep the dashboard WebSocket itself, including its existing client-origin
+compatibility, because it is an event-bus channel independent from the removed
+Flow extension transport. Cost if wrong: Task 7/8 may further narrow dashboard
+client compatibility, but deleting the channel in Task 6 would break unrelated
+UI event delivery.
+
+### Deferred validation
+
+Tests executed: **none**. No pytest/import smoke/compile/lint/build, browser/profile
+launch, paid/CAPTCHA request, EXE launch, Stable/ThoRemix mutation or Remote
+Desktop action occurred.
+
+### Next plan task
+
+Proceed to **Task 7 — remove extension-specific dashboard UI**. Update dashboard
+types/copy/status rendering to browser session readiness, reconciliation and paid
+state while preserving the independent dashboard WebSocket/event indicator. Source
+GitHub first; no build/test/Stable until the full browser-only source plan closes.
