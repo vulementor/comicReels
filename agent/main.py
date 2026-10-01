@@ -95,17 +95,21 @@ async def lifespan(app: FastAPI):
         init_sdk(client)
         logger.info("Flow Kit starting on %s:%d (backend=%s)", API_HOST, API_PORT, client.backend_kind)
 
+        controller = get_worker_controller()
+        # The queue worker is transport-independent. Browser-first still needs it
+        # to consume pending production/publish work; only the extension WS bridge
+        # is conditional on the selected transport.
+        try:
+            loop = asyncio.get_running_loop()
+            loop.add_signal_handler(signal.SIGTERM, controller.request_shutdown)
+        except (NotImplementedError, AttributeError):
+            pass
+        tasks.append(asyncio.create_task(controller.start()))
+        logger.info("Worker started (backend=%s)", client.backend_kind)
+
         if client.backend_kind == "extension":
-            controller = get_worker_controller()
-            # SIGTERM handler for graceful shutdown (Unix only).
-            try:
-                loop = asyncio.get_running_loop()
-                loop.add_signal_handler(signal.SIGTERM, controller.request_shutdown)
-            except (NotImplementedError, AttributeError):
-                pass
             tasks.append(asyncio.create_task(run_ws_server()))
-            tasks.append(asyncio.create_task(controller.start()))
-            logger.info("WS server + worker started")
+            logger.info("Extension WS server started")
 
         yield
     finally:
