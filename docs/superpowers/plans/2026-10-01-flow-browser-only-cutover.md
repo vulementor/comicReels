@@ -44,11 +44,11 @@
 - Produces: one immutable browser-only startup selection.
 - Removes: extension/default/rollback selection as runtime options.
 
-- [ ] Write authored tests asserting browser is the only accepted backend and extension configuration is rejected as obsolete.
-- [ ] Remove extension fallback/default branches from selection.
-- [ ] Make `get_flow_client()` construct only `BrowserFlowBackend`.
-- [ ] Keep construction/start failures fixed and non-retrying.
-- [ ] Update checkpoint docs.
+- [x] Write authored tests asserting browser is the only accepted backend and extension configuration is rejected as obsolete.
+- [x] Remove extension fallback/default branches from selection.
+- [x] Make `get_flow_client()` construct only `BrowserFlowBackend`.
+- [x] Keep construction/start failures fixed and non-retrying.
+- [x] Update checkpoint docs.
 
 ### Task 2: Make application lifecycle browser-only
 
