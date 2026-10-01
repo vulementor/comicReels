@@ -11,16 +11,10 @@ DB_PATH = BASE_DIR / "flow_agent.db"
 API_HOST = os.environ.get("API_HOST", "127.0.0.1")
 API_PORT = int(os.environ.get("API_PORT", "8100"))
 
-# ─── WebSocket Server (extension connects here) ─────────────
-WS_HOST = os.environ.get("WS_HOST", "127.0.0.1")
-WS_PORT = int(os.environ.get("WS_PORT", "9222"))
-
-
 # ─── Flow batchexecute ──────────────────────────────────────
-# Every call is signed in the page with the session cookie plus a per-page `at`
-# token, so the extension runs it inside a signed-in flow.google.com tab. This
-# is the only transport; the REST path it replaced was removed once Flow stopped
-# minting the bearer it needed.
+# Every call is executed inside the leased signed-in flow.google.com browser
+# session, where page cookies and per-page request state remain authoritative.
+# BrowserFlowBackend is the sole Flow transport.
 
 # The Flow project every RPC is scoped to. Project creation went with the old
 # labs.google tRPC endpoint, so a project is made once in the Flow UI and its
