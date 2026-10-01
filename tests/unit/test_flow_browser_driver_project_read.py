@@ -5,6 +5,7 @@ only until the separate validation pass runs them against the completed coding p
 """
 import hashlib
 import json
+from types import SimpleNamespace
 from pathlib import Path
 import pytest
 
