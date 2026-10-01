@@ -76,8 +76,15 @@ def test_worker_docstring_does_not_describe_retired_extension_transport():
 
 def test_flow_batch_transport_description_is_browser_only():
     source = text('agent/services/flow_batch.py')
-    assert 'job of the Chrome extension' not in source
+    # flow_batch is an envelope/codec layer. Historical prose may describe how
+    # captures were once issued, but active extension runtime protocol must not
+    # reappear here.
     assert 'browser' in source.lower()
+    assert 'ExtensionFlowBackend' not in source
+    assert 'extension_connected' not in source
+    assert 'ws_stats' not in source
+    assert '_send_extension' not in source
+    assert 'run_ws_server' not in source
 
 
 def test_live_flow_surfaces_have_no_retired_extension_protocol_markers():
