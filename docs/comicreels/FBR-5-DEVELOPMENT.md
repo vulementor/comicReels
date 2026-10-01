@@ -983,3 +983,58 @@ Remove extension readiness/session/token fields and messages from Flow status,
 make browser session readiness the only transport preflight, and continue exposing
 reconciliation and paid-dispatch state independently. Source GitHub first; no
 tests/build/Stable until the complete browser-only source plan is finished.
+
+
+## Browser-only Task 6a — status projection/service
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; Task 6 still in progress**.
+
+Source commits:
+- Authored browser-only status projection requirements:
+  `92e5ab81929017360fa206b81052b60d9e5c166f`.
+- Keep extension-compatibility assertion source-only:
+  `5d2c6238be6ffdacabe0103364874380760dbfd7`.
+- Browser-session-only backend status service:
+  `48dcfde5c5370f2b148ac013de84501d87076891`.
+
+### Status contract
+
+- `flow_backend_status.py` now has one transport: `browser`.
+- Selection metadata recognizes only the browser-only source. Historical
+  `extension_default`, `accepted_browser_default` and extension readiness
+  branches are removed from this service.
+- Browser transport readiness requires all current positive evidence:
+  backend `ready=True`, `session_ready=True`, authenticated session and held
+  profile lease.
+- `preflight` is browser-only:
+  `{ready, transport: "browser", session_required: True}`.
+  It no longer contains `extension_required`.
+- Status projection no longer exposes `extension_connected` or
+  `browser_default_candidate`.
+- `read_backend_status()` no longer reads `client.extension_connected` or
+  `client.ws_stats`; status cannot accidentally depend on the removed
+  extension compatibility surface.
+- A non-browser actual backend is treated as
+  `BACKEND_SELECTION_MISMATCH`; there is no fallback/alternate transport.
+- `RECONCILIATION_REQUIRED` is visible independently and does not mark an
+  otherwise healthy browser read/session transport as down.
+- `paid_dispatch_enabled` is also independent. It reports only the explicit
+  backend switch and is never inferred from session readiness or reconciliation.
+- On readiness read failure, a known disabled paid switch may remain `False`;
+  an enabled switch is projected as unknown rather than claiming it is usable.
+- Private/unrecognized observation fields and errors remain allowlisted/sanitized.
+
+### Deferred validation
+
+Tests executed: **none**. No pytest/import smoke/compile/lint/build, browser/profile
+launch, paid/CAPTCHA request, EXE launch, Stable/ThoRemix mutation or Remote
+Desktop action occurred.
+
+### Next short sub-task
+
+**Task 6b — direct Flow API preflight/messages.** Replace every
+`"Extension not connected"`, extension status field and Flow-key/extension-session
+diagnostic in `agent/api/flow.py` with browser session readiness semantics. Keep
+generation paid lock/reconciliation explicit and do not create a validation
+authorization route.
