@@ -2,6 +2,7 @@ import hashlib
 import importlib
 import json
 import os
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -41,6 +42,7 @@ def _sha(path: Path) -> str:
 
 def _write_stage(stage: Path) -> tuple[Path, Path]:
     stage.mkdir()
+    shutil.copytree(REPO_ROOT / "agent", stage / "source" / "agent")
     settings = isolated_stage_settings(stage)
     settings.save()
     probe = stage / "probe.txt"
@@ -76,11 +78,16 @@ def test_official_smoke_cli_is_read_only_and_reports_critical_imports(tmp_path):
     before = _snapshot(stage)
     manifest_before = _sha(manifest_path)
     settings_before = _sha(settings_path)
-    env = dict(os.environ, PYTHONUTF8="1")
+    env = dict(
+        os.environ,
+        PYTHONUTF8="1",
+        PYTHONDONTWRITEBYTECODE="1",
+        PYTHONPATH=str(stage / "source"),
+    )
 
     completed = subprocess.run(
         [sys.executable, "-m", "agent.thoremix.cli", "--root", str(stage), "smoke"],
-        cwd=REPO_ROOT,
+        cwd=stage,
         env=env,
         text=True,
         encoding="utf-8",
