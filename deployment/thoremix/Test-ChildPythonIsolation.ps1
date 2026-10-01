@@ -22,7 +22,7 @@ foreach($definition in $definitions){ . ([scriptblock]::Create($definition.Exten
 $owned=Join-Path ([IO.Path]::GetTempPath()) ('thoremix-child-env-' + [guid]::NewGuid().ToString('N'))
 $stage=Join-Path $owned 'stage'
 $runtimeRoot=Join-Path $stage 'runtime\venv'
-$installTarget=Join-Path $stage 'runtime\installed'
+$sitePackages=Join-Path $runtimeRoot 'Lib\site-packages'
 $wheelDir=Join-Path $stage 'fixture'
 $poisonRoot=Join-Path $owned 'live-sentinel'
 $poisonTarget=Join-Path $poisonRoot 'pip-target'
@@ -60,8 +60,10 @@ try {
         'stage_probe-0.0.0.dist-info/WHEEL'=([string]::Join([Environment]::NewLine,@(
             'Wheel-Version: 1.0','Generator: thoremix-contract','Root-Is-Purelib: true','Tag: py3-none-any',''
         )))
+        'stage_probe-0.0.0.data/data/share/stage_probe/prefix-data.txt'='PREFIX-DATA-OK'
         'stage_probe-0.0.0.dist-info/RECORD'=([string]::Join([Environment]::NewLine,@(
             'stage_probe/__init__.py,,',
+            'stage_probe-0.0.0.data/data/share/stage_probe/prefix-data.txt,,',
             'stage_probe-0.0.0.dist-info/METADATA,,',
             'stage_probe-0.0.0.dist-info/WHEEL,,',
             'stage_probe-0.0.0.dist-info/RECORD,,',
@@ -92,7 +94,7 @@ try {
     $env:PYTHONPATH=$poisonPythonPath
     $env:APPDATA=$poisonAppData
 
-    $runtimeEvidence=Assert-StagedPythonRuntime -StageRoot $stage -Interpreter $stagedPython -SitePackages $installTarget
+    $runtimeEvidence=Assert-StagedPythonRuntime -StageRoot $stage -Interpreter $stagedPython -SitePackages $sitePackages
     Assert-Check ($runtimeEvidence.exe_inside_stage -eq $true) 'actual sys.executable is inside stage'
     Assert-Check ($runtimeEvidence.prefix_inside_stage -eq $true) 'actual sys.prefix is inside stage'
 
@@ -113,7 +115,7 @@ print(json.dumps({
     Assert-Check ($probeData.env.PIP_CONFIG_FILE -eq 'NUL') 'child ignores pip config files'
     Assert-Check ($null -eq $probeData.poison_spec) 'parent PYTHONPATH cannot inject imports'
 
-    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallTarget $installTarget -Options @('--no-index','--no-deps') -Packages @($wheel) | Out-Null
+    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallPrefix $runtimeRoot -Options @('--no-index','--no-deps') -Packages @($wheel) | Out-Null
 
     $importCode=@'
 import json, pathlib, stage_probe, sys
@@ -124,13 +126,60 @@ print(json.dumps({
     "executable": str(pathlib.Path(sys.executable).resolve()),
 }))
 '@
-    $importResult=Invoke-IsolatedStagedPython -StageRoot $stage -Interpreter $stagedPython -Arguments @('-c',$importCode) -PythonPath @($installTarget)
+    $importResult=Invoke-IsolatedStagedPython -StageRoot $stage -Interpreter $stagedPython -Arguments @('-c',$importCode)
     Assert-Check ($importResult.ExitCode -eq 0) 'installed module import exits zero'
     $importData=$importResult.Stdout.Trim() | ConvertFrom-Json
     Assert-Check ($importData.value -eq 'inside-stage') 'stage module wins over poisoned PYTHONPATH'
-    Assert-Check ([IO.Path]::GetFullPath($importData.module).StartsWith([IO.Path]::GetFullPath($installTarget),[StringComparison]::OrdinalIgnoreCase)) 'module file is inside explicit install target'
+    Assert-Check ([IO.Path]::GetFullPath($importData.module).StartsWith([IO.Path]::GetFullPath($sitePackages),[StringComparison]::OrdinalIgnoreCase)) 'module file is inside staged sys.prefix site-packages'
     Assert-Check ([IO.Path]::GetFullPath($importData.prefix).StartsWith([IO.Path]::GetFullPath($stage),[StringComparison]::OrdinalIgnoreCase)) 'import validation sys.prefix inside stage'
     Assert-Check ([IO.Path]::GetFullPath($importData.executable).StartsWith([IO.Path]::GetFullPath($stage),[StringComparison]::OrdinalIgnoreCase)) 'import validation executable inside stage'
+
+    $prefixData=Join-Path $runtimeRoot 'share\stage_probe\prefix-data.txt'
+    Assert-Check (Test-Path -LiteralPath $prefixData -PathType Leaf) 'wheel data_files installed under staged sys.prefix share'
+    Assert-Check ((Get-Content -LiteralPath $prefixData -Raw).Trim() -eq 'PREFIX-DATA-OK') 'wheel data_files content preserved'
+
+    $outsidePrefix=Join-Path $poisonRoot 'outside-prefix'
+    New-Item -ItemType Directory -Path $outsidePrefix -Force | Out-Null
+    $outsideCaught=$null
+    try {
+        Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallPrefix $outsidePrefix -Options @('--no-index','--no-deps') -Packages @($wheel) | Out-Null
+    } catch {
+        $outsideCaught=$_.Exception.Message
+    }
+    Assert-Check ($null -ne $outsideCaught -and $outsideCaught.Contains('STAGED_CHILD_PATH_ESCAPES_STAGE')) 'pip prefix outside stage rejected before install'
+
+    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallPrefix $runtimeRoot -Options @('--upgrade') -Packages @('ffpyplayer==4.5.3') | Out-Null
+    $ffProbeCode=@'
+import json, pathlib, sys, ffpyplayer
+from ffpyplayer.player import MediaPlayer
+prefix = pathlib.Path(sys.prefix).resolve()
+site = (prefix / "Lib" / "site-packages").resolve()
+module = pathlib.Path(ffpyplayer.__file__).resolve()
+dep_bins = [pathlib.Path(p).resolve() for p in ffpyplayer.dep_bins]
+def inside(path, root):
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+print(json.dumps({
+    "module": str(module),
+    "prefix": str(prefix),
+    "dep_bins": [str(p) for p in dep_bins],
+    "module_inside_site": inside(module, site),
+    "all_dep_bins_inside_prefix": bool(dep_bins) and all(inside(p, prefix) for p in dep_bins),
+    "prefix_ffmpeg": (prefix / "share" / "ffpyplayer" / "ffmpeg" / "bin").is_dir(),
+    "prefix_sdl": (prefix / "share" / "ffpyplayer" / "sdl" / "bin").is_dir(),
+    "media_player_loaded": MediaPlayer is not None,
+}))
+'@
+    $ffProbe=Invoke-IsolatedStagedPython -StageRoot $stage -Interpreter $stagedPython -Arguments @('-c',$ffProbeCode)
+    Assert-Check ($ffProbe.ExitCode -eq 0) 'ffpyplayer MediaPlayer imports in isolated staged prefix'
+    $ffData=$ffProbe.Stdout.Trim() | ConvertFrom-Json
+    Assert-Check ($ffData.module_inside_site -eq $true) 'ffpyplayer module imported from staged sys.prefix site-packages'
+    Assert-Check ($ffData.all_dep_bins_inside_prefix -eq $true) 'ffpyplayer dependency bins remain inside staged sys.prefix'
+    Assert-Check ($ffData.prefix_ffmpeg -eq $true -and $ffData.prefix_sdl -eq $true) 'ffpyplayer wheel data installed under staged sys.prefix share'
+    Assert-Check ($ffData.media_player_loaded -eq $true) 'ffpyplayer MediaPlayer native module loaded'
 
     Assert-Check ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -eq $sentinelHash) 'live sentinel unchanged'
     Assert-Check ((Get-FileHash -LiteralPath $pipConfig -Algorithm SHA256).Hash -eq $pipConfigHash) 'poison pip.ini unchanged'
@@ -149,7 +198,9 @@ print(json.dumps({
     Write-Output 'PASS|child_env_poison_isolated'
     Write-Output 'PASS|pip_config_ignored_without_tls_disable'
     Write-Output 'PASS|actual_prefix_and_module_paths_inside_stage'
-    Write-Output 'RESULT|passed=3|failed=0|build_executed=False|stable_touched=False'
+    Write-Output 'PASS|wheel_data_files_land_under_staged_prefix'
+    Write-Output 'PASS|ffpyplayer_real_wheel_import_and_dep_bins'
+    Write-Output 'RESULT|passed=5|failed=0|build_executed=False|stable_touched=False'
 } finally {
     foreach($name in $poisonNames){ [Environment]::SetEnvironmentVariable($name,$saved[$name],'Process') }
     Remove-Item -LiteralPath $owned -Recurse -Force -ErrorAction SilentlyContinue
