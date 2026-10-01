@@ -1,15 +1,14 @@
-"""Flow Kit — FastAPI + WebSocket server entry point."""
+"""Flow Kit — FastAPI + dashboard WebSocket entry point."""
 import asyncio
 import json
 import logging
 import signal
 from contextlib import asynccontextmanager
 
-import websockets
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from agent.config import API_HOST, API_PORT, WS_HOST, WS_PORT
+from agent.config import API_HOST, API_PORT
 from agent.db.schema import init_db, close_db
 from agent.api.characters import router as characters_router
 from agent.api.projects import router as projects_router
@@ -34,40 +33,6 @@ from agent.sdk import init_sdk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
-
-
-# ─── WebSocket Server for Extension ─────────────────────────
-
-async def ws_handler(websocket):
-    """Handle a Chrome extension WebSocket connection."""
-    client = get_flow_client()
-    client.set_extension(websocket)
-    logger.info("Extension connected from %s", websocket.remote_address)
-
-    # Send callback secret so extension can authenticate HTTP callbacks
-    await websocket.send(json.dumps({"type": "callback_secret", "secret": _CALLBACK_SECRET}))
-
-    try:
-        async for raw in websocket:
-            try:
-                data = json.loads(raw)
-                await client.handle_message(data, websocket)
-            except json.JSONDecodeError:
-                logger.warning("Invalid JSON from extension")
-            except Exception as e:
-                logger.exception("Error handling extension message: %s", e)
-    except websockets.ConnectionClosed:
-        pass
-    finally:
-        client.clear_extension(websocket)
-        logger.info("Extension disconnected")
-
-
-async def run_ws_server():
-    """Run WebSocket server for extension connections."""
-    async with websockets.serve(ws_handler, WS_HOST, WS_PORT):
-        logger.info("WebSocket server listening on ws://%s:%d", WS_HOST, WS_PORT)
-        await asyncio.Future()  # run forever
 
 
 # ─── FastAPI App ─────────────────────────────────────────────
@@ -96,20 +61,16 @@ async def lifespan(app: FastAPI):
         logger.info("Flow Kit starting on %s:%d (backend=%s)", API_HOST, API_PORT, client.backend_kind)
 
         controller = get_worker_controller()
-        # The queue worker is transport-independent. Browser-first still needs it
-        # to consume pending production/publish work; only the extension WS bridge
-        # is conditional on the selected transport.
+        # Browser-only Flow transport does not own the business queue: the worker
+        # remains an application service and must consume pending production and
+        # publishing work whenever the app is running.
         try:
             loop = asyncio.get_running_loop()
             loop.add_signal_handler(signal.SIGTERM, controller.request_shutdown)
         except (NotImplementedError, AttributeError):
             pass
         tasks.append(asyncio.create_task(controller.start()))
-        logger.info("Worker started (backend=%s)", client.backend_kind)
-
-        if client.backend_kind == "extension":
-            tasks.append(asyncio.create_task(run_ws_server()))
-            logger.info("Extension WS server started")
+        logger.info("Worker started (backend=browser)")
 
         yield
     finally:
@@ -179,35 +140,6 @@ app.include_router(models_router)
 app.include_router(providers_router)
 app.include_router(active_project_router)
 app.include_router(comicreels_router, prefix="/api")
-
-
-import secrets as _secrets
-_CALLBACK_SECRET = _secrets.token_urlsafe(32)
-
-
-@app.post("/api/ext/callback")
-async def ext_callback(request: Request):
-    """HTTP callback for extension to deliver API responses.
-
-    Replaces ws.send() for response delivery — immune to WS disconnect.
-    Extension POSTs {id, status, data, error} here instead of sending via WS.
-    Requires X-Callback-Secret header matching the secret sent to extension on WS connect.
-    """
-    data = await request.json()
-    client = get_flow_client()
-    req_id = data.get("id")
-    logger.info("ext/callback: id=%s pending=%d match=%s",
-                str(req_id)[:8] if req_id else "none",
-                len(client._pending),
-                "yes" if req_id and req_id in client._pending else "no")
-    if req_id and req_id in client._pending:
-        future = client._pending[req_id]
-        try:
-            future.set_result(data)
-        except asyncio.InvalidStateError:
-            pass
-        return {"ok": True}
-    return {"ok": False, "reason": "no matching pending request"}
 
 
 @app.get("/health")
