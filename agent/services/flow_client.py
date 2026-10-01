@@ -356,7 +356,7 @@ class FlowClient:
         finally:
             self._sync_in_progress = False
 
-    _UUID_RE = __import__("re").compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+    _UUID_RE = __import__("re").compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
     # flow-content.google is where the rewritten frontend serves media from;
     # the other two are the pre-migration hosts, still seen on older media.
     _SAFE_URL_RE = __import__("re").compile(
@@ -742,7 +742,7 @@ class FlowClient:
             async def run_wave(indices: list[int]) -> dict[int, object]:
                 # Flow's UI starts variants as separate single-image RPCs with a
                 # short cadence instead of a burst. Apply the cadence relative
-                # to each wave, while Google performs the generation work
+                # to each wave, while Google still performs the generation work
                 # concurrently after each request has been accepted.
                 tasks = [
                     submit_once(index, IMAGE_UI_SUBMIT_OFFSETS_S[position])
