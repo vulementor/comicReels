@@ -13,7 +13,7 @@ Dán **một ảnh truyện** có 2/3/4/nhiều khung. Tự tìm thứ tự đ�
 - Prompt đúng chưa bảo đảm video sinh ra đúng phát âm/lip-sync: phải xem và nghe thực tế.
 
 ## MVP và ngoài phạm vi
-MVP kết thúc ở ảnh 9:16 được duyệt, transcript và speaker mapping đã xác minh, shot plan + prompt và xuất thủ công. Tích hợp Flow có phí, video batch, ghép và đóng gói là các đoạn riêng. Tận dụng nền FastAPI/React/Chrome Extension của FlowKit, không viết lại toàn app và không âm thầm đăng YouTube.
+MVP kết thúc ở ảnh 9:16 được duyệt, transcript và speaker mapping đã xác minh, shot plan + prompt và xuất thủ công. Tích hợp Flow có phí, video batch, ghép và đóng gói là các đoạn riêng. Tận dụng nền FastAPI/React và browser-only Flow backend của FlowKit, không viết lại toàn app và không âm thầm đăng YouTube.
 
 ## Browser-native ChatGPT AI
 ComicReels tích hợp public Python SDK của `vulementor/gpt_fullproxy`. SDK điều khiển phiên ChatGPT Web đã đăng nhập qua physical browser profile, upload ảnh nguồn/reference và tải artifact đã xác minh. ComicReels chỉ truyền **đường dẫn profile**, không đọc/xuất cookie, token, password hay session secret. Trên macOS của anh, launcher ưu tiên profile `~/Library/Application Support/ZaloConnect/chatgpt-web-profile` khi tồn tại.
