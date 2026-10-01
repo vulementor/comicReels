@@ -4,12 +4,16 @@ Usage: `/fk-gen-refs <project_id>`
 
 If no project_id provided, use `GET /api/active-project` or list projects via `GET /api/projects`.
 
-## Step 1: Check health
+## Step 1: Check browser transport health
 
 ```bash
 curl -s http://127.0.0.1:8100/health
 ```
-Must have `extension_connected: true`. Abort if not.
+
+Require `backend_ready=true`, `browser_session_ready=true`,
+`authentication=authenticated`, and `lease_held=true`. Browser readiness does
+not grant paid authorization; if `paid_dispatch_enabled=false`, generation must
+remain locked. Abort rather than bypassing the gate.
 
 ## Step 2: Get entities
 
