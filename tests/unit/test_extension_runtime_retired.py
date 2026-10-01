@@ -66,3 +66,9 @@ def test_no_profile_or_browser_data_cleanup_is_added():
     assert 'rm -rf' not in setup
     assert 'clear cookies' not in combined.lower()
     assert 'sign out' not in combined.lower()
+
+
+def test_worker_docstring_does_not_describe_retired_extension_transport():
+    worker = text('agent/worker/processor.py')
+    assert 'via Chrome extension' not in worker
+    assert 'browser' in worker.splitlines()[0].lower()
