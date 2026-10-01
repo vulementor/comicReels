@@ -177,6 +177,16 @@ class StoryOperations:
     def _run(self, name, req, directory, progress, previous=None):
         if (name in {'images', 'video', 'highest'}
                 and getattr(self.settings, 'paid_operations_authorized', True) is not True):
+            if previous is not None:
+                # An UNKNOWN journal already crossed a possible paid boundary.
+                # Locking paid work may defer reconciliation, but it cannot prove
+                # the prior effect was not submitted or erase its durable identity.
+                prior = previous.get('result') if isinstance(previous, dict) else None
+                preserved = dict(prior) if isinstance(prior, dict) else {}
+                preserved['state'] = 'uncertain'
+                preserved.pop('not_submitted', None)
+                preserved.setdefault('reason', 'PAID_OPERATIONS_LOCKED_RECONCILIATION_PENDING')
+                return preserved
             return {'state': 'blocked', 'not_submitted': True, 'reason': 'PAID_OPERATIONS_LOCKED'}
         source = Path(req['source'])
         if name == 'analysis':
