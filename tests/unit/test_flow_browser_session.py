@@ -290,6 +290,185 @@ def test_crashed_owner_requires_reconciliation_even_after_os_unlock(config):
         pass
 
 
+def _provider_marker(config, *, pid=4242, started_at='windows-filetime:100', legacy=False,
+                     host=None, token='a' * 48):
+    data = {'host': host or implementation().socket.gethostname(), 'pid': pid,
+            'owner_token': token}
+    if not legacy:
+        data.update(schema_version=2, pid_started_at=started_at)
+    marker = config.user_data_dir / '.flow-browser-lease.json'
+    marker.write_text(json.dumps(data, separators=(',', ':')), encoding='utf-8')
+    return marker, marker.read_bytes()
+
+
+def _dead_then_current_process(m, stale_pid, started='linux-proc-start:999'):
+    def observe(pid):
+        if pid == stale_pid:
+            return m._ProcessObservation('dead')
+        assert pid == m.os.getpid()
+        return m._ProcessObservation('alive', started)
+    return observe
+
+
+def test_default_acquire_never_reclaims_confirmed_stale_provider_marker(config, monkeypatch):
+    m = implementation()
+    marker, before = _provider_marker(config)
+    monkeypatch.setattr(m, '_observe_process',
+                        lambda *_: pytest.fail('default acquire must not inspect stale owner'))
+    monkeypatch.setattr(m, '_native_profile_available',
+                        lambda *_: pytest.fail('default acquire must not probe takeover'))
+    with pytest.raises(m.FlowBrowserError, match='PROFILE_RECONCILE_REQUIRED'):
+        m.FlowProfileLease(config).acquire()
+    assert marker.read_bytes() == before
+    assert not list(config.user_data_dir.glob('.flow-browser-lease.reconciled-*'))
+
+
+def test_explicit_reconcile_rejects_active_owner_and_preserves_marker(config, monkeypatch):
+    m = implementation()
+    marker, before = _provider_marker(config, started_at='windows-filetime:100')
+    monkeypatch.setattr(m, '_observe_process',
+                        lambda pid: m._ProcessObservation('alive', 'windows-filetime:100'))
+    monkeypatch.setattr(m, '_native_profile_available',
+                        lambda *_: pytest.fail('active owner must block before native takeover probe'))
+    lease = m.FlowProfileLease(config)
+    with pytest.raises(m.FlowBrowserError, match='PROFILE_RECONCILE_REQUIRED'):
+        lease.reconcile_stale_and_acquire()
+    assert not lease.held and marker.read_bytes() == before
+    assert not list(config.user_data_dir.glob('.flow-browser-lease.reconciled-*'))
+
+
+def test_explicit_reconcile_rejects_pid_reuse_even_with_same_pid(config, monkeypatch):
+    m = implementation()
+    marker, before = _provider_marker(config, started_at='windows-filetime:100')
+    monkeypatch.setattr(m, '_observe_process',
+                        lambda pid: m._ProcessObservation('alive', 'windows-filetime:200'))
+    lease = m.FlowProfileLease(config)
+    with pytest.raises(m.FlowBrowserError, match='PROFILE_RECONCILE_REQUIRED'):
+        lease.reconcile_stale_and_acquire()
+    assert not lease.held and marker.read_bytes() == before
+
+
+def test_explicit_reconcile_rejects_unknown_owner(config, monkeypatch):
+    m = implementation()
+    marker, before = _provider_marker(config)
+    monkeypatch.setattr(m, '_observe_process', lambda pid: m._ProcessObservation('unknown'))
+    lease = m.FlowProfileLease(config)
+    with pytest.raises(m.FlowBrowserError, match='PROFILE_RECONCILE_REQUIRED'):
+        lease.reconcile_stale_and_acquire()
+    assert not lease.held and marker.read_bytes() == before
+
+
+@pytest.mark.parametrize('payload', [
+    '{not json',
+    json.dumps({'schema_version': 2, 'host': 'host', 'pid': 1,
+                'pid_started_at': 'not-an-identity', 'owner_token': 'a' * 48}),
+    json.dumps({'host': 'host', 'pid': 1, 'owner_token': 'short'}),
+    json.dumps({'schema_version': 3, 'host': 'host', 'pid': 1,
+                'pid_started_at': 'windows-filetime:1', 'owner_token': 'a' * 48}),
+])
+def test_explicit_reconcile_rejects_invalid_marker_without_rewriting(config, payload):
+    m = implementation()
+    marker = config.user_data_dir / '.flow-browser-lease.json'
+    marker.write_text(payload, encoding='utf-8')
+    before = marker.read_bytes()
+    lease = m.FlowProfileLease(config)
+    with pytest.raises(m.FlowBrowserError, match='PROFILE_RECONCILE_REQUIRED'):
+        lease.reconcile_stale_and_acquire()
+    assert not lease.held and marker.read_bytes() == before
+
+
+def test_explicit_reconcile_rejects_foreign_host(config):
+    m = implementation()
+    marker, before = _provider_marker(config, host='another-host.invalid')
+    lease = m.FlowProfileLease(config)
+    with pytest.raises(m.FlowBrowserError, match='PROFILE_RECONCILE_REQUIRED'):
+        lease.reconcile_stale_and_acquire()
+    assert not lease.held and marker.read_bytes() == before
+
+
+def test_explicit_reconcile_rejects_native_profile_busy_after_dead_owner(config, monkeypatch):
+    m = implementation()
+    marker, before = _provider_marker(config)
+    monkeypatch.setattr(m, '_observe_process', _dead_then_current_process(m, 4242))
+    calls = []
+    def unavailable(bound):
+        calls.append(bound)
+        return False
+    monkeypatch.setattr(m, '_native_profile_available', unavailable)
+    lease = m.FlowProfileLease(config)
+    with pytest.raises(m.FlowBrowserError, match='PROFILE_RECONCILE_REQUIRED'):
+        lease.reconcile_stale_and_acquire()
+    assert calls == [config]
+    assert not lease.held and marker.read_bytes() == before
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_explicit_reconcile_archives_confirmed_stale_marker_and_acquires(config, monkeypatch, legacy):
+    m = implementation()
+    marker, before = _provider_marker(config, legacy=legacy)
+    monkeypatch.setattr(m, '_observe_process', _dead_then_current_process(m, 4242))
+    lease = m.FlowProfileLease(config)
+    native_checks = []
+    def available(bound):
+        assert lease.held
+        native_checks.append(bound)
+        return True
+    monkeypatch.setattr(m, '_native_profile_available', available)
+
+    lease.reconcile_stale_and_acquire()
+    try:
+        assert lease.held and len(native_checks) == 2
+        receipt = lease.last_reconciliation_receipt
+        assert receipt is not None and receipt.is_file() and receipt.read_bytes() == before
+        current = json.loads(marker.read_text(encoding='utf-8'))
+        assert current['schema_version'] == 2
+        assert current['pid'] == m.os.getpid()
+        assert current['pid_started_at'] == 'linux-proc-start:999'
+        assert current['owner_token'] != 'a' * 48
+    finally:
+        lease.release()
+    assert not marker.exists()
+    assert receipt.is_file() and receipt.read_bytes() == before
+
+
+def test_legacy_marker_is_dead_only_and_never_invents_creation_identity(config, monkeypatch):
+    m = implementation()
+    marker, before = _provider_marker(config, legacy=True)
+    monkeypatch.setattr(m, '_observe_process',
+                        lambda pid: m._ProcessObservation('alive', 'windows-filetime:reused'.replace('reused', '200')))
+    lease = m.FlowProfileLease(config)
+    with pytest.raises(m.FlowBrowserError, match='PROFILE_RECONCILE_REQUIRED'):
+        lease.reconcile_stale_and_acquire()
+    assert not lease.held and marker.read_bytes() == before
+    assert 'pid_started_at' not in json.loads(before)
+
+
+def test_explicit_reconcile_detects_marker_race_and_does_not_acquire(config, monkeypatch):
+    m = implementation()
+    marker, _ = _provider_marker(config)
+    monkeypatch.setattr(m, '_observe_process', _dead_then_current_process(m, 4242))
+    monkeypatch.setattr(m, '_native_profile_available', lambda *_: True)
+    real_rename = m.os.rename
+    raced = {'done': False}
+
+    def rename(source, destination):
+        if m.Path(source) == marker and not raced['done']:
+            raced['done'] = True
+            changed = json.loads(marker.read_text(encoding='utf-8'))
+            changed['owner_token'] = 'b' * 48
+            marker.write_text(json.dumps(changed, separators=(',', ':')), encoding='utf-8')
+        return real_rename(source, destination)
+
+    monkeypatch.setattr(m.os, 'rename', rename)
+    lease = m.FlowProfileLease(config)
+    with pytest.raises(m.FlowBrowserError, match='PROFILE_RECONCILE_REQUIRED'):
+        lease.reconcile_stale_and_acquire()
+    assert raced['done'] and not lease.held
+    assert marker.exists()
+    assert json.loads(marker.read_text(encoding='utf-8'))['owner_token'] == 'b' * 48
+    assert not list(config.user_data_dir.glob('.flow-browser-lease.reconciled-*'))
+
+
 def test_passive_health_does_not_reuse_cached_authenticated_readiness(config):
     m = implementation()
     with m.FlowBrowserSessionProvider(config, context_factory=factory(config, []),
