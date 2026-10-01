@@ -91,6 +91,14 @@ class BrowserFlowBackend:
                 authorization=authorization,
                 timeout=timeout,
             )
+        if method == 'submit_paid_video':
+            params, idempotency_key, authorization, timeout = args
+            return self._driver.submit_paid_video(
+                params,
+                idempotency_key=idempotency_key,
+                authorization=authorization,
+                timeout=timeout,
+            )
         return getattr(self._driver, method)(*args)
 
     async def check_readiness(self):
@@ -147,6 +155,30 @@ class BrowserFlowBackend:
         try:
             future = self._submit(
                 self._run, 'submit_paid_image', params,
+                idempotency_key, authorization, timeout,
+            )
+        except BrowserCommandError as exc:
+            return {'status': 409, 'error': str(exc), 'effect': 'not_submitted'}
+        return await asyncio.shield(future)
+
+    async def submit_paid_video(self, params, *, idempotency_key,
+                                authorization=None, timeout=300):
+        """Submit one gated paid video on the single browser-owner executor."""
+        if not self.paid_dispatch_enabled:
+            return {
+                'status': 403,
+                'error': 'PAID_DISPATCH_DISABLED',
+                'effect': 'not_submitted',
+            }
+        if not self.ready:
+            return {
+                'status': 409,
+                'error': 'BROWSER_NOT_READY',
+                'effect': 'not_submitted',
+            }
+        try:
+            future = self._submit(
+                self._run, 'submit_paid_video', params,
                 idempotency_key, authorization, timeout,
             )
         except BrowserCommandError as exc:
