@@ -12,6 +12,7 @@ import pytest
 
 from agent.services import flow_batch as fb
 from agent.services.flow_browser_backend import BrowserFlowBackend
+from agent.services.flow_browser_paid import FlowPaidImageGate
 from agent.services.flow_browser_driver import FlowBrowserDriver
 from agent.services.flow_browser_session import FlowProfileConfig
 
@@ -133,6 +134,7 @@ def test_authorized_driver_uses_same_leased_project_page_and_persists_before_eva
     driver.start()
     try:
         original = provider.page.evaluate
+        params = paid_params()
 
         def evaluate(script, args):
             saved = driver._store.load()
@@ -142,14 +144,14 @@ def test_authorized_driver_uses_same_leased_project_page_and_persists_before_eva
             assert provider.page.url == f'https://flow.google.com/project/{PROJECT}'
             assert args == {
                 'projectId': PROJECT,
-                'freq': paid_params()['freq'],
+                'freq': params['freq'],
                 'timeoutMs': 45000,
             }
             return original(script, args)
 
         provider.page.evaluate = evaluate
         result = driver.submit_paid_image(
-            paid_params(), idempotency_key='shot-1',
+            params, idempotency_key='shot-1',
             authorization=AUTH, timeout=45,
         )
         assert result == {
@@ -183,15 +185,15 @@ def test_unknown_paid_intent_is_never_evaluated_again(tmp_path):
     driver.start()
     try:
         params = paid_params()
-        digest = hashlib.sha256('shot-unknown'.encode()).hexdigest()
-        request_digest = hashlib.sha256(params['freq'].encode()).hexdigest()
-        key = f'paid-image:{digest}'
-        driver._store.begin(key, 'paid_image', {
-            'project_id': PROJECT,
-            'request_sha256': request_digest,
-            'idempotency_sha256': digest,
-            'rpcid': fb.RPC_GEN_IMAGE,
-        })
+        gate = FlowPaidImageGate(
+            driver._store,
+            lambda *_args: None,
+            dispatch_enabled=True,
+            authorization=AUTH,
+        )
+        command = gate.validate(params)
+        key, attributes = gate.intent(command, 'shot-unknown')
+        driver._store.begin(key, 'paid_image', attributes)
         driver._store.mark_unknown(key)
 
         result = driver.submit_paid_image(
