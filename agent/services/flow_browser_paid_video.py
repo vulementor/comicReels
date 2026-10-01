@@ -49,6 +49,42 @@ class FlowPaidVideoGate:
             for item in node:
                 yield from FlowPaidVideoGate._walk(item)
 
+    @staticmethod
+    def _semantic_request_sha256(body: list) -> str:
+        """Hash video semantics while ignoring builder-generated client UUIDs."""
+        semantic = json.loads(json.dumps(body))
+        client_uuid = re.compile(
+            r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+            re.IGNORECASE,
+        )
+
+        if (isinstance(semantic, list) and len(semantic) == 3
+                and isinstance(semantic[2], list) and len(semantic[2]) == 2
+                and isinstance(semantic[2][0], str)
+                and client_uuid.fullmatch(semantic[2][0])):
+            semantic[2][0] = "<client-uuid>"
+
+        def scrub(node):
+            if not isinstance(node, list):
+                return
+            if (len(node) == 6 and node[:4] == [None, None, None, None]
+                    and all(isinstance(value, str) and client_uuid.fullmatch(value)
+                            for value in node[4:])):
+                node[4] = "<client-uuid>"
+                node[5] = "<client-uuid>"
+                return
+            for child in node:
+                scrub(child)
+
+        scrub(semantic)
+        return hashlib.sha256(
+            json.dumps(
+                semantic,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode()
+        ).hexdigest()
+
     def validate(self, params: dict) -> PaidVideoCommand:
         try:
             if not isinstance(params, dict) or set(params) != {
@@ -94,7 +130,7 @@ class FlowPaidVideoGate:
                 rpcid=rpcid,
                 freq=freq,
                 project_id=project_id,
-                request_sha256=hashlib.sha256(freq.encode()).hexdigest(),
+                request_sha256=self._semantic_request_sha256(body),
             )
         except Exception:
             raise BrowserCommandError("PAID_RECIPE_UNVERIFIED") from None
