@@ -78,3 +78,60 @@ def test_flow_batch_transport_description_is_browser_only():
     source = text('agent/services/flow_batch.py')
     assert 'job of the Chrome extension' not in source
     assert 'browser' in source.lower()
+
+
+def test_live_flow_surfaces_have_no_retired_extension_protocol_markers():
+    live_paths = (
+        'agent/main.py',
+        'agent/config.py',
+        'agent/api/flow.py',
+        'agent/api/flow_backend_status.py',
+        'agent/services/flow_backend.py',
+        'agent/services/flow_backend_status.py',
+        'agent/services/flow_client.py',
+        'agent/services/flow_batch.py',
+        'agent/services/flow_browser_backend.py',
+        'agent/services/flow_browser_driver.py',
+        'agent/services/flow_browser_session.py',
+        'agent/worker/processor.py',
+        'agent/sdk/services/operations.py',
+        'dashboard/src/App.tsx',
+        'dashboard/src/components/FlowBackendStatus.tsx',
+        'dashboard/src/pages/GuidePage.tsx',
+        'scripts/statusline.sh',
+    )
+    forbidden = (
+        'extension_connected',
+        'flow_key_present',
+        'NO_FLOW_KEY',
+        'NO_FLOW_TAB',
+        'extension_switched',
+        '127.0.0.1:9222',
+        'localhost:9222',
+        'run_ws_server',
+        'set_extension(',
+        'clear_extension(',
+        '_send_extension',
+        '/api/ext/callback',
+        'WS_PORT',
+        'WS_HOST',
+    )
+    for path in live_paths:
+        source = text(path)
+        for marker in forbidden:
+            assert marker not in source, f'{path}: {marker}'
+
+
+def test_obsolete_extension_config_is_rejected_not_supported():
+    source = text('agent/services/flow_backend_selection.py')
+    assert "explicit == 'extension'" in source
+    assert 'FLOW_EXTENSION_BACKEND_REMOVED' in source
+    assert 'ExtensionFlowBackend' not in source
+
+
+def test_dashboard_event_channel_survives_flow_extension_retirement():
+    main = text('agent/main.py')
+    websocket_context = text('dashboard/src/api/WebSocketContext.tsx')
+    assert '@app.websocket("/ws/dashboard")' in main
+    assert 'event_bus.subscribe()' in main
+    assert 'not the Flow transport' in websocket_context
