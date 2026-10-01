@@ -3,6 +3,7 @@
 Development-first policy: source coverage only; execution is deferred until the
 browser-only source pass is complete.
 """
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -144,11 +145,13 @@ def test_all_operation_services_use_one_restart_resume_helper():
     upscale = source[source.index('async def upscale_scene_video'):
                      source.index('# ------------------------------------------------------------------\n    # Reference image operations')]
 
-    assert '_resume_saved_operation(request_id' in scene_video
-    assert '_resume_saved_operation(request_id' in refs_video
-    assert '_resume_saved_operation(request_id' in upscale
+    resume_call = re.compile(r'_resume_saved_operation\(\s*request_id\s*,')
+    assert resume_call.search(scene_video)
+    assert resume_call.search(refs_video)
+    assert resume_call.search(upscale)
 
-    # Resume checks happen before each submit call.
-    assert scene_video.index('_resume_saved_operation') < scene_video.index('self._client.generate_video(')
-    assert refs_video.index('_resume_saved_operation') < refs_video.index('self._client.generate_video_from_references(')
-    assert upscale.index('_resume_saved_operation') < upscale.index('self._client.upscale_video(')
+    # Resume checks happen before each submit call, so a saved operation can
+    # only be re-polled and cannot fall through to a second paid submit.
+    assert resume_call.search(scene_video).start() < scene_video.index('self._client.generate_video(')
+    assert resume_call.search(refs_video).start() < refs_video.index('self._client.generate_video_from_references(')
+    assert resume_call.search(upscale).start() < upscale.index('self._client.upscale_video(')
