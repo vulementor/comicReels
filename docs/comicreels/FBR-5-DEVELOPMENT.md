@@ -2211,3 +2211,143 @@ This is a non-paid repair slice: route session project creation/reuse through th
 browser backend durable helper, propagate known project ids into media reads, and
 update only the stale KBS requirement comment. Do not touch video paid dispatch in
 the same sub-task.
+
+
+## Browser-only Task 9d-repair-2 — durable session project + scoped media reads
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; source closure still blocked by video paid boundary findings**.
+
+Source commits:
+- Authored durable session-project delegation contract:
+  `544f89eaafab3ff01310d0dd32d0efc6fbfa2d9d`.
+- Authored project-scoped paid receipt + bulk refresh media-read contracts:
+  `4fd72727c9889b0f0d2cf217e990410be7064472`,
+  `d0e5bb1b3967f9d4c58d6effbf629c03e1216e3c`.
+- Authored project-scoped Omni workflow polling:
+  `19c2dc7f5f693d9ce19536dc0245c589fae14f39`.
+- Authored durable project-create path in legacy batch contract:
+  `a1bd9815100a325b162f9f772ab008c25db71b07`.
+- Route FlowClient project creation/media reads through durable project scope:
+  `8e9714c4ee772c7445b88566c5208295ad1efc5d`.
+- Make browser journal authoritative for session-project create/reuse:
+  `6097553250df13c0197083d4ab21e8d779375070`.
+- Scope Omni media polling to owning project:
+  `b00a9ee1758ebf905d3a568221100e977529b84e`.
+- Update KBS requirements comment to current browser-only authority:
+  `aef8e80cfbafa671309870fcd1dad0929e5ce056`.
+- Preserve projected session title on durable backend reuse:
+  `ca6e16390ca09f85ed64d7a7f16e027fad2bc783`,
+  `3b67edf50d6b9738b6efcfe113905224a9247c09`.
+- Preserve original local projection creation timestamp on reuse:
+  `125732e70701c969e7fdcb6201c416e40dbcb7c8`,
+  `b921968b500253bdf9ce96470a5ee0e22f5ce8b3`.
+
+### B4 repaired — durable session-project authority
+
+`FlowClient` now exposes
+`ensure_session_project(title=..., force_new=...)` as a stable business-facing
+delegation to `FlowBackend.ensure_session_project()`.
+
+`FlowClient.create_project()` no longer sends raw `RPC_CREATE_PROJECT` through
+generic `batch_rpc`. A fresh project request uses the backend's durable
+session-project path with `force_new=True`, so the existing browser-driver
+intent/receipt journal remains the only project-create effect boundary.
+
+`flow_project_session.ensure_session_project()` now:
+- treats its JSON file as local idle/projection state only;
+- always asks the browser backend/journal to resolve the actual remote project;
+- converts local idle expiry or explicit rotation into `force_new=True`;
+- follows the project id returned by the backend even if the local projection
+  was stale;
+- preserves the existing title/created timestamp when the backend reuses the
+  same project and omits title metadata.
+
+No second raw project-create effect path was introduced.
+
+### B5 repaired — project-scoped media reads
+
+`FlowClient.get_media()` now accepts an optional `project_id` and propagates it
+through `_batch_media_urls()` to `RPC_MEDIA`.
+
+Known project context is now retained in:
+1. paid-image completed-receipt signed-URL refresh;
+2. `refresh_project_urls(project_id)` bulk URL refresh;
+3. Omni workflow/media polling, preferring per-workflow project id and otherwise
+   the resolved polling project.
+
+Unscoped `get_media(media_id)` remains compatible for callers that genuinely do
+not know the project. The browser driver already prefers an explicit
+`RPC_MEDIA.command.project_id`, so these repaired paths open/read the exact
+owning project rather than whichever project happened to be active.
+
+This is read-only plumbing. It does not authorize or replay any paid effect.
+
+### C2 repaired — current KBS pin comment
+
+`requirements-flow-browser.txt` now identifies KBS as the current
+**browser-only Flow transport runtime dependency**, not an optional FBR-0 shadow.
+
+The actual pin is unchanged:
+`b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+
+### Authored regression coverage
+
+Coverage now specifies:
+- session-project helper delegates to the backend durable path;
+- active local projection still revalidates through the browser authority;
+- idle/explicit rotation maps to backend `force_new=True`;
+- stale local project projection is replaced by the backend-resolved project;
+- backend reuse without a title preserves the existing projected title;
+- repeated reuse preserves the original projection `created_at`;
+- `FlowClient.create_project()` uses durable backend create and never raw
+  `RPC_CREATE_PROJECT`;
+- paid receipt media refresh includes its project id;
+- bulk refresh media reads all include the requested project id;
+- Omni media poll includes the workflow/resolved project id.
+
+### Source-only readback
+
+At this checkpoint:
+- raw `RPC_CREATE_PROJECT` inside `FlowClient.create_project()`: absent;
+- `flow_project_session` call to `client.create_project()`: absent;
+- durable `client.ensure_session_project()`: present;
+- bulk refresh project scope: present;
+- paid receipt media project scope: present;
+- optional project-scoped `get_media`: present;
+- Omni project-scoped media read: present;
+- obsolete “Optional FBR-0 shadow browser” comment: absent;
+- exact KBS SHA: unchanged.
+
+Current browser branch pre-ledger head:
+`b921968b500253bdf9ce96470a5ee0e22f5ce8b3`.
+
+Current `main` remains untouched:
+`5aecee7ef007b34e1ec732a3a382c80ff393546c`.
+
+Tests/builds executed: **none**, per owner phase rule. No browser/profile,
+paid/CAPTCHA, EXE/Stable/ThoRemix runtime or Remote Desktop action occurred.
+
+### Remaining blockers before source closure
+
+Repaired in 9d so far:
+- B1 worker lifecycle under paid lock;
+- B4 durable session-project path;
+- B5 project-scoped media reads;
+- C1 retired extension retry branch;
+- C2 current KBS requirements wording.
+
+Still open:
+- **B2:** safe dedicated browser paid boundary for existing video/Omni submit
+  capabilities, while normal production remains locked;
+- **B3:** Omni operation-receipt paths must await durable operation binding and
+  fail closed if the post-submit binding cannot be persisted.
+
+### Next short sub-task
+
+**Task 9d-repair-3 — video/Omni paid boundary + durable bind (B2/B3).**
+Keep scope strictly to existing supported video submit modes. Reuse the paid
+image safety model where appropriate: explicit disabled-by-default authorization,
+durable idempotency/intent before effect, verified receipt, UNKNOWN no-resend,
+and awaited durable operation binding. Do not add new video models, upscale
+support or unrelated behavior.
