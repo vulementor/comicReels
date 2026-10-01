@@ -6,7 +6,7 @@ Base: `607ec0a482de544c1175ae7bf636d6f30a0b9b16`.
 Branch: `feat/fbr-2-driver-lifecycle-20260930`.
 
 Overall status: **CODE_IN_PROGRESS — production default NOT accepted here**.
-Latest slice: **FBR-5-code-1 — policy source authored, NOT VALIDATED**.
+Latest slice: **FBR-5-code-2a — singleton selection wired, NOT VALIDATED**.
 
 ## Forward coding breakdown
 
@@ -82,22 +82,83 @@ not merely a deferred test command. Do not claim the complete development plan i
 FBR-4's source manifest is a list of requirements, not executed business parity
 comparisons or proof that all required scenarios work on the browser backend.
 
-The current `get_flow_client()` implementation still selects its backend directly.
-FBR-5-code-1 does not wire this new resolver into that function; that is code-2.
-No production behavior changes simply because this policy module is added.
+At the code-1 baseline, `get_flow_client()` still selected its backend directly.
+The code-2a slice below wires the resolver into that function. No deployment or
+production-default acceptance follows from committing this source.
 
 Tests/builds executed: **none**. Test source is authored during development;
 execution is deferred by the owner's phased workflow. No runtime/profile/Stable
 state is inspected. No paid request or Remote Desktop action occurred.
 
+## FBR-5-code-2a — singleton startup selection
+
+Date: 2026-10-01.
+Status: **CODE_COMPLETE for this bounded startup wiring; NOT VALIDATED**.
+Continuation base: `179f90b9b00c7844937be5c15964ee8858694810`.
+
+Files: `agent/services/flow_client.py`,
+`tests/unit/test_flow_client_backend_selection.py`, and this ledger.
+
+Source commits:
+- Authored singleton requirements: `0e8abb1b6d1a25a621dbb9b590d6a8542171b343`.
+- Startup wiring: `bcfa3385951499a3f8948fda97b914079865abef`.
+- Preserve original non-startup lines: `d473cf0705d83660267718d8ee80d183ed71c9b6`.
+
+Implementation:
+- `get_flow_client()` uses the existing `resolve_backend_selection()` policy.
+  It stores the first valid immutable selection before backend construction.
+- A process-local lock serializes singleton construction. Repeated getters reuse
+  the same client; environment edits do not reselect a running or closed client.
+- Browser-only imports and profile configuration occur only on the selected
+  browser construction path. Explicit extension rollback does not import the
+  browser backend or consult its profile.
+- Constructing the singleton does not call `start_backend()` or open a browser.
+  The existing application lifespan remains responsible for start/close.
+- Construction/import failures store only the fixed
+  `FLOW_BACKEND_INITIALIZATION_FAILED` code. Subsequent getters fail with that
+  code instead of constructing another backend or automatically retrying.
+  Raw exceptions/tracebacks are not stored in the singleton error cache.
+- An asynchronous browser start failure remains associated with the same client;
+  this wiring adds no replacement, fallback or new lifecycle retry.
+- `FlowClient(backend=...)` injection is unchanged and does not resolve environment
+  settings. Existing extension business behavior and paid flags are unchanged.
+- No reset/reselection API is introduced. Operator rollback is explicit extension
+  configuration followed by controlled process restart, not an in-place switch.
+
+Authored coverage uses real `get_flow_client()`/FlowClient/resolver behavior with
+only browser construction replaced. It covers extension import isolation,
+explicit/browser-default precedence, construction without launch, stable selection,
+invalid configuration, cached construction failure, async start failure, close and
+fresh-process rollback, concurrent getters, and direct backend injection.
+
+Ruling: cache a backend construction failure until process restart, rather than
+retrying configuration/profile construction from subsequent API getters. This
+prevents an implicit second initialization/fallback. Cost: an operator must correct
+configuration and restart; the public fixed error offers less detail than a native
+exception and is not a substitute for safe diagnostics in the later status slice.
+
+Source read-back found two accidental unrelated line changes while assembling the
+full-file API update. The preservation commit restores the original UUID matcher
+and generation comment. The net business/creative/media code is unchanged by this
+slice; only startup imports and singleton selection are intended changes.
+
+Tests executed: **none**. No pytest/import smoke/compile/lint/build/workflow
+execution, browser/profile launch, EXE launch, Stable update or paid request.
+GitHub commit/diff read-back proves source persistence only, not a runtime PASS.
+Older tests that reset the singleton must isolate `_client_selection` and
+`_client_initialization_error` along with `_client` when simulating a fresh process;
+this is a deferred test-suite integration/validation obligation, not a live reset.
+
 ## Exact next task
 
-**FBR-5-code-2a — wire selection into singleton startup**, including authored
-requirements for explicit extension rollback, opt-in browser construction, fixed
-startup selection until restart, and no automatic fallback on browser failure.
-Keep status/UI wiring as the subsequent bounded code-2b slice. Do not run tests.
+**FBR-5-code-2b — selected-backend status/readiness/preflight integration.**
+Expose metadata from the frozen startup selection, not a newly resolved environment
+snapshot. Keep configuration, current backend readiness and production acceptance
+separate. Browser readiness must not require an extension connection. Keep API/UI
+changes inside that next slice, retain explicit extension rollback and paid gates.
+Do not run tests/build/EXE until the full approved coding pass is complete.
 
 KBS source dependency is unchanged by this slice. Runtime backend/revision,
 physical profile identity/lease, active jobs and scheduler state remain unobserved.
-Main and Stable were not changed. Rollback source boundary for this policy-only
-slice is `607ec0a482de544c1175ae7bf636d6f30a0b9b16`; no runtime rollback is needed.
+Main and Stable were not changed by this work. Rollback source boundary for code-2a
+is `179f90b9b00c7844937be5c15964ee8858694810`; no runtime rollback is needed.
