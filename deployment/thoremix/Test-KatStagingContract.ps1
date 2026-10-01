@@ -4,8 +4,6 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-# Source-contract regression only. Parse the real build script; never dot-source
-# or execute its deployment, pip, scheduler, lock, or promotion operations.
 $tokens = $null
 $parseErrors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -15,13 +13,11 @@ if ($parseErrors.Count) { throw 'Build script has PowerShell parse errors.' }
 $katInstalls = @($ast.FindAll({ param($node)
     $node -is [System.Management.Automation.Language.CommandAst] -and
     $node.Extent.Text -match '\bpip\s+install\b' -and
-    $node.Extent.Text.Contains("'kabin_affiliate_toolkit'")
+    $node.Extent.Text.Contains('$dependencies.kat.path')
 }, $true))
-if ($katInstalls.Count -ne 1) { throw 'Expected exactly one canonical KAT installation command.' }
+if ($katInstalls.Count -ne 1) { throw 'Expected exactly one explicit pinned KAT installation command.' }
 $install = $katInstalls[0]
 
-# KAT must refresh for BOTH a new interpreter and a reused interpreter. A
-# command nested in if ($SkipRuntime) / else cannot satisfy this contract.
 $parent = $install.Parent
 while ($null -ne $parent) {
     if ($parent -is [System.Management.Automation.Language.IfStatementAst]) {
@@ -36,9 +32,6 @@ while ($null -ne $parent) {
 
 if ($install.CommandElements[0].Extent.Text -ne '"$runtime\python.exe"') {
     throw 'KAT must be installed using the staged interpreter, not the live interpreter.'
-}
-if (-not $install.Extent.Text.Contains("(Join-Path `$workspace 'kabin_affiliate_toolkit')")) {
-    throw 'KAT must come from the canonical workspace checkout.'
 }
 if ($install.Extent.Text -notmatch '(?<!\S)--force-reinstall(?!\S)' -or
     $install.Extent.Text -notmatch '(?<!\S)--no-deps(?!\S)') {
@@ -71,11 +64,36 @@ if ($null -eq $validation -or $install.Extent.EndOffset -ge $validation.Extent.S
 foreach ($required in @(
     "'sold_min', 'commission_min'",
     'kat_config.catalog_first is True',
-    'kat_config.legacy_public_search_fallback is False'
+    'kat_config.legacy_public_search_fallback is False',
+    "ShopeeVNProvider.product_offer_url == 'https://affiliate.shopee.vn/offer/product_offer'"
 )) {
     if (-not $validation.Extent.Text.Contains($required)) {
         throw "Existing fail-closed KAT validation must remain: $required"
     }
 }
 
-Write-Output 'KAT_STAGING_CONTRACT_PASS: shared staged refresh, same-version reinstall, failure gate, contract guards.'
+$source = Get-Content -LiteralPath $BuildScript -Raw -Encoding UTF8
+foreach ($required in @(
+    '[string]$KatSource',
+    '[string]$KrpSource',
+    '[string]$GptFullProxySource',
+    '[string]$KbsSource',
+    'Read-DependencyLock',
+    'Assert-DependencyCheckout'
+)) {
+    if (-not $source.Contains($required)) {
+        throw "Explicit dependency contract missing: $required"
+    }
+}
+foreach ($forbidden in @(
+    "(Join-Path `$workspace 'kabin_affiliate_toolkit')",
+    "(Join-Path `$workspace 'kabin_reel_poster')",
+    "(Join-Path `$workspace 'gpt_fullproxy')",
+    "(Join-Path `$workspace 'kabin_browser_semantic')"
+)) {
+    if ($source.Contains($forbidden)) {
+        throw "Build script must not guess dependency sibling-folder names: $forbidden"
+    }
+}
+
+Write-Output 'KAT_STAGING_CONTRACT_PASS: explicit pinned checkout, shared staged refresh, same-version reinstall, failure gate, contract guards.'
