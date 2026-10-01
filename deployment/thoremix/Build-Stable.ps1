@@ -149,7 +149,7 @@ try {
         if ($LASTEXITCODE -gt 7) { throw 'Python runtime staging failed.' }
         & "$runtime\python.exe" -m ensurepip --upgrade | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Staged pip bootstrap failed.' }
-        & "$runtime\python.exe" -m pip install --disable-pip-version-check 'httpx==0.28.1' 'pillow==12.3.0' 'tzdata==2026.4' 'pydantic==2.13.5' 'PyYAML==6.0.3' 'camoufox==0.5.6' (Join-Path $workspace 'kabin_reel_poster') (Join-Path $workspace 'kabin_affiliate_toolkit')
+        & "$runtime\python.exe" -m pip install --disable-pip-version-check 'httpx==0.28.1' 'pillow==12.3.0' 'tzdata==2026.4' 'pydantic==2.13.5' 'PyYAML==6.0.3' 'camoufox==0.5.6' (Join-Path $workspace 'kabin_reel_poster')
         if ($LASTEXITCODE -ne 0) { throw 'Staged dependencies failed.' }
         foreach ($binary in @('ffmpeg.exe', 'ffprobe.exe')) {
             Copy-Item -LiteralPath (Join-Path 'C:\ffmpeg\bin' $binary) -Destination (Join-Path $stage 'runtime\bin') -Force
@@ -158,6 +158,10 @@ try {
     # Also update desktop-only dependencies when reusing an existing browser runtime.
     & "$runtime\python.exe" -m pip install --disable-pip-version-check 'pystray==0.19.5' 'faster-whisper==1.2.1' 'aiosqlite==0.22.1' 'ffpyplayer==4.5.3' (Join-Path $workspace 'gpt_fullproxy') (Join-Path $workspace 'kabin_browser_semantic')
     if ($LASTEXITCODE -ne 0) { throw 'Staged system tray dependency installation failed.' }
+    # Refresh canonical KAT in BOTH build modes, including a copied -SkipRuntime.
+    # Replace same-version toolkit snapshots without changing runtime dependency pins.
+    & "$runtime\python.exe" -m pip install --disable-pip-version-check --force-reinstall --no-deps (Join-Path $workspace 'kabin_affiliate_toolkit')
+    if ($LASTEXITCODE -ne 0) { throw 'Staged KAT refresh failed; installed bundle was not replaced.' }
     Copy-Item -LiteralPath (Join-Path $repo 'agent\__init__.py') -Destination (Join-Path $stage 'source\agent')
     Copy-Item -LiteralPath (Join-Path $repo 'agent\config.py') -Destination (Join-Path $stage 'source\agent')
     Copy-Item -LiteralPath (Join-Path $repo 'agent\models.json') -Destination (Join-Path $stage 'source\agent')
