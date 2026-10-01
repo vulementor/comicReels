@@ -11,7 +11,7 @@ Opus 4.6 (1M ctx) ctx:14% rl:18%/5h 67%/7d | GLA: ✓ext Operation Hormu 40sc im
 ## What it shows
 
 - **OMC info**: model, context usage, rate limits (5h & 7d)
-- **GLA info**: extension status, project name, scene count, image/video/4K progress, worker slots
+- **Flow info**: browser session readiness, reconciliation/paid-lock state, project name, scene count, image/video/4K progress, worker slots
 
 ## Setup
 
