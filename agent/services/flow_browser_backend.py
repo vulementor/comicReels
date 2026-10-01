@@ -153,6 +153,29 @@ class BrowserFlowBackend:
             return {'status': 409, 'error': str(exc), 'effect': 'not_submitted'}
         return await asyncio.shield(future)
 
+    async def bind_operation(self, operation_id, project_id):
+        try:
+            uuid_value(operation_id)
+            uuid_value(project_id)
+            if not self.ready:
+                raise BrowserCommandError('BROWSER_NOT_READY')
+            return await asyncio.shield(
+                self._submit(self._run, 'bind_operation', operation_id, project_id)
+            )
+        except BrowserCommandError as exc:
+            return {'status': 409, 'error': str(exc), 'effect': 'not_submitted'}
+
+    async def operation_project(self, operation_id):
+        try:
+            uuid_value(operation_id)
+            if not self.ready:
+                raise BrowserCommandError('BROWSER_NOT_READY')
+            return await asyncio.shield(
+                self._submit(self._run, 'operation_project', operation_id)
+            )
+        except BrowserCommandError as exc:
+            return {'status': 409, 'error': str(exc), 'effect': 'not_submitted'}
+
     async def open_project(self, project_id):
         try:
             uuid_value(project_id)
