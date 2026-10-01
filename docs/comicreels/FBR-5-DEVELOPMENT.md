@@ -6,7 +6,7 @@ Base: `607ec0a482de544c1175ae7bf636d6f30a0b9b16`.
 Branch: `feat/fbr-2-driver-lifecycle-20260930`.
 
 Overall status: **CODE_IN_PROGRESS — production default NOT accepted here**.
-Latest slice: **FBR-5-code-2a — singleton selection wired, NOT VALIDATED**.
+Latest slice: **FBR-5-code-2b — selected-backend API/sidebar wired, NOT VALIDATED**.
 
 ## Forward coding breakdown
 
@@ -149,16 +149,100 @@ Older tests that reset the singleton must isolate `_client_selection` and
 `_client_initialization_error` along with `_client` when simulating a fresh process;
 this is a deferred test-suite integration/validation obligation, not a live reset.
 
+## Historical handoff from code-2a
+
+The next task at that checkpoint was code-2b, implemented below. KBS dependency,
+runtime/backend revision, physical profile identity/lease, active jobs and scheduler
+were unobserved. Main and Stable were not changed by code-2a. Its source rollback
+boundary is `179f90b9b00c7844937be5c15964ee8858694810`.
+
+## FBR-5-code-2b — selected-backend API, readiness and sidebar
+
+Date: 2026-10-01.
+Status: **CODE_COMPLETE for this bounded status slice; NOT VALIDATED**.
+Continuation base: `47dea841ec52f0f7a75a2c88f3c86f3d03e846b4`.
+
+Source commits:
+- Authored requirements: `7189531beba09e05d0990f4cd667cfc422591dc7`.
+- Bounded status projection: `d1524c6188c6f6a5c4184e0b26cb1c37fa0eb2f5`.
+- Same-owner readiness observation: `f1572718003f8f0ab989aaad2875de51ad54c564`.
+- Read-only status route: `1e40faa41e847279dde5bf9207ff04acfb9d936a`.
+- Sidebar status component: `82118108f0be2ed9f52f32bcf294dfcbea5c8b59`.
+- Sidebar integration: `746a3a2182c2b1be4a664bca71ea5cd980e83ca2`.
+- Route mount and /health integration: `98bba5c704e48e5cae975b442cf66ee87a088670`.
+
+### Implementation
+
+- New GET `/api/flow/backend-status` returns schema-versioned, allowlisted status
+  with `Cache-Control: no-store`. `/health` includes the same projection under
+  `backend_status` and uses its observed `backend_ready` value.
+- `read_backend_status()` snapshots the existing client, immutable selection and
+  fixed initialization error under the singleton lock, then releases the lock
+  before awaiting observation. It never calls get_flow_client or the resolver.
+  An uninitialized client is reported without creating a client/browser.
+- Selection source comes from the startup snapshot even after environment edits.
+  A selected/actual-kind mismatch reports an explicit error, never fallback.
+- Readiness, paid-dispatch switch and production acceptance are separate fields.
+  `production_acceptance=not_verified` always: even an accepted-default setting is
+  not proof that tests or owner acceptance occurred.
+- Browser preflight requires observed ready/session-ready/authenticated/held-lease
+  evidence; extension connectivity is informational for browser mode. Extension
+  preflight still requires its connection. Reconciliation warnings remain visible
+  without disabling safe-read preflight. No warning authorizes replay.
+- Readiness observation has a two-second HTTP wait budget. Failure/timeout returns
+  a fixed code and no positive readiness; raw errors, account fields, paths and
+  arbitrary response fields are excluded. Existing backend queue bounds remain.
+- BrowserFlowBackend can reobserve an existing driver after cached readiness went
+  false, on the same owner thread. It does not restart the driver, change profiles,
+  navigate, mutate receipts or admit work during closing/closed states.
+- `dashboard/src/components/FlowBackendStatus.tsx` replaces the extension-only
+  sidebar light. It displays selected transport, selection source, readiness,
+  paid-dispatch switch, reconciliation warning and restart/preflight guidance.
+  Vietnamese labels have English fallback; existing navigation/language controls,
+  workers and the independent dashboard-WebSocket indicator remain intact.
+- Sidebar observations are serialized (15 seconds after completion), with a
+  five-second abort deadline and unmount cleanup. Invalid/missing/failed responses
+  clear the old ready indicator instead of leaving stale green status visible.
+
+### Scope and rulings
+
+Ruling: use an additive backend-status endpoint and a nested /health projection,
+not a rewrite of legacy GET `/api/flow/status` or generation routes. Existing
+extension diagnostics/response contracts are retained. Cost: operator docs must
+point selected-backend preflight to the new endpoint, not legacy extension fields.
+This slice does not replace every old extension-specific error message or card.
+
+Ruling: keep the singleton snapshot compatibility seam in one status adapter
+rather than copying it into API/UI code or changing selection on GET. Cost: this
+adapter and its tests must move together if the singleton internals are renamed.
+
+The application lifespan still controls startup failure. If startup aborts before
+serving HTTP, the endpoint cannot magically diagnose that stopped process; this
+slice adds no emergency startup, hidden retry, fallback or profile repair.
+
+Authored tests cover pure projection, browser/extension preflight, unknown/error
+handling, warning visibility, privacy, selection mismatch, frozen environment
+selection, no-construction status reads, HTTP no-store, bounded timeout and
+same-owner reobservation. Source-wiring assertions are NOT rendered UI tests.
+Rendered layout, localization, polling/abort behavior and application integration
+must be exercised during the separate final validation pass.
+
+Tests executed: **none**. No import smoke, compile, pytest, frontend build/lint,
+workflow dispatch, browser launch, EXE launch, Stable change or paid request.
+GitHub main/sidebar commit read-back confirms intended source diffs only.
+Main branch, backend defaults, generation gates, KBS pin, database, media files and
+other branches are untouched. No Remote Desktop action occurred. Runtime revision,
+profile/lease health, scheduler and active production jobs remain unobserved.
+
 ## Exact next task
 
-**FBR-5-code-2b — selected-backend status/readiness/preflight integration.**
-Expose metadata from the frozen startup selection, not a newly resolved environment
-snapshot. Keep configuration, current backend readiness and production acceptance
-separate. Browser readiness must not require an extension connection. Keep API/UI
-changes inside that next slice, retain explicit extension rollback and paid gates.
-Do not run tests/build/EXE until the full approved coding pass is complete.
+**FBR-5-code-3 — operator preflight and remaining-source handoff.** Document the
+new backend-status schema, explicit extension rollback plus restart, and the
+remaining source obligations before the full coding-completion gate. Reconcile
+rather than conceal the unfinished concrete paid-browser dispatch/application
+wiring, scenario-level parity coverage and packaging obligations. Do not start
+validation/build/EXE merely because status/UI code is present. FBR-6 extension
+removal and production default acceptance remain separate, unactivated gates.
 
-KBS source dependency is unchanged by this slice. Runtime backend/revision,
-physical profile identity/lease, active jobs and scheduler state remain unobserved.
-Main and Stable were not changed by this work. Rollback source boundary for code-2a
-is `179f90b9b00c7844937be5c15964ee8858694810`; no runtime rollback is needed.
+Source rollback boundary for code-2b is
+`47dea841ec52f0f7a75a2c88f3c86f3d03e846b4`. No runtime rollback is needed.
