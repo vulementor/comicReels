@@ -455,6 +455,11 @@ class FlowBrowserDriver:
             return uuid_value(command.project_id)
         if command.rpcid == fb.RPC_OPERATION:
             return self._operation_project(command.operation_id)
+        if command.rpcid == fb.RPC_MEDIA and command.project_id:
+            # Poll/media reads may explicitly carry the durable operation project
+            # after restart. Use it instead of whichever project happened to be
+            # last active in the session.
+            return uuid_value(command.project_id)
         saved = self._state()
         project_id = saved.get('project_id')
         if not project_id:
