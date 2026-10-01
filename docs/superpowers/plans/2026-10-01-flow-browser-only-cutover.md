@@ -117,11 +117,11 @@
 - Produces: browser-only operation project binding and polling.
 - Removes: extension-era in-memory assumptions where durable browser journal is authoritative.
 
-- [ ] Ensure submitted browser operations persist project binding.
-- [ ] Ensure poll/media lookup uses durable binding and current browser session.
-- [ ] Preserve existing returned business response shapes.
-- [ ] Preserve restart/resume behavior.
-- [ ] Update checkpoint docs.
+- [x] Ensure submitted browser operations persist project binding.
+- [x] Ensure poll/media lookup uses durable binding and current browser session.
+- [x] Preserve existing returned business response shapes.
+- [x] Preserve restart/resume behavior.
+- [x] Update checkpoint docs.
 
 ### Task 6: Remove extension-specific API/status/preflight surfaces
 
