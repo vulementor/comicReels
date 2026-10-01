@@ -610,3 +610,84 @@ worker/SDK image generation calls to use the durable request id (or an equally
 stable persisted business key), keep normal paid authorization unavailable by
 default, and make `PAID_RECONCILIATION_REQUIRED/effect=unknown` terminal for
 automatic retry while remaining visible for explicit reconciliation.
+
+
+## Browser-only Task 4c — durable caller idempotency + UNKNOWN no-retry
+
+Date: 2026-10-01.
+Status: **SOURCE_AUTHORED; NOT VALIDATED; PAID DISPATCH DEFAULT OFF**.
+Parent task: browser-only Task 4 — concrete browser paid-dispatch integration.
+
+Source commits:
+- Authored durable request-id propagation requirements:
+  `d1dd08e424f1a2b3f97b2b317b550ccd14f36cf3`.
+- Normalize UNKNOWN expectation to reconciliation:
+  `46bb7ebdaee4d773e62880d3cec8130c818be18f`.
+- SDK image operations accept/forward durable `request_id`:
+  `3f70e68ee4303e6cb05a7d791e74005e53aa2f2a`.
+- Authored parser guard for `effect=unknown`:
+  `aaca8fa6372267b7180c1a893db396117d8a30f1`.
+- Worker parser treats UNKNOWN as an error:
+  `2149a993b36c04daf357a67c2f136e27ed4fc71a`.
+- Worker dispatch propagates DB request id and blocks UNKNOWN retries:
+  `659e8005c7cac823913c5978463db99d07bbe6e6`.
+
+### Durable idempotency contract
+
+- The queue request row id (`rid`) is the paid image business idempotency key.
+  Retry count, current time, process lifetime and browser session state are never
+  used to derive a replacement key.
+- Scene generate/regenerate image, scene edit image, character
+  generate/regenerate image and character edit image all propagate the same
+  durable request id into `FlowClient.generate_images()/edit_image()`.
+- `OperationService.generate_scene_image()`,
+  `edit_scene_image()`, and `generate_reference_image()` expose a
+  `request_id` seam and forward it as `idempotency_key`.
+- Queue-based SDK wrappers already persist a request row and return its id; when
+  that row is later consumed by the worker, the same id reaches the paid gate.
+- Direct SDK calls that bypass the durable request queue and omit a request id
+  remain fail-closed at `FlowClient` with `PAID_IDEMPOTENCY_REQUIRED`.
+- No caller in this task creates or receives a paid authorization object.
+  Normal application construction therefore remains dispatch-locked.
+
+### UNKNOWN / reconciliation retry contract
+
+- Worker parsing now treats `effect=unknown` as an error regardless of HTTP
+  status or response body.
+- `_handle_failure()` checks UNKNOWN/reconciliation before media recovery,
+  CAPTCHA retry and generic retry/backoff logic.
+- Any `effect=unknown` or exact `PAID_RECONCILIATION_REQUIRED` is normalized
+  to the fixed persisted error `PAID_RECONCILIATION_REQUIRED`, marked FAILED
+  for automatic queue processing, and surfaced for explicit reconciliation.
+- Existing retry-after state for that request is removed. Retry count is not
+  incremented and status is never returned to PENDING by this branch.
+- The scene failure marker is updated through the existing business helper so
+  UI/business state does not present an unresolved paid effect as completed.
+- Other clearly-not-submitted errors continue through the existing policy. This
+  task does not weaken the paid gate or manufacture authorization.
+
+### Receipt and live-effect boundary
+
+The paid receipt contract from 4a/4b is unchanged: durable paid state remains
+SUBMITTING/UNKNOWN/COMPLETED with project/media UUID receipts only, and UNKNOWN
+never causes a second paid submit.
+
+Tests executed: **none**. No paid/CAPTCHA call, pytest/import smoke/compile/lint/
+build, browser/profile launch, EXE launch, Stable/ThoRemix mutation or Remote
+Desktop action occurred. External KAT/ThoRemix acceptance remains non-authoritative
+for this branch.
+
+### Remaining Task 4 obligation
+
+Task 4 is still **not complete**. The source still needs a controlled paid
+authorization/activation seam that can be used only during the later explicitly
+approved validation path while normal application startup remains locked. Task 4
+must then be reconciled against the full plan before proceeding to Task 5.
+
+### Next short sub-task
+
+**Task 4d — controlled paid validation authorization seam and Task 4 source
+closure.** Define the explicit opt-in construction/config boundary that can supply
+the exact authorization object to backend + business caller only for an approved
+single-shot validation. Normal production startup remains locked. Do not execute a
+paid request or test/build/Stable action.
