@@ -13,9 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import agent.services.omni_flash as omni_flash
-AUTH = object()
-OPERATION = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-
 from agent.services.omni_flash import (
     OMNI_FLASH_MAX_REFERENCE_IMAGES,
     _load_model_key,
@@ -26,6 +23,9 @@ from agent.services.omni_flash import (
     generate_omni_flash_text_video,
     generate_omni_flash_video,
 )
+
+AUTH = object()
+OPERATION = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
 @pytest.fixture
