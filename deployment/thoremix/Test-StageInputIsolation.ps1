@@ -55,21 +55,21 @@ $passed=0
 try {
     foreach($label in $labels){
         $caseRoot=Join-Path $owned $label
-        $input=Join-Path $caseRoot 'input'
+        $inputPath=Join-Path $caseRoot 'input'
         $validStage=Join-Path $caseRoot 'valid-stage'
-        New-Item -ItemType Directory -Path $input,$validStage -Force | Out-Null
-        $sentinel=Join-Path $input 'sentinel.txt'
+        New-Item -ItemType Directory -Path $inputPath,$validStage -Force | Out-Null
+        $sentinel=Join-Path $inputPath 'sentinel.txt'
         [IO.File]::WriteAllText($sentinel,('unchanged-' + $label))
         $before=(Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash
 
         Expect-Overlap {
-            Assert-StageInputDisjoint -StageOutputRoot $input -InputPath $input -InputLabel $label
+            Assert-StageInputDisjoint -StageOutputRoot $inputPath -InputPath $inputPath -InputLabel $label
         } $label
         Assert-Check ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -eq $before) "$label equal sentinel unchanged"
 
-        $stageUnderInput=Join-Path $input 'stage-child'
+        $stageUnderInput=Join-Path $inputPath 'stage-child'
         Expect-Overlap {
-            Assert-StageInputDisjoint -StageOutputRoot $stageUnderInput -InputPath $input -InputLabel $label
+            Assert-StageInputDisjoint -StageOutputRoot $stageUnderInput -InputPath $inputPath -InputLabel $label
         } $label
         Assert-Check (-not (Test-Path -LiteralPath $stageUnderInput)) "$label guard must not mkdir descendant stage"
         Assert-Check ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -eq $before) "$label input-ancestor sentinel unchanged"
@@ -99,7 +99,7 @@ try {
         Assert-Check (-not (Test-Path -LiteralPath $junctionStage)) "$label junction guard must not create stage"
         Assert-Check ((Get-FileHash -LiteralPath $junctionSentinel -Algorithm SHA256).Hash -eq $junctionBefore) "$label junction sentinel unchanged"
 
-        $valid=Assert-StageInputDisjoint -StageOutputRoot $validStage -InputPath $input -InputLabel $label
+        $valid=Assert-StageInputDisjoint -StageOutputRoot $validStage -InputPath $inputPath -InputLabel $label
         Assert-Check ($valid.label -eq $label) "$label valid disjoint label"
         Assert-Check ($valid.stage -ne $valid.input) "$label valid disjoint physical paths differ"
         Assert-Check ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -eq $before) "$label valid path sentinel unchanged"
