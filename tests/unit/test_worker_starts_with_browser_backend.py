@@ -5,6 +5,12 @@ full browser-only source pass reaches validation.
 """
 import ast
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from agent.worker import processor
+from agent.worker.processor import WorkerController
 
 
 def _source():
@@ -57,3 +63,47 @@ def test_dashboard_websocket_remains_independent():
     source = _source()
     assert '@app.websocket("/ws/dashboard")' in source
     assert "async def dashboard_ws" in source
+
+
+@pytest.mark.asyncio
+async def test_worker_runs_cleanup_and_loop_when_paid_dispatch_is_locked(monkeypatch):
+    controller = WorkerController()
+    calls = []
+
+    async def cleanup():
+        calls.append("cleanup")
+
+    async def run_loop():
+        calls.append("loop")
+
+    monkeypatch.setattr(
+        processor,
+        "get_flow_client",
+        lambda: SimpleNamespace(paid_dispatch_enabled=False),
+    )
+    monkeypatch.setattr(controller, "_cleanup_stale_processing", cleanup)
+    monkeypatch.setattr(controller, "_run_loop", run_loop)
+
+    await controller.start()
+
+    assert calls == ["cleanup", "loop"]
+
+
+def test_worker_start_does_not_gate_lifecycle_on_paid_dispatch():
+    source = ast.get_source_segment(
+        Path("agent/worker/processor.py").read_text(encoding="utf-8"),
+        next(
+            node for node in ast.walk(
+                ast.parse(Path("agent/worker/processor.py").read_text(encoding="utf-8"))
+            )
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "start"
+        ),
+    )
+    assert "paid_dispatch_enabled" not in source
+
+
+def test_worker_has_no_retired_extension_transient_retry_branch():
+    source = Path("agent/worker/processor.py").read_text(encoding="utf-8")
+    assert "extension reconnected" not in source.lower()
+    assert "extension disconnected" not in source.lower()
+    assert "extension not connected" not in source.lower()
