@@ -9,7 +9,6 @@ import json
 import pytest
 
 from agent.services import flow_batch as fb
-from agent.services.flow_browser_contract import BrowserCommandError
 from agent.services.flow_browser_paid_video import FlowPaidVideoGate
 from agent.services.flow_browser_state import BrowserStateStore
 
