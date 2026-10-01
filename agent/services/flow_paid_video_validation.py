@@ -36,7 +36,7 @@ class PaidVideoValidationSession:
 
     @property
     def paid_dispatch_enabled(self) -> bool:
-        return self._backend.paid_dispatch_enabled is True
+        return self._backend.paid_video_dispatch_enabled is True
 
     @property
     def used(self) -> bool:
@@ -89,8 +89,8 @@ def build_paid_video_validation_session(
     backend = BrowserFlowBackend(
         config=config,
         state_path=state_path,
-        paid_dispatch_enabled=True,
-        paid_authorization=authorization,
+        paid_video_dispatch_enabled=True,
+        paid_video_authorization=authorization,
     )
     return PaidVideoValidationSession(
         _CONSTRUCTION_KEY, authorization, backend,
