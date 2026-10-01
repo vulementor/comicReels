@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { fetchAPI } from '../api/client'
+import { useWebSocketContext } from '../api/useWebSocketContext'
 import { useTranslation } from '../i18n/useTranslation'
 import type { TranslationKey } from '../i18n/translations'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/card'
@@ -8,15 +9,14 @@ import { Badge } from '../components/ui/badge'
 interface HealthResponse {
   status: string
   version: string
-  extension_connected: boolean
-  ws: {
-    connected: boolean
-    active_connections: number
-    authenticated_connections: number
-    connects: number
-    disconnects: number
-    uptime_s: number | null
-  }
+  transport: 'browser'
+  backend_ready: boolean | null
+  browser_session_ready: boolean | null
+  authentication: 'authenticated' | 'signed_out' | 'unknown' | null
+  lease_held: boolean | null
+  reconciliation_required: boolean | null
+  pending_intents: number | null
+  paid_dispatch_enabled: boolean | null
 }
 
 function useHealthPoll() {
@@ -56,7 +56,14 @@ const TROUBLE_KEYS: { problemKey: TranslationKey; solutionKey: TranslationKey }[
 
 export default function GuidePage() {
   const { t } = useTranslation()
+  const { isConnected: dashboardConnected } = useWebSocketContext()
   const { health, reachable } = useHealthPoll()
+
+  const browserReady = health?.backend_ready === true
+    && health.browser_session_ready === true
+    && health.authentication === 'authenticated'
+    && health.lease_held === true
+  const paidLocked = health?.paid_dispatch_enabled === false
 
   return (
     <div className="flex flex-col gap-5 max-w-3xl">
@@ -79,23 +86,56 @@ export default function GuidePage() {
           ) : !health ? (
             <div className="text-xs" style={{ color: 'var(--muted)' }}>{t('guide.status.checking')}</div>
           ) : (
-            <div className="flex flex-wrap gap-6">
-              <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--green)' }} />
-                <span className="text-xs" style={{ color: 'var(--text)' }}>{t('guide.status.agentRunning')}</span>
-                <Badge variant="outline">v{health.version}</Badge>
+            <div className="flex flex-col gap-2 text-xs">
+              <div className="flex flex-wrap gap-6">
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--green)' }} />
+                  <span style={{ color: 'var(--text)' }}>{t('guide.status.agentRunning')}</span>
+                  <Badge variant="outline">v{health.version}</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{ background: browserReady ? 'var(--green)' : 'var(--red)' }}
+                  />
+                  <span style={{ color: browserReady ? 'var(--green)' : 'var(--red)' }}>
+                    {browserReady ? t('guide.status.browserReady') : t('guide.status.browserNotReady')}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full" style={{ background: health.extension_connected ? 'var(--green)' : 'var(--red)' }} />
-                <span className="text-xs" style={{ color: health.extension_connected ? 'var(--green)' : 'var(--red)' }}>
-                  {health.extension_connected ? t('guide.status.extensionConnected') : t('guide.status.extensionDisconnected')}
-                </span>
+
+              <div style={{ color: 'var(--muted)' }}>
+                {t('guide.status.authentication')}: {health.authentication === 'authenticated'
+                  ? t('guide.status.authenticated')
+                  : health.authentication === 'signed_out'
+                    ? t('guide.status.signedOut')
+                    : t('guide.status.unknown')}
+                {' · '}
+                {t('guide.status.lease')}: {health.lease_held === true
+                  ? t('guide.status.leaseHeld')
+                  : health.lease_held === false
+                    ? t('guide.status.leaseMissing')
+                    : t('guide.status.unknown')}
               </div>
-              <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full" style={{ background: health.ws.authenticated_connections > 0 ? 'var(--green)' : 'var(--muted)' }} />
-                <span className="text-xs" style={{ color: 'var(--muted)' }}>
-                  {t('guide.status.ws', { active: health.ws.active_connections, authenticated: health.ws.authenticated_connections })}
-                </span>
+
+              <div style={{ color: health.reconciliation_required === true ? 'var(--accent)' : 'var(--muted)' }}>
+                {t('guide.status.reconciliation')}: {health.reconciliation_required === true
+                  ? t('guide.status.reconciliationRequired', { n: health.pending_intents ?? 0 })
+                  : t('guide.status.reconciliationClear')}
+              </div>
+
+              <div style={{ color: paidLocked ? 'var(--muted)' : 'var(--accent)' }}>
+                {t('guide.status.paidDispatch')}: {health.paid_dispatch_enabled === true
+                  ? t('guide.status.paidValidation')
+                  : paidLocked
+                    ? t('guide.status.paidLocked')
+                    : t('guide.status.unknown')}
+              </div>
+
+              <div style={{ color: 'var(--muted)' }}>
+                {t('guide.status.dashboardChannel')}: {dashboardConnected
+                  ? t('guide.status.dashboardLive')
+                  : t('guide.status.dashboardOffline')}
               </div>
             </div>
           )}
