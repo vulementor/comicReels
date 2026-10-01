@@ -313,7 +313,6 @@ async def _submit_omni_frame_video(
     """
     _validate_frame_inputs(start_image_media_id, end_image_media_id, duration_s, aspect_ratio)
     resolution = _validate_resolution(resolution)
-    mode = "start_end_frame_to_video" if end_image_media_id is not None else "frame_to_video"
     client = get_flow_client()
 
     try:
