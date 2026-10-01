@@ -20,6 +20,61 @@ Các checkpoint lịch sử bên dưới được giữ làm evidence; workflow 
 chỉ đạo thực thi hiện hành khi mâu thuẫn với phần này.
 
 
+## Flow browser-only cutover — SOURCE COMPLETE / NOT VALIDATED — 2026-10-01
+
+Task 1→9 source work is complete on branch
+`feat/fbr-2-driver-lifecycle-20260930`.
+
+**Validation source cut:** `4bb11a676766b418a0317b1ae24e509a5ba0936d`.
+
+**Rollback source revision:** `5aecee7ef007b34e1ec732a3a382c80ff393546c`
+(the then-current/current `main`, preserved as an ancestor of the browser branch).
+
+**KBS pin:** `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+
+Source invariants closed:
+- Flow transport is browser-only; the Chrome Flow extension transport/package is retired.
+- Explicit extension backend selection is rejected.
+- One persistent signed-in Flow profile + explicit lease is the session authority.
+- Worker lifecycle runs even when paid dispatch is locked, so saved operations can resume/poll.
+- Image and video paid effects are separate, disabled-by-default capabilities.
+- Paid image/video submit uses durable intent-before-effect, durable idempotency and verified receipt.
+- UNKNOWN/reconciliation-required outcomes are never automatically resent.
+- Existing Veo/Omni video modes use the dedicated paid-video gate; no new video model/upscale feature was added.
+- Operation receipts are durably bound to project before business success; post-submit bind failure is UNKNOWN.
+- Session-project create/reuse uses the browser backend durable journal.
+- Known project ids are preserved through media reads.
+- `/ws/dashboard` remains an independent dashboard event channel, not Flow transport.
+- PR #12 staged-KAT and post-PR12 Windows fixes from `main` were preserved during integration.
+
+This checkpoint **does not claim runtime PASS**. No pytest, frontend build/lint,
+browser live run, paid/CAPTCHA effect, EXE launch, Stable/ThoRemix mutation or
+Remote Desktop acceptance was executed for this browser-only source branch during
+the development phase.
+
+### Phase 3 validation obligations
+
+Run validation against the exact source cut/closure branch without changing Stable first:
+
+1. **Static/unit gate:** Python compile/import + targeted browser-only/paid-gate suites,
+   then full pytest.
+2. **Frontend gate:** dashboard TypeScript/build/lint and source contracts.
+3. **Browser read-only gate:** persistent profile/lease readiness, project create/reuse,
+   operation polling, media read/refresh, restart/resume and reconciliation projection.
+4. **Explicit paid validation gate:** use only the isolated one-shot image/video validation
+   capability with operator-approved authorization; never use normal HTTP/worker paths to
+   manufacture authorization and never replay UNKNOWN effects.
+5. **Canonical KAT/ThoRemix integration gate:** include the owner-reported fresh canonical
+   KAT `b89c2b71` in final validation evidence, but do not treat that separate PASS as a
+   browser-branch PASS until the integrated branch is validated.
+6. **Build/EXE gate:** only after source tests are green, build the ThoRemix/Stable artifact,
+   verify staged-KAT contract, hashes/source manifest, launch and acceptance.
+7. **Final Acceptance:** only at the final acceptance stage may Remote Desktop Commander be
+   used, following launch → release → inspect; no direct coding/fixing through RDC.
+
+Any defect found in Phase 3 must be repaired back in GitHub source first before
+rebuilding or re-running Stable.
+
 ## Shopee Affiliate catalog-first — DEVELOPMENT COMPLETE — 2026-09-30
 
 Owner reasserted the execution rule: finish the complete GitHub development plan before any
