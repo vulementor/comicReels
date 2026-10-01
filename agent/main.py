@@ -17,6 +17,7 @@ from agent.api.videos import router as videos_router
 from agent.api.scenes import router as scenes_router
 from agent.api.requests import router as requests_router
 from agent.api.flow import router as flow_router
+from agent.api.flow_backend_status import router as flow_backend_status_router
 from agent.api.reviews import router as reviews_router
 from agent.api.tts import router as tts_router
 from agent.api.materials import router as materials_router
@@ -27,6 +28,7 @@ from agent.api.active_project import router as active_project_router
 from agent.api.comicreels import router as comicreels_router
 from agent.worker.processor import get_worker_controller
 from agent.services.flow_client import get_flow_client
+from agent.services.flow_backend_status import read_backend_status
 from agent.services.event_bus import event_bus
 from agent.sdk import init_sdk
 
@@ -164,6 +166,7 @@ app.include_router(videos_router, prefix="/api")
 app.include_router(scenes_router, prefix="/api")
 app.include_router(requests_router, prefix="/api")
 app.include_router(flow_router, prefix="/api")
+app.include_router(flow_backend_status_router, prefix="/api")
 app.include_router(reviews_router, prefix="/api")
 app.include_router(tts_router, prefix="/api")
 app.include_router(materials_router, prefix="/api")
@@ -206,13 +209,15 @@ async def ext_callback(request: Request):
 @app.get("/health")
 async def health():
     client = get_flow_client()
+    backend_status = await read_backend_status()
     return {
         "status": "ok",
         "version": app.version,
         "extension_connected": client.extension_connected,
         "backend_kind": client.backend_kind,
-        "backend_ready": client.connected,
+        "backend_ready": backend_status['backend_ready'],
         "paid_dispatch_enabled": client.paid_dispatch_enabled,
+        "backend_status": backend_status,
         "ws": client.ws_stats,
     }
 
