@@ -82,7 +82,8 @@ class FlowBrowserDriver:
 
     def __init__(self, config: FlowProfileConfig, state_path: Path,
                  owner_key: str, *, session_factory=None,
-                 paid_dispatch_enabled=False, paid_authorization=None):
+                 paid_dispatch_enabled=False, paid_authorization=None,
+                 paid_video_dispatch_enabled=False, paid_video_authorization=None):
         self.config = config
         self._store = BrowserStateStore(Path(state_path), owner_key)
         self._factory = session_factory or FlowBrowserSessionProvider
@@ -92,6 +93,8 @@ class FlowBrowserDriver:
         self._error = None
         self.paid_dispatch_enabled = paid_dispatch_enabled is True
         self._paid_authorization = paid_authorization
+        self.paid_video_dispatch_enabled = paid_video_dispatch_enabled is True
+        self._paid_video_authorization = paid_video_authorization
 
     def _check_thread(self) -> None:
         if self._thread is not None and self._thread != threading.get_ident():
@@ -615,11 +618,11 @@ class FlowBrowserDriver:
                 'status': 403, 'error': 'PAID_DISPATCH_DISABLED',
                 'effect': 'not_submitted',
             },
-            dispatch_enabled=self.paid_dispatch_enabled,
-            authorization=self._paid_authorization,
+            dispatch_enabled=self.paid_video_dispatch_enabled,
+            authorization=self._paid_video_authorization,
         )
-        if (not self.paid_dispatch_enabled or self._paid_authorization is None
-                or authorization is not self._paid_authorization):
+        if (not self.paid_video_dispatch_enabled or self._paid_video_authorization is None
+                or authorization is not self._paid_video_authorization):
             return gate.submit(
                 params, idempotency_key=idempotency_key,
                 authorization=authorization, timeout=timeout,
@@ -649,7 +652,7 @@ class FlowBrowserDriver:
             self._store,
             lambda cmd, wait: self._paid_video_dispatch(page, script, cmd, wait),
             dispatch_enabled=True,
-            authorization=self._paid_authorization,
+            authorization=self._paid_video_authorization,
         )
         return gate.submit(
             params, idempotency_key=idempotency_key,
@@ -666,7 +669,8 @@ class FlowBrowserDriver:
                 return self._execute_upload(command)
             # Session-project creation uses ensure_session_project so a durable
             # intent key exists before the effect. Raw create stays unavailable;
-            # paid image dispatch uses submit_paid_image(), never generic execute().
+            # Paid image/video dispatch use their dedicated gated methods, never
+            # generic execute().
             return {'status': 501, 'error': 'BROWSER_CAPABILITY_NOT_IMPLEMENTED',
                     'effect': 'not_submitted'}
         except Exception as error:
