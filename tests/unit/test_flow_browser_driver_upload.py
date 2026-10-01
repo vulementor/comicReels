@@ -135,8 +135,8 @@ def test_upload_records_intent_before_effect_and_only_persists_verified_receipt(
     assert base64.b64encode(raw).decode() not in path.read_text()
     report = driver.health()
     assert report['capabilities']['upload'] is True
-    assert report['capabilities']['operation_reconcile'] is False
-    assert report['operations_implemented'] is False
+    assert report['capabilities']['operation_reconcile'] is True
+    assert report['operations_implemented'] is True
     assert report['paid_dispatch_enabled'] is False
 
 
