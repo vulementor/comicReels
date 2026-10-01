@@ -670,7 +670,7 @@ class FlowClient:
             )
             complaint = operation.error
             if operation.project_id and operation.project_id != project_id:
-                raise fb.FlowBatchError("OPERATION_BINDING_CONFLICT")
+                return None, "OPERATION_BINDING_CONFLICT"
         except Exception as error:
             # A decayed/unreadable operation still remains discoverable in the
             # durable project's listing, so read failure never blocks discovery.
