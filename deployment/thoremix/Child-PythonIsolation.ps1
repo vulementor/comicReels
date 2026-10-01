@@ -63,7 +63,7 @@ function Invoke-IsolatedStagedPython {
         [Parameter(Mandatory=$true)][string]$Interpreter,
         [Parameter(Mandatory=$true)][string[]]$Arguments,
         [string]$WorkingDirectory = '',
-        [string]$InstallTarget = '',
+        [string]$InstallPrefix = '',
         [string[]]$PythonPath = @(),
         [hashtable]$Environment = @{},
         [switch]$EchoOutput
@@ -79,8 +79,8 @@ function Invoke-IsolatedStagedPython {
         Resolve-StagedChildPath -StageRoot $stage -CandidatePath $WorkingDirectory
     }
     $install = $null
-    if (-not [string]::IsNullOrWhiteSpace($InstallTarget)) {
-        $install = Resolve-StagedChildPath -StageRoot $stage -CandidatePath $InstallTarget -AllowMissing
+    if (-not [string]::IsNullOrWhiteSpace($InstallPrefix)) {
+        $install = Resolve-StagedChildPath -StageRoot $stage -CandidatePath $InstallPrefix -AllowMissing
         New-Item -ItemType Directory -Path $install -Force | Out-Null
         $install = Resolve-StagedChildPath -StageRoot $stage -CandidatePath $install
     }
@@ -144,7 +144,7 @@ function Invoke-IsolatedStagedPython {
         Stderr=$stderr
         Interpreter=$interpreterPath
         WorkingDirectory=$working
-        InstallTarget=$install
+        InstallPrefix=$install
     }
     if ($EchoOutput) {
         if ($stdout) { [Console]::Out.Write($stdout) }
@@ -157,12 +157,25 @@ function Invoke-StagedPipInstall {
     param(
         [Parameter(Mandatory=$true)][string]$StageRoot,
         [Parameter(Mandatory=$true)][string]$Interpreter,
-        [Parameter(Mandatory=$true)][string]$InstallTarget,
+        [Parameter(Mandatory=$true)][string]$InstallPrefix,
         [Parameter(Mandatory=$true)][string[]]$Packages,
         [string[]]$Options = @()
     )
-    $arguments = @('-m','pip','--isolated','install','--disable-pip-version-check') + $Options + @('--target',$InstallTarget) + $Packages
-    $result = Invoke-IsolatedStagedPython -StageRoot $StageRoot -Interpreter $Interpreter -Arguments $arguments -InstallTarget $InstallTarget -EchoOutput
+    $prefix = Resolve-StagedChildPath -StageRoot $StageRoot -CandidatePath $InstallPrefix -AllowMissing
+    New-Item -ItemType Directory -Path $prefix -Force | Out-Null
+    $prefix = Resolve-StagedChildPath -StageRoot $StageRoot -CandidatePath $prefix
+    $probeCode = @'
+import pathlib, sys
+print(pathlib.Path(sys.prefix).resolve())
+'@
+    $probe = Invoke-IsolatedStagedPython -StageRoot $StageRoot -Interpreter $Interpreter -Arguments @('-c',$probeCode)
+    if ($probe.ExitCode -ne 0) { throw 'STAGED_PYTHON_PREFIX_UNVERIFIED' }
+    $actualPrefix = Resolve-PhysicalBuildPath -Path $probe.Stdout.Trim()
+    if (-not $actualPrefix.Equals($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'STAGED_PYTHON_PREFIX_MISMATCH'
+    }
+    $arguments = @('-m','pip','--isolated','install','--disable-pip-version-check') + $Options + @('--prefix',$prefix) + $Packages
+    $result = Invoke-IsolatedStagedPython -StageRoot $StageRoot -Interpreter $Interpreter -Arguments $arguments -InstallPrefix $prefix -EchoOutput
     if ($result.ExitCode -ne 0) { throw 'STAGED_PIP_INSTALL_FAILED' }
     return $result
 }
