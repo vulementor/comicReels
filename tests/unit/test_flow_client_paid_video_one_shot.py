@@ -97,6 +97,10 @@ async def test_generate_video_uses_one_paid_submit_then_awaited_durable_binding(
     assert call["params"]["rpcid"] == fb.RPC_GEN_VIDEO
     assert call["params"]["projectId"] == PROJECT
     assert call["params"]["captchaAction"] == fb.CAPTCHA_VIDEO
+    payload = __import__("json").loads(
+        __import__("json").loads(call["params"]["freq"])[0][0][1]
+    )
+    assert payload[0][0][4][1] == MEDIA
     assert backend.bind_calls == [(OPERATION, PROJECT)]
     assert backend.execute_calls == []
     assert result == {
@@ -188,3 +192,56 @@ def test_generate_video_source_has_no_generic_paid_batch_submit():
     assert "submit_paid_video" in source
     assert "_batch_payload(" not in source
     assert "await self._remember_operation" in source
+
+
+@pytest.mark.asyncio
+async def test_degraded_end_frame_fallback_still_uses_start_frame_through_paid_gate(monkeypatch):
+    import agent.services.flow_client as module
+
+    monkeypatch.setattr(module, "FLOW_ALLOW_DEGRADED", True)
+    backend = VideoBackend()
+    client = FlowClient(backend=backend)
+
+    result = await client.generate_video(
+        start_image_media_id=MEDIA,
+        prompt="move",
+        project_id=PROJECT,
+        scene_id="scene-1",
+        end_image_media_id="22222222-3333-4444-5555-666666666666",
+        idempotency_key="request-video-degraded",
+        paid_authorization=AUTH,
+    )
+
+    assert result["status"] == 200
+    payload = __import__("json").loads(
+        __import__("json").loads(backend.paid_calls[0]["params"]["freq"])[0][0][1]
+    )
+    assert payload[0][0][4][1] == MEDIA
+    assert len(backend.paid_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_degraded_reference_video_uses_first_reference_through_same_one_shot_key(monkeypatch):
+    import agent.services.flow_client as module
+
+    monkeypatch.setattr(module, "FLOW_ALLOW_DEGRADED", True)
+    backend = VideoBackend()
+    client = FlowClient(backend=backend)
+    first = MEDIA
+
+    result = await client.generate_video_from_references(
+        [first, "22222222-3333-4444-5555-666666666666"],
+        "move",
+        PROJECT,
+        "scene-1",
+        idempotency_key="request-r2v-degraded",
+        paid_authorization=AUTH,
+    )
+
+    assert result["status"] == 200
+    assert backend.paid_calls[0]["idempotency_key"] == "request-r2v-degraded"
+    payload = __import__("json").loads(
+        __import__("json").loads(backend.paid_calls[0]["params"]["freq"])[0][0][1]
+    )
+    assert payload[0][0][4][1] == first
+    assert len(backend.paid_calls) == 1
