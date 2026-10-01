@@ -85,7 +85,7 @@ async def test_generate_shot_from_three_references_uploads_all_images_and_embeds
     monkeypatch.setattr(comic_api, "_details", fake_details)
     monkeypatch.setattr(comic_api, "_safe_file", lambda value: __import__("pathlib").Path(value))
     monkeypatch.setattr(comic_api, "flowkit_upload_image", fake_flowkit_upload)
-    monkeypatch.setattr(comic_api, "flowkit_extension_status", fake_flowkit_status)
+    monkeypatch.setattr(comic_api, "flowkit_status", fake_flowkit_status)
     monkeypatch.setattr(comic_api, "flowkit_generate_video_refs", fake_flowkit_generate)
     monkeypatch.setattr(comic_api.store, "update_shot", fake_update_shot)
     monkeypatch.setattr(comic_api.store, "claim_shot", fake_claim)
@@ -210,15 +210,21 @@ async def test_comicreels_preflight_delegates_to_flowkit(monkeypatch):
     async def fake_status():
         return {
             "connected": True,
+            "transport": "browser",
+            "backend_ready": True,
+            "browser_session_ready": True,
+            "authentication": "authenticated",
+            "lease_held": True,
             "flow_project_id": "flow-project",
             "session_project": {"project_id": "session-project"},
-            "transport": "batch",
         }
 
-    monkeypatch.setattr(comic_api, "flowkit_extension_status", fake_status)
+    monkeypatch.setattr(comic_api, "flowkit_status", fake_status)
 
     result = await comic_api.flow_preflight()
 
     assert result["ready"] is True
+    assert result["browser_ready"] is True
+    assert "extension_connected" not in result
     assert result["project_id"] == "flow-project"
-    assert result["flowkit"]["transport"] == "batch"
+    assert result["flowkit"]["transport"] == "browser"
