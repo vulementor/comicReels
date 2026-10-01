@@ -13,6 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import agent.services.omni_flash as omni_flash
+AUTH = object()
+OPERATION = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
 from agent.services.omni_flash import (
     OMNI_FLASH_MAX_REFERENCE_IMAGES,
     _load_model_key,
@@ -40,12 +43,24 @@ async def test_native_reference_receipt_survives_restart_and_polls_media(native_
     workflow_id = native_reference_submit[3][0][2]
     submitter = MagicMock()
     submitter._batch_project_id.return_value = pid
-    submitter._batch_payload = AsyncMock(return_value=native_reference_submit)
+    submitter.submit_paid_video = AsyncMock(return_value={
+        "status": 200,
+        "data": {
+            "projectId": pid,
+            "receiptKind": "media",
+            "mediaId": media_id,
+            "workflowId": workflow_id,
+        },
+        "effect": "completed",
+        "reused": False,
+    })
     with patch("agent.services.omni_flash.get_flow_client", return_value=submitter):
         result = await generate_omni_flash_video(
             reference_media_ids=["ref-1", "ref-2", "ref-3"],
             prompt="One clip containing three scenes", project_id=pid,
             duration_s=10, resolution="360p",
+            idempotency_key="omni-native-1",
+            paid_authorization=AUTH,
         )
     assert result["status"] == 200
     descriptor = json.loads(json.dumps(result["data"]["flowkitPolling"]))
@@ -55,10 +70,10 @@ async def test_native_reference_receipt_survives_restart_and_polls_media(native_
     }
     assert result["data"]["media"] == [{"name": media_id}]
     assert extract_omni_workflows(result) == descriptor["workflows"]
-    submitter._batch_payload.assert_awaited_once()
+    submitter.submit_paid_video.assert_awaited_once()
+    assert submitter.submit_paid_video.await_args.kwargs["idempotency_key"] == "omni-native-1"
     submitter._remember_operation.assert_not_called()
 
-    # A new client has no in-memory operation -> project map.
     poller = MagicMock()
     poller.get_media = AsyncMock(side_effect=[
         {"status": 200, "data": {"image": {"fifeUrl": f"https://flow-content.google/image/{media_id}"}}},
@@ -79,33 +94,29 @@ async def test_native_reference_receipt_survives_restart_and_polls_media(native_
 
 
 @pytest.mark.asyncio
-async def test_malformed_native_receipt_never_falls_back_to_workflow_or_resubmits(native_reference_submit):
-    native_reference_submit[3] = []
+async def test_unknown_paid_reference_result_is_returned_without_binding_or_retry():
     client = MagicMock()
     client._batch_project_id.return_value = "11111111-2222-3333-4444-555555555555"
-    client._batch_payload = AsyncMock(return_value=native_reference_submit)
+    client.submit_paid_video = AsyncMock(return_value={
+        "status": 409,
+        "error": "PAID_RECONCILIATION_REQUIRED",
+        "effect": "unknown",
+    })
     with patch("agent.services.omni_flash.get_flow_client", return_value=client):
-        result = await generate_omni_flash_video(["ref-1"], "clip", "project", duration_s=10)
-    assert result["status"] == 502
-    client._batch_payload.assert_awaited_once()
-    client._remember_operation.assert_not_called()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("broken_slot,value", [(1, None), (2, None), (0, "CAMS-not-a-uuid")])
-async def test_native_receipt_requires_all_three_identifiers(native_reference_submit, broken_slot, value):
-    native_reference_submit[3][0][broken_slot] = value
-    client = MagicMock()
-    client._batch_project_id.return_value = "11111111-2222-3333-4444-555555555555"
-    client._batch_payload = AsyncMock(return_value=native_reference_submit)
-    with patch("agent.services.omni_flash.get_flow_client", return_value=client):
-        result = await generate_omni_flash_video(["ref-1"], "clip", "project", duration_s=10)
-    assert result["status"] == 502
-    client._batch_payload.assert_awaited_once()
+        result = await generate_omni_flash_video(
+            ["ref-1"], "clip", "11111111-2222-3333-4444-555555555555",
+            duration_s=10,
+            idempotency_key="omni-unknown-1",
+            paid_authorization=AUTH,
+        )
+    assert result["effect"] == "unknown"
+    assert result["error"] == "PAID_RECONCILIATION_REQUIRED"
+    client.submit_paid_video.assert_awaited_once()
     client._remember_operation.assert_not_called()
 
 
 @pytest.mark.parametrize(
+    ("duration", "expected"),@pytest.mark.parametrize(
     ("duration", "expected"),
     [
         (4, "abra_r2v_4s"),
@@ -175,38 +186,42 @@ def test_extract_omni_workflows_uses_primary_media_id():
 @pytest.mark.asyncio
 async def test_batch_text_video_builds_4s_yhhmef_submit(monkeypatch):
     client = MagicMock()
-    client._batch_project_id.return_value = "11111111-2222-3333-4444-555555555555"
-    client._batch_payload = AsyncMock(return_value=[
-        None,
-        10,
-        [],
-        [[
-            "22222222-3333-4444-5555-666666666666",
-            "11111111-2222-3333-4444-555555555555",
-            "77777777-8888-9999-aaaa-bbbbbbbbbbbb",
-            "CAE",
-        ]],
-    ])
+    pid = "11111111-2222-3333-4444-555555555555"
+    media_id = "22222222-3333-4444-5555-666666666666"
+    workflow_id = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
+    client._batch_project_id.return_value = pid
+    client.submit_paid_video = AsyncMock(return_value={
+        "status": 200,
+        "data": {
+            "projectId": pid,
+            "receiptKind": "media",
+            "mediaId": media_id,
+            "workflowId": workflow_id,
+        },
+        "effect": "completed",
+        "reused": False,
+    })
 
     with patch("agent.services.omni_flash.get_flow_client", return_value=client):
         result = await generate_omni_flash_text_video(
             prompt="A red paper boat drifts across a pond",
-            project_id="11111111-2222-3333-4444-555555555555",
+            project_id=pid,
             duration_s=4,
             aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+            idempotency_key="omni-text-1",
+            paid_authorization=AUTH,
         )
 
     assert result["status"] == 200
     assert result["data"]["model"] == "abra_t2v_4s"
     assert result["data"]["duration_s"] == 4
     assert result["data"]["flowkitPolling"]["mode"] == "batch_media"
-    assert result["data"]["flowkitPolling"]["workflows"][0]["primary_media_id"] == (
-        "22222222-3333-4444-5555-666666666666"
-    )
-    rpcid, freq, captcha = client._batch_payload.await_args.args[:3]
-    assert rpcid == omni_flash.fb.RPC_GEN_VIDEO_TEXT
-    assert captcha == omni_flash.fb.CAPTCHA_VIDEO
-    payload = __import__("json").loads(__import__("json").loads(freq)[0][0][1])
+    assert result["data"]["flowkitPolling"]["workflows"][0]["primary_media_id"] == media_id
+    call = client.submit_paid_video.await_args.kwargs
+    assert call["rpcid"] == omni_flash.fb.RPC_GEN_VIDEO_TEXT
+    assert call["project_id"] == pid
+    assert call["idempotency_key"] == "omni-text-1"
+    payload = json.loads(json.loads(call["freq"])[0][0][1])
     assert payload[0][0][1] == "abra_t2v_4s"
     assert payload[0][0][2] == omni_flash.fb.VIDEO_ASPECT_LANDSCAPE
 
@@ -216,11 +231,17 @@ async def test_batch_first_frame_video_uses_eb1hjf_abra_i2v(monkeypatch):
     client = MagicMock()
     pid = "11111111-2222-3333-4444-555555555555"
     client._batch_project_id.return_value = pid
-    client._batch_payload = AsyncMock(return_value=[
-        None,
-        50,
-        [["op-omni-1", pid, "scene-1", None]],
-    ])
+    client.submit_paid_video = AsyncMock(return_value={
+        "status": 200,
+        "data": {
+            "projectId": pid,
+            "receiptKind": "operation",
+            "operationId": OPERATION,
+        },
+        "effect": "completed",
+        "reused": False,
+    })
+    client._remember_operation = AsyncMock(return_value={"status": 200})
 
     with patch("agent.services.omni_flash.get_flow_client", return_value=client):
         result = await generate_omni_flash_first_frame_video(
@@ -229,6 +250,8 @@ async def test_batch_first_frame_video_uses_eb1hjf_abra_i2v(monkeypatch):
             project_id=pid,
             duration_s=6,
             aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+            idempotency_key="omni-frame-1",
+            paid_authorization=AUTH,
         )
 
     assert result["status"] == 200
@@ -236,13 +259,13 @@ async def test_batch_first_frame_video_uses_eb1hjf_abra_i2v(monkeypatch):
     assert result["data"]["duration_s"] == 6
     assert result["data"]["flowkitPolling"]["mode"] == "batch_operation"
     assert result["data"]["flowkitPolling"]["project_id"] == pid
-    assert result["data"]["operations"][0]["operation"]["name"] == "op-omni-1"
-    client._remember_operation.assert_called_once_with("op-omni-1", pid)
+    assert result["data"]["operations"][0]["operation"]["name"] == OPERATION
+    client._remember_operation.assert_awaited_once_with(OPERATION, pid)
 
-    rpcid, freq, captcha = client._batch_payload.await_args.args[:3]
-    assert rpcid == omni_flash.fb.RPC_GEN_VIDEO
-    assert captcha == omni_flash.fb.CAPTCHA_VIDEO
-    payload = __import__("json").loads(__import__("json").loads(freq)[0][0][1])
+    call = client.submit_paid_video.await_args.kwargs
+    assert call["rpcid"] == omni_flash.fb.RPC_GEN_VIDEO
+    assert call["idempotency_key"] == "omni-frame-1"
+    payload = json.loads(json.loads(call["freq"])[0][0][1])
     request = payload[0][0]
     assert request[0][2][0][0][0] == "Three children clap gently"
     assert request[1] == "abra_i2v_6s"
@@ -369,9 +392,17 @@ class TestMigratedOmniReferenceBatchModes:
             stub = MagicMock()
             pid = "11111111-2222-3333-4444-555555555555"
             stub._batch_project_id.return_value = pid
-            stub._batch_payload = AsyncMock(return_value=[
-                None, 50, [["op-ref-1", pid, "scene-1", None]],
-            ])
+            stub.submit_paid_video = AsyncMock(return_value={
+                "status": 200,
+                "data": {
+                    "projectId": pid,
+                    "receiptKind": "operation",
+                    "operationId": OPERATION,
+                },
+                "effect": "completed",
+                "reused": False,
+            })
+            stub._remember_operation = AsyncMock(return_value={"status": 200})
             factory.return_value = stub
             yield stub
 
@@ -379,46 +410,45 @@ class TestMigratedOmniReferenceBatchModes:
         result = await generate_omni_flash_first_last_video(
             start_image_media_id="start", end_image_media_id="end",
             prompt="morph", project_id="pid", duration_s=4,
-            resolution="360p", aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE")
+            resolution="360p", aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+            idempotency_key="omni-first-last-1", paid_authorization=AUTH)
         assert result["status"] == 200
         assert result["data"]["model"] == "omni_flash_i2v_4s_first_last_360p"
         assert result["data"]["resolution"] == "360p"
         assert result["data"]["flowkitPolling"]["mode"] == "batch_operation"
-        rpcid, freq, captcha = client._batch_payload.await_args.args[:3]
-        assert rpcid == omni_flash.fb.RPC_GEN_VIDEO_FIRST_LAST
-        assert captcha == omni_flash.fb.CAPTCHA_VIDEO
-        payload = __import__("json").loads(__import__("json").loads(freq)[0][0][1])
+        call = client.submit_paid_video.await_args.kwargs
+        assert call["rpcid"] == omni_flash.fb.RPC_GEN_VIDEO_FIRST_LAST
+        payload = json.loads(json.loads(call["freq"])[0][0][1])
         req = payload[0][0]
         assert req[1] == "omni_flash_i2v_4s_first_last_360p"
         assert req[4][1] == "start"
         assert req[5][1] == "end"
-        client._remember_operation.assert_called_once_with(
-            "op-ref-1", "11111111-2222-3333-4444-555555555555")
+        client._remember_operation.assert_awaited_once_with(
+            OPERATION, "11111111-2222-3333-4444-555555555555")
 
     async def test_seven_references_submit_rather_than_trip_the_validator(self, client):
-        """Seven is the limit, not one past it. This used to assert the
-        capability gap; now that r2v submits, it has to reach the wire —
-        otherwise an off-by-one in the validator looks like a Flow refusal."""
         refs = [f"ref-{i}" for i in range(OMNI_FLASH_MAX_REFERENCE_IMAGES)]
         result = await generate_omni_flash_video(
             reference_media_ids=refs, prompt="seven", project_id="pid",
-            duration_s=4, resolution="720p")
+            duration_s=4, resolution="720p",
+            idempotency_key="omni-seven-1", paid_authorization=AUTH)
         assert result["status"] == 200
-        _rpcid, freq, _captcha = client._batch_payload.await_args.args[:3]
-        payload = __import__("json").loads(__import__("json").loads(freq)[0][0][1])
+        freq = client.submit_paid_video.await_args.kwargs["freq"]
+        payload = json.loads(json.loads(freq)[0][0][1])
         assert payload[0][0][1] == [[None, r] for r in refs]
 
     async def test_reference_to_video_uses_mzza6b_and_all_references(self, client):
         result = await generate_omni_flash_video(
             reference_media_ids=["a", "b", "c"], prompt="keep all refs",
             project_id="pid", duration_s=6, resolution="720p",
-            aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT")
+            aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
+            idempotency_key="omni-r2v-1", paid_authorization=AUTH)
         assert result["status"] == 200
         assert result["data"]["model"] == "abra_r2v_6s"
         assert result["data"]["flowkitPolling"]["mode"] == "batch_operation"
-        rpcid, freq, _captcha = client._batch_payload.await_args.args[:3]
-        assert rpcid == omni_flash.fb.RPC_GEN_VIDEO_REFERENCES
-        payload = __import__("json").loads(__import__("json").loads(freq)[0][0][1])
+        call = client.submit_paid_video.await_args.kwargs
+        assert call["rpcid"] == omni_flash.fb.RPC_GEN_VIDEO_REFERENCES
+        payload = json.loads(json.loads(call["freq"])[0][0][1])
         req = payload[0][0]
         assert req[1] == [[None, "a"], [None, "b"], [None, "c"]]
         assert req[2] == "abra_r2v_6s"
@@ -428,9 +458,10 @@ class TestMigratedOmniReferenceBatchModes:
         await generate_omni_flash_video(
             reference_media_ids=["a", "b"], prompt="refs", project_id="pid",
             duration_s=4, resolution="360p",
-            aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE")
-        _rpcid, freq, _captcha = client._batch_payload.await_args.args[:3]
-        payload = __import__("json").loads(__import__("json").loads(freq)[0][0][1])
+            aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+            idempotency_key="omni-r2v-360-1", paid_authorization=AUTH)
+        freq = client.submit_paid_video.await_args.kwargs["freq"]
+        payload = json.loads(json.loads(freq)[0][0][1])
         req = payload[0][0]
         assert req[2] == "abra_r2v_4s_360p"
         assert req[-1] == [4]
@@ -439,5 +470,5 @@ class TestMigratedOmniReferenceBatchModes:
         with pytest.raises(ValueError, match="resolution must be 360p or 720p"):
             await generate_omni_flash_first_frame_video(
                 start_image_media_id="a", prompt="go", project_id="pid",
-                resolution="1080p")
-        client._batch_payload.assert_not_called()
+                resolution="1080p", idempotency_key="omni-invalid-1")
+        client.submit_paid_video.assert_not_called()
