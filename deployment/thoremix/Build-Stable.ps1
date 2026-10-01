@@ -15,6 +15,7 @@ param(
     [string]$KatSource = ''
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Child-PythonIsolation.ps1')
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $workspace = Split-Path -Parent $repo
 $destination = [IO.Path]::GetFullPath($Root).TrimEnd('\')
@@ -479,24 +480,26 @@ try {
     } else {
         & robocopy $PythonHome $runtime /E /XD (Join-Path $PythonHome 'Lib\site-packages') (Join-Path $PythonHome 'Doc') (Join-Path $PythonHome 'Scripts') (Join-Path $PythonHome 'Lib\test') __pycache__ /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -gt 7) { throw 'Python runtime staging failed.' }
-        & "$runtime\python.exe" -m ensurepip --upgrade | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'Staged pip bootstrap failed.' }
-        & "$runtime\python.exe" -m pip install --disable-pip-version-check 'httpx==0.28.1' 'pillow==12.3.0' 'tzdata==2026.4' 'pydantic==2.13.5' 'PyYAML==6.0.3' 'camoufox==0.5.6'
-        if ($LASTEXITCODE -ne 0) { throw 'Staged dependencies failed.' }
+        $stagedPython = Join-Path $runtime 'python.exe'
+        $sitePackages = Join-Path $runtime 'Lib\site-packages'
+        $ensure = Invoke-IsolatedStagedPython -StageRoot $stage -Interpreter $stagedPython -Arguments @('-m','ensurepip','--upgrade') -EchoOutput
+        if ($ensure.ExitCode -ne 0) { throw 'Staged pip bootstrap failed.' }
+        Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallTarget $sitePackages -Options @('--upgrade') -Packages @('httpx==0.28.1','pillow==12.3.0','tzdata==2026.4','pydantic==2.13.5','PyYAML==6.0.3','camoufox==0.5.6','typer>=0.15,<1') | Out-Null
         foreach ($binary in @('ffmpeg.exe', 'ffprobe.exe')) {
             Copy-Item -LiteralPath (Join-Path 'C:\ffmpeg\bin' $binary) -Destination (Join-Path $stage 'runtime\bin') -Force
         }
     }
 
-    & "$runtime\python.exe" -m pip install --disable-pip-version-check 'pystray==0.19.5' 'faster-whisper==1.2.1' 'aiosqlite==0.22.1' 'ffpyplayer==4.5.3' $dependencies.gpt_fullproxy.path $dependencies.kbs.path
-    if ($LASTEXITCODE -ne 0) { throw 'Staged system tray dependency installation failed.' }
-    & "$runtime\python.exe" -m pip install --disable-pip-version-check --force-reinstall --no-deps $dependencies.krp.path
-    if ($LASTEXITCODE -ne 0) { throw 'Staged KRP refresh failed; installed bundle was not replaced.' }
+    $stagedPython = Join-Path $runtime 'python.exe'
+    $sitePackages = Join-Path $runtime 'Lib\site-packages'
+    Assert-StagedPythonRuntime -StageRoot $stage -Interpreter $stagedPython -SitePackages $sitePackages | Out-Null
+
+    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallTarget $sitePackages -Options @('--upgrade') -Packages @('pystray==0.19.5','faster-whisper==1.2.1','aiosqlite==0.22.1','ffpyplayer==4.5.3',$dependencies.gpt_fullproxy.path,$dependencies.kbs.path) | Out-Null
+    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallTarget $sitePackages -Options @('--upgrade','--force-reinstall','--no-deps') -Packages @($dependencies.krp.path) | Out-Null
     $krpSourcePackage = Join-Path $dependencies.krp.path 'src\kabin_reel_poster'
     $krpInstalledPackage = Join-Path $runtime 'Lib\site-packages\kabin_reel_poster'
     Assert-StagedPackageMatchesSource -SourcePackageRoot $krpSourcePackage -InstalledPackageRoot $krpInstalledPackage -Label 'KRP' | Out-Null
-    & "$runtime\python.exe" -m pip install --disable-pip-version-check --force-reinstall --no-deps $dependencies.kat.path
-    if ($LASTEXITCODE -ne 0) { throw 'Staged KAT refresh failed; installed bundle was not replaced.' }
+    Invoke-StagedPipInstall -StageRoot $stage -Interpreter $stagedPython -InstallTarget $sitePackages -Options @('--upgrade','--force-reinstall','--no-deps') -Packages @($dependencies.kat.path) | Out-Null
 
     Copy-Item -LiteralPath (Join-Path $repo 'agent\__init__.py') -Destination (Join-Path $stage 'source\agent')
     Copy-Item -LiteralPath (Join-Path $repo 'agent\config.py') -Destination (Join-Path $stage 'source\agent')
@@ -514,21 +517,8 @@ try {
     & $compiler /nologo /target:winexe "/out:$stage\ThoRemix.exe" /reference:System.Windows.Forms.dll (Join-Path $PSScriptRoot 'Launcher.cs')
     if ($LASTEXITCODE -ne 0) { throw 'Staged launcher compilation failed.' }
 
-    $savedEnvironment = @{}
-    foreach ($name in @('PYTHONPATH', 'PYTHONUTF8', 'PYTHONTZPATH', 'PATH', 'THOREMIX_BUILD_ROOT', 'THOREMIX_BUILD_STAGE', 'THOREMIX_AFF_PROFILE', 'THOREMIX_STAGE_ONLY')) {
-        $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
-    }
-    try {
-        $env:PYTHONPATH = Join-Path $stage 'source'
-        $env:PYTHONUTF8 = '1'
-        $env:PYTHONTZPATH = Join-Path $runtime 'Lib\site-packages\tzdata\zoneinfo'
-        $env:PATH = (Join-Path $stage 'runtime\bin') + ';' + $env:PATH
-        $env:THOREMIX_BUILD_ROOT = $liveDestination
-        $env:THOREMIX_BUILD_STAGE = $stage
-        $env:THOREMIX_AFF_PROFILE = $AffiliateProfile
-        $env:THOREMIX_STAGE_ONLY = if ($StageOnly) { '1' } else { '0' }
-        $validation = @'
-import compileall, os, pathlib, subprocess
+    $validation = @'
+import compileall, os, pathlib, subprocess, sys
 from dataclasses import asdict, replace
 import tkinter, ssl, sqlite3, PIL, httpx, tzdata, pydantic, yaml, camoufox, pystray
 import kabin_reel_poster, kabin_affiliate_toolkit
@@ -541,10 +531,22 @@ from agent.services.flow_story_browser import FlowStoryBrowser
 from agent.thoremix.story_operations import StoryOperations
 from agent.thoremix import core, cli, sdk, desktop, producer, publishing, affiliate
 from agent.thoremix.config import Settings, atomic_json
-stage = pathlib.Path(os.environ['THOREMIX_BUILD_STAGE'])
-root = pathlib.Path(os.environ['THOREMIX_BUILD_ROOT'])
+stage = pathlib.Path(os.environ['THOREMIX_BUILD_STAGE']).resolve()
+root = pathlib.Path(os.environ['THOREMIX_BUILD_ROOT']).resolve()
+runtime = (stage / 'runtime' / 'python').resolve()
+site = (runtime / 'Lib' / 'site-packages').resolve()
 stage_only = os.environ.get('THOREMIX_STAGE_ONLY') == '1'
-assert pathlib.Path(core.__file__).resolve().is_relative_to(stage.resolve())
+def inside(path, root):
+    try:
+        pathlib.Path(path).resolve().relative_to(root)
+        return True
+    except ValueError:
+        return False
+assert inside(sys.executable, stage), 'staged validation interpreter escaped stage'
+assert inside(sys.prefix, stage), 'staged sys.prefix escaped stage'
+for module in (kabin_reel_poster, kabin_affiliate_toolkit, gpt_fullproxy, kabin_browser_semantic):
+    assert inside(module.__file__, site), f'{module.__name__} imported outside staged site-packages'
+assert pathlib.Path(core.__file__).resolve().is_relative_to(stage)
 assert callable(getattr(KRPClient, 'recover_pre_submit', None)), 'KRP runtime lacks durable pre-submit recovery'
 kat_fields = SelectionPolicy.model_fields
 assert {'sold_min', 'commission_min'} <= set(kat_fields), 'KAT runtime lacks catalog-first hard-filter contract'
@@ -566,13 +568,17 @@ for name in ('ffmpeg.exe', 'ffprobe.exe'):
     subprocess.run([str(stage / 'runtime/bin' / name), '-version'], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 '@
-        Push-Location -LiteralPath (Join-Path $stage 'source')
-        try {
-            & "$runtime\python.exe" -c $validation
-            if ($LASTEXITCODE -ne 0) { throw 'Staged bundle validation failed; installed bundle was not replaced.' }
-        } finally { Pop-Location }
-    } finally {
-        foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+    $validationEnvironment = @{
+        THOREMIX_BUILD_ROOT=$liveDestination
+        THOREMIX_BUILD_STAGE=$stage
+        THOREMIX_AFF_PROFILE=$AffiliateProfile
+        THOREMIX_STAGE_ONLY=$(if ($StageOnly) { '1' } else { '0' })
+        PYTHONUTF8='1'
+        PYTHONTZPATH=(Join-Path $sitePackages 'tzdata\zoneinfo')
+    }
+    $validationResult = Invoke-IsolatedStagedPython -StageRoot $stage -Interpreter $stagedPython -Arguments @('-c',$validation) -WorkingDirectory (Join-Path $stage 'source') -PythonPath @((Join-Path $stage 'source')) -Environment $validationEnvironment -EchoOutput
+    if ($validationResult.ExitCode -ne 0) {
+        throw 'Staged bundle validation failed; installed bundle was not replaced.'
     }
 
     $files = @(Get-ChildItem -LiteralPath (Join-Path $stage 'source') -Recurse -File | Where-Object { $_.Extension -in @('.py','.js','.json') }) + @(Get-Item -LiteralPath (Join-Path $stage 'ThoRemix.exe'))
