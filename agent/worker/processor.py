@@ -308,9 +308,15 @@ async def _dispatch(req: dict, orientation: str) -> dict:
         scene["_project_id"] = pid
 
         if req_type in ("GENERATE_IMAGE", "REGENERATE_IMAGE"):
-            return await ops.generate_scene_image(scene, orientation)
+            return await ops.generate_scene_image(
+                scene, orientation, request_id=rid,
+            )
         if req_type == "EDIT_IMAGE":
-            return await ops.edit_scene_image(scene, orientation, source_media_id=req.get("source_media_id"))
+            return await ops.edit_scene_image(
+                scene, orientation,
+                source_media_id=req.get("source_media_id"),
+                request_id=rid,
+            )
         if req_type in ("GENERATE_VIDEO", "REGENERATE_VIDEO"):
             return await ops.generate_scene_video(scene, orientation, request_id=rid)
         if req_type == "GENERATE_VIDEO_REFS":
@@ -328,7 +334,9 @@ async def _dispatch(req: dict, orientation: str) -> dict:
             await crud.update_character(char["id"], media_id=None, reference_image_url=None)
             char["media_id"] = None
             char["reference_image_url"] = None
-            return await ops.generate_reference_image(char, pid)
+            return await ops.generate_reference_image(
+                char, pid, request_id=rid,
+            )
         if req_type == "EDIT_CHARACTER_IMAGE":
             src = req.get("source_media_id") or char.get("media_id")
             if not src:
@@ -341,8 +349,11 @@ async def _dispatch(req: dict, orientation: str) -> dict:
                 prompt=edit_prompt, source_media_id=src,
                 project_id=pid, aspect_ratio=aspect,
                 user_paygate_tier=tier,
+                idempotency_key=rid,
             )
-        return await ops.generate_reference_image(char, pid)
+        return await ops.generate_reference_image(
+            char, pid, request_id=rid,
+        )
 
     return {"error": f"Unknown request type: {req_type}"}
 
@@ -436,6 +447,23 @@ async def _handle_failure(rid: str, req: dict, result: dict, retry_after: dict =
             error_msg = "Unknown error"
     if isinstance(error_msg, dict):
         error_msg = json.dumps(error_msg)[:200]
+
+    effect = result.get("effect")
+    error_code = str(error_msg or "")
+    if effect == "unknown" or error_code == "PAID_RECONCILIATION_REQUIRED":
+        if retry_after is not None:
+            retry_after.pop(rid, None)
+        await crud.update_request(
+            rid,
+            status="FAILED",
+            error_message="PAID_RECONCILIATION_REQUIRED",
+        )
+        await _mark_scene_failed(req)
+        logger.error(
+            "Request %s requires paid-effect reconciliation; automatic retry blocked",
+            rid[:8],
+        )
+        return
 
     # Auto-recover expired media by re-uploading
     if "not found" in str(error_msg).lower():
