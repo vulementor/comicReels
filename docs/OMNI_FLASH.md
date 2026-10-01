@@ -14,11 +14,11 @@ curl -fsS "$FLOWKIT_BASE_URL/api/flow/status"
 Expected state on the migrated Flow transport:
 
 ```json
-{"status":"ok","extension_connected":true}
-{"connected":true,"transport":"batch","authenticated":true,"at_token_present":true}
+{"status":"ok","backend_ready":true,"browser_session_ready":true,"authentication":"authenticated","lease_held":true}
+{"backend_kind":"browser","preflight":{"ready":true,"transport":"browser","session_required":true}}
 ```
 
-Use `http://127.0.0.1:8100` when the caller runs on the FlowKit host. For a remote integration, set `FLOWKIT_BASE_URL` to the protected HTTPS reverse-proxy URL and allow only the required source IPs or private network. Do not expose Chrome, VNC/noVNC, the extension WebSocket, or port 8100 publicly.
+Use `http://127.0.0.1:8100` when the caller runs on the FlowKit host. For a remote integration, set `FLOWKIT_BASE_URL` to the protected HTTPS reverse-proxy URL and allow only the required source IPs or private network. Do not expose browser remote-control/debug endpoints, profile data, or port 8100 publicly. The dashboard WebSocket is an app event channel, not Flow transport.
 
 ## Supported modes
 
@@ -228,13 +228,13 @@ Text-to-video remains the exception: it returns `mode=batch_media` with workflow
 ## Retry and failure policy
 
 - HTTP `400`: request/contract error. Do not retry unchanged input.
-- HTTP `503`: Chrome extension is disconnected. Pause submission and alert or retry health checks with bounded backoff.
-- HTTP `502`: Flow/bridge failure. Retry a small bounded number of times with exponential backoff; preserve the original workflow descriptor.
+- HTTP `503`: browser session is not ready. Pause effects and re-check browser session/authentication/lease readiness with bounded read-only health checks.
+- HTTP `502`: read/poll failure may be retried only when no new effect is submitted. If an effect result is unknown, reconcile before any resend.
 - Poll result `PENDING`: poll again after 10-20 seconds. Do not submit the generation again.
 - Poll result `FAILED`: stop polling and surface the workflow error.
 - `COMPLETED` with a null URL or `url_error`: poll again to obtain a fresh signed URL; do not regenerate the video.
 
-Submission is credit-consuming and is not guaranteed to be idempotent. Never blindly retry a timed-out submit unless the integration can determine that no workflow was created.
+Submission can be consequential and credit-consuming. Never blindly retry a timed-out or `effect=unknown` submit. Preserve the durable idempotency key and reconcile the existing operation/receipt first.
 
 ## Model configuration
 
