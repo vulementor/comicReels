@@ -17,15 +17,17 @@ from agent.services.flow_browser_session import FlowProfileConfig
 
 class BrowserFlowBackend:
     kind = 'browser'
-    paid_dispatch_enabled = False
 
-    def __init__(self, *, config=None, state_path=None, driver_factory=None):
+    def __init__(self, *, config=None, state_path=None, driver_factory=None,
+                 paid_dispatch_enabled=False, paid_authorization=None):
         self.config = config or FlowProfileConfig.load()
         identity = str(self.config.user_data_dir.resolve()).casefold()
         digest = hashlib.sha256(identity.encode()).hexdigest()
         self.session_owner_key = f'browser:{self.config.profile_logical_name}:{digest}'
         self._state_path = Path(state_path) if state_path else self.config.source_path.parent / 'flow-browser-state' / f'{digest}.json'
         self._factory = driver_factory
+        self._paid_dispatch_enabled = paid_dispatch_enabled is True
+        self._paid_authorization = paid_authorization
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='flow-browser-owner')
         self._pending = set()
         self._pending_lock = threading.Lock()
@@ -37,6 +39,10 @@ class BrowserFlowBackend:
     @property
     def ready(self):
         return self._ready and not self._closing and not self._closed
+
+    @property
+    def paid_dispatch_enabled(self):
+        return self._paid_dispatch_enabled
 
     def _submit(self, function, *args, closing=False):
         if self._closed or (self._closing and not closing):
@@ -60,8 +66,15 @@ class BrowserFlowBackend:
     def _start(self):
         if self._factory is None:
             from agent.services.flow_browser_driver import FlowBrowserDriver
-            self._factory = FlowBrowserDriver
-        self._driver = self._factory(self.config, self._state_path, self.session_owner_key)
+            self._driver = FlowBrowserDriver(
+                self.config, self._state_path, self.session_owner_key,
+                paid_dispatch_enabled=self._paid_dispatch_enabled,
+                paid_authorization=self._paid_authorization,
+            )
+        else:
+            self._driver = self._factory(
+                self.config, self._state_path, self.session_owner_key
+            )
         self._driver.start()
         self._ready = bool(self._driver.health()['ready'])
 
@@ -70,6 +83,14 @@ class BrowserFlowBackend:
             self._ready = False
             return {'status': 503, 'error': 'BROWSER_NOT_READY', 'effect': 'not_submitted'}
         self._ready = True
+        if method == 'submit_paid_image':
+            params, idempotency_key, authorization, timeout = args
+            return self._driver.submit_paid_image(
+                params,
+                idempotency_key=idempotency_key,
+                authorization=authorization,
+                timeout=timeout,
+            )
         return getattr(self._driver, method)(*args)
 
     async def check_readiness(self):
@@ -78,12 +99,14 @@ class BrowserFlowBackend:
         if self._closing or self._closed:
             return {'backend_kind': self.kind, 'ready': False, 'session_ready': False,
                     'state': 'closed' if self._closed else 'closing',
-                    'error': 'BACKEND_CLOSED', 'paid_dispatch_enabled': False}
+                    'error': 'BACKEND_CLOSED',
+                    'paid_dispatch_enabled': self.paid_dispatch_enabled}
         if (self._driver is None or self._start_future is None
                 or not self._start_future.done()):
             return {'backend_kind': self.kind, 'ready': False, 'session_ready': False,
                     'state': 'new' if self._start_future is None else 'starting',
-                    'error': 'BROWSER_NOT_READY', 'paid_dispatch_enabled': False}
+                    'error': 'BROWSER_NOT_READY',
+                    'paid_dispatch_enabled': self.paid_dispatch_enabled}
         try:
             result = await asyncio.shield(self._submit(self._driver.health))
             if not isinstance(result, dict):
@@ -93,7 +116,7 @@ class BrowserFlowBackend:
             raise
         self._ready = result.get('ready') is True and not self._closing and not self._closed
         return {**result, 'backend_kind': self.kind, 'ready': self.ready,
-                'paid_dispatch_enabled': False}
+                'paid_dispatch_enabled': self.paid_dispatch_enabled}
 
     async def execute(self, method, params, timeout=300):
         try:
@@ -104,6 +127,30 @@ class BrowserFlowBackend:
         except BrowserCommandError as exc:
             return {'status': 409, 'error': str(exc), 'effect': 'not_submitted'}
         # Canceling the HTTP await must not cancel a queued/running browser effect.
+        return await asyncio.shield(future)
+
+    async def submit_paid_image(self, params, *, idempotency_key,
+                                authorization=None, timeout=300):
+        """Submit one gated paid image on the single browser-owner executor."""
+        if not self.paid_dispatch_enabled:
+            return {
+                'status': 403,
+                'error': 'PAID_DISPATCH_DISABLED',
+                'effect': 'not_submitted',
+            }
+        if not self.ready:
+            return {
+                'status': 409,
+                'error': 'BROWSER_NOT_READY',
+                'effect': 'not_submitted',
+            }
+        try:
+            future = self._submit(
+                self._run, 'submit_paid_image', params,
+                idempotency_key, authorization, timeout,
+            )
+        except BrowserCommandError as exc:
+            return {'status': 409, 'error': str(exc), 'effect': 'not_submitted'}
         return await asyncio.shield(future)
 
     async def open_project(self, project_id):
