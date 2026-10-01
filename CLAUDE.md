@@ -6,37 +6,39 @@ Base URL: `http://127.0.0.1:8100`
 
 ```bash
 curl -s http://127.0.0.1:8100/health
-# Must return: {"extension_connected": true}
+# Require:
+#   "backend_ready": true
+#   "browser_session_ready": true
+#   "authentication": "authenticated"
+#   "lease_held": true
 
-curl -s http://127.0.0.1:8100/api/flow/status
-# Must return: {"transport": "batch", "flow_project_id": "<uuid>", ...}
+curl -s http://127.0.0.1:8100/api/flow/backend-status
+# "paid_dispatch_enabled" and "reconciliation_required" are separate state.
 ```
 
-Also needed: **one signed-in `https://flow.google.com/` tab left open**. Only the
-page can sign a Flow request, so nothing works headless.
+FlowKit uses the existing persistent signed-in Flow browser profile bound by
+`COMICREELS_FLOW_PROFILE_CONFIG` (or the default local config path). Do not
+clear cookies/storage, sign out, create a replacement profile, or copy profile
+credentials into the repository.
 
-## Browser-first migration status
+## Browser-only transport status
 
-Development on VULE-PC follows **LOCAL-SOURCE-FIRST**: local source edits/tests, supported
-source-to-runtime sync, bounded live validation, then a coherent checkpoint commit/push.
-Owner confirmation is required before merge and separately before the next FBR. Runtime-only
-patches are not durable fixes. For local dirty-source regression use
-`scripts/verify_windows_batch.ps1 -WorkingTree`; the default committed mode is for exact-revision
-validation. Register reviewed new source files with `git add -N` before a working-tree snapshot.
+The Chrome-extension/WebSocket Flow RPC bridge is retired. `FlowClient` uses
+`BrowserFlowBackend` only, backed by the persistent signed-in
+`flow.google.com` profile and the pinned `kabin_browser_semantic` dependency.
 
-The owner has approved a checkpointed Flow transport refactor toward a persistent browser-profile
-backend using `flow.google.com` + `kabin_browser_semantic`.
+This remains a transport refactor, not a creative/scenario rewrite. Project/story
+creation, scene chains, transition prompts, creative mix, pipeline/resume,
+review/regen, Gallery/Logs/Guide/Settings, TTS/concat/branding and related
+`/fk-*` skills remain canonical.
 
-This does **not** remove FlowKit's creative/scenario layer. Project/story/entity creation, scene
-chains, transition prompts, creative mix, pipeline/resume, review/regen, Gallery/Logs/Guide/Settings,
-TTS/concat/branding and related `/fk-*` skills remain canonical.
-
-Until FBR-5 is explicitly accepted, the current extension transport remains a supported fallback and
-the extension pre-flight above remains valid when that backend is selected. Do not delete the
-extension/WebSocket path early.
+Browser readiness is not paid authorization. Normal source startup keeps paid
+dispatch locked. Unknown paid outcomes and `RECONCILIATION_REQUIRED` are
+non-retryable until explicitly reconciled. The `/ws/dashboard` socket is an
+independent dashboard event channel, not Flow transport.
 
 Architecture: `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md`
-Execution checkpoints: `docs/superpowers/plans/2026-09-27-flow-browser-refactor.md`
+Current cutover plan: `docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md`
 Current state: `docs/comicreels/CHECKPOINTS.md`
 
 ## How to work
@@ -44,8 +46,8 @@ Current state: `docs/comicreels/CHECKPOINTS.md`
 - Always use `/fk-*` skills — all rules and workflows live inside each skill
 - Never write scripts to loop API calls — use `POST /api/requests/batch`
 - `media_id` is always UUID format (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`), never `CAMS...` strings
-- **On any pipeline error** (request `FAILED`, stuck `PROCESSING`, `extension_connected: false`, HTTP 4xx/5xx from `:8100`, YouTube `HttpError`, error strings like `UNSAFE_GENERATION` / `not found` / `CAPTCHA` / `NO_AT_TOKEN` / `NO_FLOW_PROJECT` / `UNSUPPORTED_ON_BATCH_API`): invoke `/fk-doctor` before guessing a fix
-- `flow_key_present: false` is **normal** — the current transport has no bearer token
+- **On any pipeline error** (request `FAILED`, stuck `PROCESSING`, `BROWSER_NOT_READY`, `PROFILE_*`, `RECONCILIATION_REQUIRED`, HTTP 4xx/5xx from `:8100`, YouTube `HttpError`, or Flow-native safety/quota/entity errors): invoke `/fk-doctor` before guessing a fix
+- Treat `paid_dispatch_enabled` as a separate authorization gate. Browser/session readiness never grants paid generation.
 
 ## Since Flow moved (September 2026)
 
@@ -88,7 +90,7 @@ that change how you work:
 | `/fk-switch-project` | Switch active project |
 | `/fk-fix-uuids` | Fix non-UUID media_ids |
 | `/fk-refresh-urls` | Refresh expired signed media URLs |
-| `/fk-doctor` | Diagnose errors + prescribe fixes (Flow/extension/worker/YT) |
+| `/fk-doctor` | Diagnose Flow/browser-session/reconciliation/worker/YT errors |
 | `/fk-add-material` | Set image material style |
 | `/fk-change-model` | Change video/image model |
 | `/fk-change-provider` | View & switch the AI CLI, model and effort per role (claude/agy/codex) |
