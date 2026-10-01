@@ -129,3 +129,23 @@ def test_changed_claude_command_artifacts_are_stubs_over_current_skills():
         assert f'Read and follow the instructions in skills/fk-{name}.md' in source
         assert 'extension_connected' not in source
         assert 'reload extension' not in source.lower()
+
+
+def test_architecture_and_capture_docs_are_browser_only():
+    architecture = text('ARCHITECTURE.md')
+    capture = text('docs/CAPTURE.md')
+    omni = text('docs/OMNI_FLASH.md')
+    authority = text('docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md')
+
+    assert 'BrowserFlowBackend' in architecture
+    assert 'extension/background.js' not in capture
+    assert 'extension_connected' not in omni
+    assert 'Chrome extension is disconnected' not in omni
+    assert 'extension transport may implement' not in authority
+    assert 'retained | removable only after FBR-5' not in authority
+
+
+def test_legacy_plan_is_explicitly_historical_not_operator_authority():
+    plan = text('PLAN.md')
+    assert plan.startswith('# HISTORICAL / SUPERSEDED')
+    assert '2026-10-01-flow-browser-only-cutover.md' in plan
