@@ -70,7 +70,12 @@ async def test_native_reference_receipt_survives_restart_and_polls_media(native_
     assert pending["done"] is False
     assert complete["done"] is True
     assert complete["workflows"][0]["primary_media_id"] == media_id
-    assert [call.args for call in poller.get_media.await_args_list] == [(media_id,), (media_id,)]
+    assert [
+        (call.args, call.kwargs) for call in poller.get_media.await_args_list
+    ] == [
+        ((media_id,), {"project_id": pid}),
+        ((media_id,), {"project_id": pid}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -290,7 +295,7 @@ async def test_batch_omni_poll_uses_as29s_media(monkeypatch):
     assert result["done"] is True
     assert result["status"] == "COMPLETED"
     assert result["workflows"][0]["media"]["resolved_via"] == "as29s"
-    client.get_media.assert_awaited_once_with("media-1")
+    client.get_media.assert_awaited_once_with("media-1", project_id="project-1")
 
 
 @pytest.mark.asyncio
@@ -311,6 +316,7 @@ async def test_batch_poll_hands_back_the_signed_url_and_buffers_nothing():
     assert media["url"].startswith("https://flow-content.google/video/")
     assert media["encoded_video_available"] is False
     assert media["encoded_video"] is None
+    client.get_media.assert_awaited_once_with("media-1", project_id="project-1")
 
 
 @pytest.mark.asyncio
@@ -328,6 +334,7 @@ async def test_batch_poll_treats_a_media_record_without_video_as_pending():
 
     assert result["done"] is False
     assert result["workflows"][0]["status"] == "PENDING"
+    client.get_media.assert_awaited_once_with("media-1", project_id="project-1")
 
 
 @pytest.mark.asyncio
