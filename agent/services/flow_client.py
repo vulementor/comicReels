@@ -42,9 +42,8 @@ class FlowClient:
         # It is never populated and cannot route transport.
         self._flow_key = None
 
-        # Per-operation business cache. Task 5 will reconcile this with the
-        # browser journal without changing the public business response shape.
-        self._operation_projects: dict[str, str] = {}
+        # Media/poll observations are disposable caches. Operation -> project
+        # ownership is durable in the browser state store and is never kept here.
         self._operation_media: dict[str, str] = {}
         self._operation_polls: dict[str, int] = {}
 
@@ -296,20 +295,25 @@ class FlowClient:
         legacy = VIDEO_MODELS.get(tier, {}).get(gen_type, {}).get(aspect_ratio)
         return fb.resolve_video_model(legacy)
 
-    def _remember_operation(self, operation_id: str, project_id: str):
-        """Which project an operation belongs to — the listing lookup needs it.
+    async def _remember_operation(self, operation_id: str, project_id: str):
+        """Persist operation ownership through the browser backend journal."""
+        result = await self._backend.bind_operation(operation_id, project_id)
+        if not isinstance(result, dict) or result.get("status") != 200:
+            code = result.get("error") if isinstance(result, dict) else None
+            raise fb.FlowBatchError(code or "OPERATION_BINDING_REQUIRED")
+        return result
 
-        A poll record usually carries the project id, but old operations decay
-        to a bare id, so keep our own note. Bounded: this is a cache, and the
-        pinned project is always a workable fallback.
-        """
-        if not operation_id:
-            return
-        if len(self._operation_projects) > 512:
-            self._operation_projects.clear()
-            self._operation_media.clear()
-            self._operation_polls.clear()
-        self._operation_projects[operation_id] = project_id
+    async def _operation_project_id(self, operation_id: str) -> str:
+        """Resolve operation ownership from durable browser state only."""
+        result = await self._backend.operation_project(operation_id)
+        if not isinstance(result, dict) or result.get("status") != 200:
+            code = result.get("error") if isinstance(result, dict) else None
+            raise fb.FlowBatchError(code or "OPERATION_BINDING_REQUIRED")
+        data = result.get("data")
+        project_id = data.get("projectId") if isinstance(data, dict) else None
+        if not isinstance(project_id, str) or not self._UUID_RE.match(project_id):
+            raise fb.FlowBatchError("OPERATION_BINDING_REQUIRED")
+        return project_id
 
     # ─── High-level API Methods ──────────────────────────────
 
@@ -541,7 +545,16 @@ class FlowClient:
         except Exception as e:
             return _batch_error(e)
 
-        self._remember_operation(operation.operation_id, pid)
+        try:
+            await self._remember_operation(operation.operation_id, pid)
+        except Exception as exc:
+            # The remote submit may already have happened. Never suggest that a
+            # missing local binding makes the paid/remote effect safe to resend.
+            return {
+                "status": 409,
+                "error": "OPERATION_BINDING_REQUIRED",
+                "effect": "unknown",
+            }
         return {"status": 200, "data": {"operations": [_as_pending_operation(operation.operation_id)]}}
 
     async def generate_video_from_references(self, reference_media_ids: list[str],
@@ -648,7 +661,11 @@ class FlowClient:
         rounds = self._operation_polls.get(operation_id, 0) + 1
         self._operation_polls[operation_id] = rounds
 
-        project_id = self._operation_projects.get(operation_id) or FLOW_PROJECT_ID
+        try:
+            project_id = await self._operation_project_id(operation_id)
+        except Exception as error:
+            return None, str(error)
+
         complaint = None
         worth_looking = rounds % 3 == 0
         try:
@@ -657,9 +674,8 @@ class FlowClient:
                     fb.RPC_OPERATION, fb.operation_request(operation_id), timeout=60)
             )
             complaint = operation.error
-            project_id = operation.project_id or project_id
-            if project_id:
-                self._remember_operation(operation_id, project_id)
+            if operation.project_id and operation.project_id != project_id:
+                raise fb.FlowBatchError("OPERATION_BINDING_CONFLICT")
             worth_looking = worth_looking or operation.done or operation.complained
         except Exception as e:
             # An operation that has decayed to a bare id still shows up in the
@@ -670,8 +686,6 @@ class FlowClient:
 
         if not worth_looking:
             return None, complaint
-        if not project_id:
-            return None, "no project id for the listing lookup"
         return await self._media_id_for(operation_id, project_id), complaint
 
     async def _media_id_for(self, operation_id: str, project_id: str) -> str | None:
