@@ -73,6 +73,13 @@ while ($null -ne $ancestor) {
 }
 Assert-Check ($source.Contains('Assert-StagedPackageMatchesSource -SourcePackageRoot $krpSourcePackage -InstalledPackageRoot $krpInstalledPackage -Label ''KRP''')) 'KRP staged bytes must be verified against pinned source'
 
+Assert-Check ($source.Contains(". (Join-Path $PSScriptRoot 'Child-PythonIsolation.ps1')")) 'build must load child-environment isolation helper'
+Assert-Check ($source.Contains('Invoke-StagedPipInstall')) 'all staged pip installs must use isolated helper'
+Assert-Check ($source.Contains('Invoke-IsolatedStagedPython')) 'staged Python validation must use isolated helper'
+Assert-Check (-not $source.Contains('$env:PYTHONPATH =')) 'build body must not mutate parent PYTHONPATH'
+Assert-Check (-not $source.Contains('$env:PYTHONHOME =')) 'build body must not mutate parent PYTHONHOME'
+Assert-Check (-not $source.Contains('"$runtime\python.exe" -m pip')) 'build body must not invoke staged pip directly'
+
 $lock = Read-DependencyLock -Path $DependencyLock
 $expectedPins = @{
     krp='1a0d6d0004cbe522483890d87743522243221719'
