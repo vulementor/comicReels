@@ -20,13 +20,15 @@ class FakeClient:
         created = self.project_id is None or force_new
         if created:
             self.project_id = PROJECT_A if self.project_id is None else PROJECT_B
+        data = {
+            "projectId": self.project_id,
+            "reused": not created,
+        }
+        if created:
+            data["title"] = title
         return {
             "status": 200,
-            "data": {
-                "projectId": self.project_id,
-                "title": title,
-                "reused": not created,
-            },
+            "data": data,
             "effect": "completed",
         }
 
@@ -42,6 +44,7 @@ async def test_session_project_reuses_inside_idle_window(tmp_path, monkeypatch):
 
     assert first["project_id"] == PROJECT_A
     assert second["project_id"] == PROJECT_A
+    assert second["title"] == "Session A"
     assert client.calls == [
         {"title": "Session A", "force_new": False},
         {"title": "Ignored", "force_new": False},
