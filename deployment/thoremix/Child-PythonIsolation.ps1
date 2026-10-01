@@ -8,23 +8,23 @@ function ConvertTo-ChildProcessArgument {
     [void]$builder.Append('"')
     $slashes = 0
     foreach ($character in $Value.ToCharArray()) {
-        if ($character -eq '\\') {
+        if ($character -eq '\') {
             $slashes++
             continue
         }
         if ($character -eq '"') {
-            [void]$builder.Append(('\\' * ($slashes * 2 + 1)))
+            [void]$builder.Append(('\' * ($slashes * 2 + 1)))
             [void]$builder.Append('"')
             $slashes = 0
             continue
         }
         if ($slashes) {
-            [void]$builder.Append(('\\' * $slashes))
+            [void]$builder.Append(('\' * $slashes))
             $slashes = 0
         }
         [void]$builder.Append($character)
     }
-    if ($slashes) { [void]$builder.Append(('\\' * ($slashes * 2))) }
+    if ($slashes) { [void]$builder.Append(('\' * ($slashes * 2))) }
     [void]$builder.Append('"')
     return $builder.ToString()
 }
@@ -197,7 +197,11 @@ if not (inside(exe, stage) and inside(prefix, stage) and inside(site, stage)):
     raise SystemExit(71)
 '@
     $result = Invoke-IsolatedStagedPython -StageRoot $StageRoot -Interpreter $Interpreter -Arguments @('-c',$code,$StageRoot,$SitePackages)
-    if ($result.ExitCode -ne 0) { throw 'STAGED_PYTHON_RUNTIME_OUTSIDE_STAGE' }
+    if ($result.ExitCode -ne 0) {
+        if ($result.Stdout) { [Console]::Out.Write($result.Stdout) }
+        if ($result.Stderr) { [Console]::Error.Write($result.Stderr) }
+        throw 'STAGED_PYTHON_RUNTIME_OUTSIDE_STAGE'
+    }
     try { $data = $result.Stdout.Trim() | ConvertFrom-Json }
     catch { throw 'STAGED_PYTHON_RUNTIME_UNVERIFIED' }
     if ($data.exe_inside_stage -ne $true -or $data.prefix_inside_stage -ne $true -or $data.site_inside_stage -ne $true) {
