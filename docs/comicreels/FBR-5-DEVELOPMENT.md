@@ -6,6 +6,7 @@ Base: `607ec0a482de544c1175ae7bf636d6f30a0b9b16`.
 Branch: `feat/fbr-2-driver-lifecycle-20260930`.
 
 Overall status: **CODE_IN_PROGRESS — production default NOT accepted here**.
+Latest slice: **FBR-5-code-1 — policy source authored, NOT VALIDATED**.
 
 ## Forward coding breakdown
 
@@ -26,12 +27,18 @@ These are implementation slices of the approved FBR-5 plan, not authorization to
 run tests, build/launch an EXE, switch Stable, activate paid dispatch, or remove the
 extension. Each slice ends at its checkpoint.
 
-## FBR-5-code-1 design
+## FBR-5-code-1 design and source handoff
 
-Status: **CODE_IN_PROGRESS**.
+Status: **CODE_COMPLETE for the isolated selection policy; NOT VALIDATED**.
+This is not completion of startup wiring, all FBR-5, or the full development plan.
 
 Files: `agent/services/flow_backend_selection.py`,
 `tests/unit/test_flow_backend_selection.py`, and this ledger.
+
+Source commits:
+- Scope/design: `dc473bad0434df3aaaff13724e464ba7faea73e4`.
+- Authored requirements: `66981010fb5cdd93aecc6aa86fab2490fafbcae4`.
+- Policy implementation: `db140451fb6081d4791d6bb5bbad9d04c4b0ad8a`.
 
 Precedence:
 
@@ -57,7 +64,7 @@ activation claims. Runtime capability/health remains the backend's responsibilit
 
 Authored requirements: precedence matrix, default opt-in, rollback precedence,
 invalid configuration handling, sanitized errors, immutable selection metadata,
-and no mutation of the supplied environment.
+and no mutation of the supplied environment. These tests have NOT been run.
 
 Ruling: preparing the browser default in source is not permission to change an
 unaccepted production default. Preserve extension until explicit configuration or
@@ -81,4 +88,16 @@ No production behavior changes simply because this policy module is added.
 
 Tests/builds executed: **none**. Test source is authored during development;
 execution is deferred by the owner's phased workflow. No runtime/profile/Stable
-state is inspected. No paid request or Remote Desktop action is authorized here.
+state is inspected. No paid request or Remote Desktop action occurred.
+
+## Exact next task
+
+**FBR-5-code-2a — wire selection into singleton startup**, including authored
+requirements for explicit extension rollback, opt-in browser construction, fixed
+startup selection until restart, and no automatic fallback on browser failure.
+Keep status/UI wiring as the subsequent bounded code-2b slice. Do not run tests.
+
+KBS source dependency is unchanged by this slice. Runtime backend/revision,
+physical profile identity/lease, active jobs and scheduler state remain unobserved.
+Main and Stable were not changed. Rollback source boundary for this policy-only
+slice is `607ec0a482de544c1175ae7bf636d6f30a0b9b16`; no runtime rollback is needed.
