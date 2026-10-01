@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from agent.worker import processor
+from agent.worker._parsing import _is_error
 
 
 def test_worker_routes_durable_request_id_into_all_paid_image_paths():
@@ -125,3 +126,11 @@ def test_worker_never_derives_a_new_paid_key_from_retry_count_or_time():
     assert "idempotency_key=rid" in source
     assert "idempotency_key=f" not in source
     assert "idempotency_key=str(time" not in source
+
+
+def test_effect_unknown_is_always_an_error_even_with_http_200():
+    assert _is_error({
+        "status": 200,
+        "effect": "unknown",
+        "data": {"media": []},
+    }) is True
