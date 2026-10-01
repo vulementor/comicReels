@@ -130,3 +130,25 @@ def test_restart_resume_source_does_not_use_extension_or_ram_operation_state():
     assert 'self._operation_projects' not in entire
     assert 'self._operation_media' not in entire
     assert 'self._operation_polls' not in entire
+
+
+def test_all_operation_services_use_one_restart_resume_helper():
+    import inspect
+    source = inspect.getsource(OperationService)
+    assert 'async def _resume_saved_operation' in source
+
+    scene_video = source[source.index('async def generate_scene_video'):
+                         source.index('async def generate_scene_video_refs')]
+    refs_video = source[source.index('async def generate_scene_video_refs'):
+                        source.index('async def upscale_scene_video')]
+    upscale = source[source.index('async def upscale_scene_video'):
+                     source.index('# ------------------------------------------------------------------\n    # Reference image operations')]
+
+    assert '_resume_saved_operation(request_id' in scene_video
+    assert '_resume_saved_operation(request_id' in refs_video
+    assert '_resume_saved_operation(request_id' in upscale
+
+    # Resume checks happen before each submit call.
+    assert scene_video.index('_resume_saved_operation') < scene_video.index('self._client.generate_video(')
+    assert refs_video.index('_resume_saved_operation') < refs_video.index('self._client.generate_video_from_references(')
+    assert upscale.index('_resume_saved_operation') < upscale.index('self._client.upscale_video(')
