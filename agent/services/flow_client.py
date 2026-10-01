@@ -9,6 +9,7 @@ not depend on browser internals.
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 from typing import Optional
@@ -48,6 +49,14 @@ def _fixed_poll_complaint(error, fallback: str = "POLL_READ_UNAVAILABLE") -> str
 
 class FlowClient:
     """Flow business API over one browser backend."""
+
+    # Match the browser contract exactly. This validator is business-layer
+    # convenience only and must not accept looser identifiers than KBS/browser
+    # recipes do.
+    _UUID_RE = re.compile(
+        r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$",
+        re.IGNORECASE,
+    )
 
     def __init__(self, backend: FlowBackend | None = None):
         if backend is None:
