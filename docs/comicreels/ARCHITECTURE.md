@@ -1,4 +1,10 @@
-# Kiến trúc đề xuất, chưa triển khai
+# HISTORICAL / SUPERSEDED — Kiến trúc đề xuất Phân đoạn 1
+
+> Tài liệu này giữ nguyên thiết kế Segment 1 để làm lịch sử. Kiến trúc Flow
+> transport hiện hành được thay thế bởi
+> `docs/comicreels/FLOW-BROWSER-FIRST-ARCHITECTURE.md` và kế hoạch cutover
+> `docs/superpowers/plans/2026-10-01-flow-browser-only-cutover.md`.
+> Không dùng các chỉ dẫn Chrome Extension bên dưới làm preflight hoặc recovery hiện tại.
 
 ## Ranh giới
 Giữ nguyên FlowKit: `agent/` (FastAPI, SQLite, SDK, queue/polling, image/video endpoints), `dashboard/` (React), `extension/` (cầu nối trình duyệt với Google Flow), `tests/` và các công cụ ghép video. Trên nhánh Phân đoạn 1 **chỉ bổ sung tài liệu**; code bên dưới là thiết kế dự kiến.
