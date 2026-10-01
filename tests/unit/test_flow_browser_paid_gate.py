@@ -71,8 +71,6 @@ def test_enabled_gate_still_requires_exact_authorization_object(rig):
 
 def test_one_shot_intent_is_durable_before_exactly_one_dispatch(rig):
     store, calls, dispatch = rig
-    expected_digest = gate_digest = None
-
     def guarded(command, timeout):
         saved = store.load()
         entries = list(saved['intents'].values())
