@@ -313,6 +313,29 @@ class OperationService:
         self._client = flow_client
         self._repo = repo
 
+    async def _resume_saved_operation(
+        self,
+        request_id: str,
+        *,
+        label: str,
+        timeout: int = VIDEO_POLL_TIMEOUT,
+    ) -> dict | None:
+        """Resume a durably recorded remote operation without another submit."""
+        if not request_id:
+            return None
+        req_row = await crud.get_request(request_id)
+        existing_op = req_row.get("request_id") if req_row else None
+        if not existing_op:
+            return None
+
+        logger.info("%s already submitted (op=%s), re-polling",
+                    label, existing_op[:30])
+        operations = [{
+            "operation": {"name": existing_op},
+            "status": "MEDIA_GENERATION_STATUS_PENDING",
+        }]
+        return await _poll_operations(self._client, operations, timeout=timeout)
+
     # ------------------------------------------------------------------
     # Scene image operations
     # ------------------------------------------------------------------
@@ -451,19 +474,13 @@ class OperationService:
             base_prompt = scene.get("video_prompt") or scene.get("prompt", "")
         prompt = await _build_video_prompt(base_prompt, scene, pid)
 
-        # Already submitted on a previous attempt? Re-poll it.
-        existing_op = None
-        if request_id:
-            req_row = await crud.get_request(request_id)
-            existing_op = req_row.get("request_id") if req_row else None
-
-        # A bare uuid is the operation id, and looking it up in the project
-        # listing is exactly what the status poll does — resubmitting instead
-        # would abandon a running render and pay for a second one.
-        if existing_op:
-            logger.info("Video gen already submitted (op=%s), re-polling", existing_op[:30])
-            operations = [{"operation": {"name": existing_op}, "status": "MEDIA_GENERATION_STATUS_PENDING"}]
-            return await _poll_operations(self._client, operations)
+        # DB request_id survives process restart. If an operation was already
+        # recorded, resume it before any path can submit another remote effect.
+        resumed = await self._resume_saved_operation(
+            request_id, label="Video gen",
+        )
+        if resumed is not None:
+            return resumed
 
         submit_result = await self._client.generate_video(
             start_image_media_id=image_media_id,
@@ -568,16 +585,11 @@ class OperationService:
         if not ref_ids:
             return {"error": "No valid reference media_ids for r2v"}
 
-        # Check if already submitted (op_name saved from previous attempt)
-        existing_op = None
-        if request_id:
-            req_row = await crud.get_request(request_id)
-            existing_op = req_row.get("request_id") if req_row else None
-
-        if existing_op:
-            logger.info("R2V already submitted (op=%s), re-polling", existing_op[:30])
-            operations = [{"operation": {"name": existing_op}, "status": "MEDIA_GENERATION_STATUS_PENDING"}]
-            return await _poll_operations(self._client, operations)
+        resumed = await self._resume_saved_operation(
+            request_id, label="R2V",
+        )
+        if resumed is not None:
+            return resumed
 
         submit_result = await self._client.generate_video_from_references(
             reference_media_ids=ref_ids,
@@ -623,17 +635,11 @@ class OperationService:
 
         aspect = "VIDEO_ASPECT_RATIO_PORTRAIT" if orientation == "VERTICAL" else "VIDEO_ASPECT_RATIO_LANDSCAPE"
 
-        # Check if already submitted (op_name saved from previous attempt)
-        existing_op = None
-        if request_id:
-            req_row = await crud.get_request(request_id)
-            existing_op = req_row.get("request_id") if req_row else None
-
-        if existing_op:
-            # Already submitted — just re-poll
-            logger.info("Upscale already submitted (op=%s), re-polling", existing_op[:30])
-            operations = [{"operation": {"name": existing_op}, "status": "MEDIA_GENERATION_STATUS_PENDING"}]
-            return await _poll_operations(self._client, operations, timeout=300)
+        resumed = await self._resume_saved_operation(
+            request_id, label="Upscale", timeout=300,
+        )
+        if resumed is not None:
+            return resumed
 
         submit_result = await self._client.upscale_video(
             media_id=video_media_id,
