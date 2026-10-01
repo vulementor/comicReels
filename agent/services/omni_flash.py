@@ -387,7 +387,10 @@ async def _check_omni_batch_media(
     items = []
     for workflow in normalized:
         media_id = workflow["primary_media_id"]
-        response = await client.get_media(media_id)
+        media_project_id = workflow.get("project_id") or resolved_project_id or None
+        response = await client.get_media(
+            media_id, project_id=media_project_id,
+        )
         data = response.get("data") if isinstance(response, dict) else None
         video = data.get("video") if isinstance(data, dict) else None
         url = video.get("fifeUrl") if isinstance(video, dict) else None
