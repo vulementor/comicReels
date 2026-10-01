@@ -208,6 +208,29 @@ function Assert-StageOutputIsolated {
     return [ordered]@{stage=$stage; live=$live}
 }
 
+function Assert-StageInputDisjoint {
+    param(
+        [Parameter(Mandatory=$true)][string]$StageOutputRoot,
+        [Parameter(Mandatory=$true)][string]$InputPath,
+        [Parameter(Mandatory=$true)][string]$InputLabel,
+        [switch]$AllowMissingInput
+    )
+    if ([string]::IsNullOrWhiteSpace($InputPath)) {
+        throw ('STAGE_INPUT_PATH_REQUIRED:' + $InputLabel)
+    }
+    $stage = Resolve-PhysicalBuildPath -Path $StageOutputRoot -AllowMissing
+    $input = Resolve-PhysicalBuildPath -Path $InputPath -AllowMissing:$AllowMissingInput
+    $comparison = [StringComparison]::OrdinalIgnoreCase
+    $separator = [IO.Path]::DirectorySeparatorChar
+    $equal = $stage.Equals($input, $comparison)
+    $stageUnderInput = $stage.StartsWith($input + $separator, $comparison)
+    $inputUnderStage = $input.StartsWith($stage + $separator, $comparison)
+    if ($equal -or $stageUnderInput -or $inputUnderStage) {
+        throw ('STAGE_OUTPUT_OVERLAPS_INPUT:' + $InputLabel)
+    }
+    return [ordered]@{stage=$stage; input=$input; label=$InputLabel}
+}
+
 function Normalize-GitRemote {
     param([Parameter(Mandatory=$true)][string]$Remote)
     $value = $Remote.Trim().TrimEnd('/')
@@ -430,8 +453,26 @@ if ($StageOnly) {
     if ([string]::IsNullOrWhiteSpace($StageOutputRoot)) {
         $StageOutputRoot = Join-Path $workspaceRoot 'validation\thoremix-stageonly'
     }
+    if ($SkipRuntime -and [string]::IsNullOrWhiteSpace($RuntimeSource)) {
+        throw 'STAGE_ONLY_RUNTIME_SOURCE_REQUIRED'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RuntimeSource)) {
+        if (-not [IO.Path]::IsPathRooted($RuntimeSource) -or
+                -not (Test-Path -LiteralPath $RuntimeSource -PathType Container)) {
+            throw 'RUNTIME_SOURCE_INVALID'
+        }
+    }
+
     $isolation = Assert-StageOutputIsolated -StageOutputRoot $StageOutputRoot -LiveRoot $liveDestination
     $stageBase = $isolation.stage
+    Assert-StageInputDisjoint -StageOutputRoot $stageBase -InputPath $repo -InputLabel 'source_repo' | Out-Null
+    Assert-StageInputDisjoint -StageOutputRoot $stageBase -InputPath $PythonHome -InputLabel 'python_home' -AllowMissingInput | Out-Null
+    if (-not [string]::IsNullOrWhiteSpace($RuntimeSource)) {
+        Assert-StageInputDisjoint -StageOutputRoot $stageBase -InputPath $RuntimeSource -InputLabel 'runtime_source' | Out-Null
+    }
+    foreach ($dependencyName in @('krp','gpt_fullproxy','kbs','kat')) {
+        Assert-StageInputDisjoint -StageOutputRoot $stageBase -InputPath ([string]$dependencies[$dependencyName].path) -InputLabel ('dependency_' + $dependencyName) | Out-Null
+    }
     New-Item -ItemType Directory -Path $stageBase -Force | Out-Null
 }
 
@@ -461,19 +502,14 @@ try {
     }
     $runtime = Join-Path $stage 'runtime\python'
     if ($SkipRuntime) {
-        if ($StageOnly -and [string]::IsNullOrWhiteSpace($RuntimeSource)) {
-            throw 'STAGE_ONLY_RUNTIME_SOURCE_REQUIRED'
-        }
         $runtimeSourcePath = if ([string]::IsNullOrWhiteSpace($RuntimeSource)) {
             Join-Path $liveDestination 'runtime'
         } else {
-            if (-not [IO.Path]::IsPathRooted($RuntimeSource) -or -not (Test-Path -LiteralPath $RuntimeSource -PathType Container)) {
-                throw 'RUNTIME_SOURCE_INVALID'
-            }
             (Resolve-Path -LiteralPath $RuntimeSource).Path
         }
         if ($StageOnly) {
             Assert-StageOutputIsolated -StageOutputRoot $runtimeSourcePath -LiveRoot $liveDestination | Out-Null
+            Assert-StageInputDisjoint -StageOutputRoot $stageBase -InputPath $runtimeSourcePath -InputLabel 'runtime_source' | Out-Null
         }
         & robocopy $runtimeSourcePath (Join-Path $stage 'runtime') /E /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -gt 7) { throw 'Existing runtime staging failed.' }
