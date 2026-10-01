@@ -235,3 +235,35 @@ def test_malformed_native_video_receipt_becomes_unknown_and_is_never_replayed(
     }
     assert second == first
     assert calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_browser_backend_paid_video_is_locked_by_default_without_driver_submission():
+    from agent.services.flow_browser_backend import BrowserFlowBackend
+
+    class Driver:
+        def health(self):
+            return {"ready": True}
+
+        def submit_paid_video(self, *_args, **_kwargs):
+            raise AssertionError("disabled backend must not reach video driver")
+
+    backend = BrowserFlowBackend.__new__(BrowserFlowBackend)
+    backend._ready = True
+    backend._closing = False
+    backend._closed = False
+    backend._driver = Driver()
+    backend._paid_dispatch_enabled = False
+    backend._paid_authorization = None
+
+    result = await backend.submit_paid_video(
+        operation_params(),
+        idempotency_key="video-locked-1",
+        authorization=AUTH,
+    )
+
+    assert result == {
+        "status": 403,
+        "error": "PAID_DISPATCH_DISABLED",
+        "effect": "not_submitted",
+    }
