@@ -2428,3 +2428,202 @@ closed:
 
 No pytest/build/browser/profile/paid/CAPTCHA/Stable/ThoRemix/Remote Desktop action
 was executed during this recovery checkpoint.
+
+
+## Browser-only Task 9d-repair-3 — paid video/Omni boundary + durable binding
+
+Date: 2026-10-01.
+Status: **B2/B3 SOURCE_REPAIRED; NOT VALIDATED; final source closure audit still required**.
+
+Pre-ledger repair head:
+`9de507f3bb4c382bd9e2f0615a3f90d02f5645b5`.
+
+### Paid-video safety boundary
+
+A dedicated `FlowPaidVideoGate` now owns the four already-supported video
+submission RPCs only:
+
+- `eb1hJf` — existing frame/Veo and Omni first-frame submit;
+- `YhhmEf` — existing Omni text-to-video submit;
+- `nprQif` — existing Omni first+last submit;
+- `MZZa6b` — existing Omni reference/Ingredients submit.
+
+No new model, upscale mode or video capability was added.
+
+The gate:
+- is disabled by default;
+- requires a distinct opaque video authorization capability;
+- validates the exact current Flow project context + CAPTCHA placeholder;
+- derives a durable idempotency key and request hash;
+- writes `SUBMITTING` before browser evaluation/fetch;
+- dispatches at most one browser fetch;
+- persists either an operation receipt or native media/workflow receipt before
+  acknowledging business success;
+- reuses a matching COMPLETED receipt;
+- treats SUBMITTING/UNKNOWN or malformed/ambiguous receipt as
+  `PAID_RECONCILIATION_REQUIRED/effect=unknown`;
+- never automatically replays an unknown paid effect;
+- marks the intent UNKNOWN before re-raising non-`Exception` interrupts.
+
+The page-side recipe `flow_browser_paid_video.js` mirrors the exact
+project/context checks, mints `VIDEO_GENERATION` immediately before one fetch,
+bounds response bytes/time and reports post-submit uncertainty as `effect=unknown`.
+
+### Separate image/video paid capabilities
+
+Image and video validation capabilities are now distinct at the backend/driver
+authorization boundary, not merely different helper modules.
+
+Normal `BrowserFlowBackend()` defaults:
+- image paid dispatch: OFF;
+- video paid dispatch: OFF.
+
+The existing image validation seam enables only image dispatch/token.
+The new `flow_paid_video_validation.py` seam enables only video dispatch/token.
+Each validation session consumes its one-shot capability before awaiting the
+effect, so cancellation/UNKNOWN cannot authorize a second attempt from that
+session.
+
+Normal app startup, HTTP API, worker and OperationService do not import either
+video validation factory or manufacture a paid authorization object.
+
+### FlowClient / worker business path
+
+`FlowClient.generate_video()` no longer submits `CAPTCHA_VIDEO` through generic
+`batch_rpc/execute`.
+
+It now:
+1. requires the caller's durable idempotency key;
+2. builds the existing video payload/model only;
+3. calls the dedicated `submit_paid_video` boundary exactly once;
+4. requires a completed operation receipt;
+5. **awaits** durable operation→project binding;
+6. returns the historical pending-operation business shape.
+
+If post-submit binding cannot be persisted, the method returns
+`OPERATION_BINDING_REQUIRED/effect=unknown`. It never interprets binding failure
+as permission to submit a replacement effect.
+
+`OperationService.generate_scene_video()` and
+`generate_scene_video_refs()` pass the durable worker request id as the video
+idempotency key. They do not pass paid authorization.
+
+Existing degraded i2v/r2v fallbacks retain their existing payload semantics but,
+when explicitly enabled, also pass through the same one-shot paid gate and same
+durable key.
+
+### Omni path and awaited binding
+
+All existing Omni submit modes now use `FlowClient.submit_paid_video()`:
+- text-to-video;
+- first-frame;
+- first+last;
+- reference/Ingredients.
+
+Native media/workflow receipts are projected into the existing
+`flowkitPolling.mode=batch_media` response without inventing an operation id.
+
+Operation receipts are projected into existing
+`flowkitPolling.mode=batch_operation` only **after**
+`await client._remember_operation(operation_id, project_id)` succeeds.
+
+A bind failure after a completed paid receipt returns
+`OPERATION_BINDING_REQUIRED/effect=unknown`, blocking automatic resend.
+
+The prior unawaited `client._remember_operation(...)` calls are removed from
+Omni submit paths.
+
+### Durable restart recovery
+
+The browser state schema now supports `paid_video` intents and optional
+`workflow_id` receipts.
+
+A COMPLETED paid-video operation receipt participates in
+`operation_binding()` recovery. Therefore a narrow crash after paid receipt but
+before the direct operation mapping is written can recover the project binding
+without resubmitting the paid video effect.
+
+### Direct API contract
+
+The four existing video request schemas now accept an optional
+`idempotency_key`:
+- Veo/frame video;
+- video refs;
+- Omni reference;
+- Omni text.
+
+The endpoints forward that key to the business/gate layer.
+
+They expose **no paid authorization field**, import no video validation seam, and
+cannot turn normal production paid dispatch on. With the normal backend, a new
+paid video request therefore remains fail-closed at the paid lock.
+
+### Regression migration
+
+Authored coverage was added for:
+- default paid-video lock before journal/dispatch;
+- exact one-shot intent-before-effect ordering;
+- operation receipt durability and restart binding recovery;
+- native media/workflow receipt durability and reuse;
+- UNKNOWN no-resend;
+- malformed receipt UNKNOWN/no second dispatch;
+- exact existing RPC allowlist and exact project context;
+- single-fetch page recipe and VIDEO_GENERATION CAPTCHA action;
+- FlowClient one paid call + awaited binding;
+- missing idempotency fail-before-submit;
+- post-submit bind failure => UNKNOWN;
+- existing Veo payload/degraded fallback semantics through the paid gate;
+- Omni text/frame/first-last/reference payloads through the paid gate;
+- awaited Omni operation binding and bind failure;
+- worker request-id propagation into video submit paths;
+- direct API idempotency without HTTP authorization;
+- separate image/video validation capabilities.
+
+Legacy successful/degraded Veo tests that expected generic paid
+`batch_rpc(CAPTCHA_VIDEO)` were migrated before those expectations were removed.
+Unsupported end-frame/r2v/upscale tests remain in the legacy batch suite.
+
+### Static source readback
+
+At the repair head:
+- normal backend video paid default: OFF;
+- image/video paid flags and authorization tokens: separate;
+- generic browser driver `execute()` does not allow video generation RPCs;
+- `FlowClient.generate_video()` uses `submit_paid_video` and contains no
+  `_batch_payload` paid submit;
+- `FlowClient.generate_video()` contains awaited durable binding;
+- Omni submit slice uses `submit_paid_video`;
+- Omni submit slice contains no generic `_batch_payload(...CAPTCHA_VIDEO...)`;
+- no unawaited `client._remember_operation(...)` remains in Omni submit slice;
+- HTTP Flow API contains no `paid_authorization` injection or validation-seam import;
+- exactly four video request schemas expose `idempotency_key`;
+- state journal supports `paid_video` + `workflow_id`;
+- KBS pin remains
+  `b539e9820d433c8c9d667b4e5d9007b6a80b8abd`.
+
+### Phase boundary
+
+Tests/builds executed: **none**.
+No paid/CAPTCHA live request, browser/profile launch, EXE build,
+Stable/ThoRemix mutation or Remote Desktop action occurred.
+
+Owner-reported canonical KAT `b89c2b71` remains reserved for final validation
+after source closure and is not treated as evidence for this branch.
+
+### Repair-3 disposition
+
+- **B2: source repaired** — existing video/Omni submit capabilities now have a
+  dedicated disabled-by-default browser paid boundary with durable idempotency,
+  intent/receipt and UNKNOWN no-resend.
+- **B3: source repaired** — Omni operation receipts now await durable binding and
+  fail closed if the post-submit mapping cannot be persisted.
+
+No known B2/B3 source blocker remains from this repair slice.
+
+### Next short sub-task
+
+Proceed to **Task 9e — final source-closure audit and ledgers**.
+Re-audit the integrated branch for cross-file/source-only blockers, stale current
+transport wording, main/PR12 ancestry and exact KBS pin; update
+`docs/comicreels/CHECKPOINTS.md`, the plan Task 9 checklist and final rollback
+revision. Only if that source audit is clean may Phase 3 validation begin.
