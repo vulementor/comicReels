@@ -98,6 +98,12 @@ class FlowClient:
     async def open_project(self, project_id: str) -> dict:
         return await self._backend.open_project(project_id)
 
+    async def ensure_session_project(self, *, title=None, force_new=False) -> dict:
+        """Use the backend's durable create/reuse path, never raw create RPC."""
+        return await self._backend.ensure_session_project(
+            title=title, force_new=force_new,
+        )
+
     @property
     def generation_guard_status(self) -> dict:
         remaining = max(0.0, self._generation_unusual_until - time.monotonic())
@@ -142,7 +148,9 @@ class FlowClient:
         refreshed = 0
         for (media_id, kind), fields in targets.items():
             try:
-                urls = await self._batch_media_urls(media_id)
+                urls = await self._batch_media_urls(
+                    media_id, project_id=project_id,
+                )
             except Exception as e:
                 logger.warning("Refresh failed for media %s: %s", media_id[:12], e)
                 continue
@@ -314,22 +322,37 @@ class FlowClient:
         return None
 
     async def create_project(self, project_title: str, tool_name: str = "PINHOLE") -> dict:
+        """Create a fresh project through the backend's durable intent/receipt path."""
         try:
-            result = await self.batch_rpc(
-                fb.RPC_CREATE_PROJECT,
-                fb.create_project_request(project_title),
-                timeout=60,
+            result = await self.ensure_session_project(
+                title=project_title,
+                force_new=True,
             )
-            if result.get("error"):
-                return {"status": result.get("status", 502), "error": result["error"]}
-            payload = fb.first_payload(result.get("data") or "", fb.RPC_CREATE_PROJECT)
-            pid, title = fb.read_created_project(payload)
-            if not self._UUID_RE.match(pid):
-                raise fb.FlowBatchError(f"invalid project id returned by Flow: {pid!r}")
-            logger.info("Flow project created: %s title=%r", pid, title or project_title)
-            return {"status": 200, "data": {"projectId": pid, "title": title or project_title}}
         except Exception as exc:
             return _batch_error(exc)
+        if not isinstance(result, dict):
+            return {"status": 502, "error": "PROJECT_CREATE_FAILED"}
+        if result.get("error") or result.get("status") != 200:
+            return {
+                "status": result.get("status", 502),
+                "error": result.get("error", "PROJECT_CREATE_FAILED"),
+                "effect": result.get("effect", "not_submitted"),
+            }
+        data = result.get("data")
+        pid = data.get("projectId") if isinstance(data, dict) else None
+        title = data.get("title") if isinstance(data, dict) else None
+        if not isinstance(pid, str) or not self._UUID_RE.match(pid):
+            return {
+                "status": 409,
+                "error": "PROJECT_RECEIPT_UNVERIFIED",
+                "effect": "unknown",
+            }
+        logger.info("Flow project created: %s title=%r", pid, title or project_title)
+        return {
+            "status": 200,
+            "data": {"projectId": pid, "title": title or project_title},
+            "effect": result.get("effect", "completed"),
+        }
 
     async def generate_images(self, prompt: str, project_id: str,
                                aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
@@ -419,7 +442,7 @@ class FlowClient:
         # must never cause a paid resend or downgrade a completed effect.
         image_url = ""
         try:
-            media = await self.get_media(media_id)
+            media = await self.get_media(media_id, project_id=pid)
             if isinstance(media, dict) and media.get("status") == 200:
                 record = media.get("data")
                 if isinstance(record, dict):
@@ -744,10 +767,12 @@ class FlowClient:
         status = result.get("status", 500)
         return isinstance(status, int) and status == 200
 
-    async def get_media(self, media_id: str) -> dict:
-        """Fetch a media record, which is where a fresh signed url lives."""
+    async def get_media(self, media_id: str, project_id: str | None = None) -> dict:
+        """Fetch media URLs, optionally scoped to the known owning Flow project."""
         try:
-            urls = await self._batch_media_urls(media_id)
+            urls = await self._batch_media_urls(
+                media_id, project_id=project_id,
+            )
         except Exception as e:
             return _batch_error(e)
         if not urls.video and not urls.image:
