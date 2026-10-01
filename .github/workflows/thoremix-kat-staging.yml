@@ -1,33 +1,78 @@
-name: ThoRemix KAT staging contract
+name: ThoRemix hosted Windows contracts
 
 on:
   pull_request:
     paths:
+      - 'agent/thoremix/cli.py'
+      - 'agent/thoremix/config.py'
+      - 'agent/thoremix/smoke.py'
+      - 'agent/thoremix/story_operations.py'
+      - 'agent/services/flow_story_browser.py'
       - 'deployment/thoremix/Build-Stable.ps1'
+      - 'deployment/thoremix/start.py'
+      - 'deployment/thoremix/Test-StageOnlyContract.ps1'
       - 'deployment/thoremix/Test-KatStagingContract.ps1'
+      - 'tests/unit/test_thoremix_stage_safety.py'
+      - 'tests/unit/test_thoremix_smoke.py'
+      - 'tests/unit/test_flow_story_browser.py'
       - '.github/workflows/thoremix-kat-staging.yml'
   push:
     branches: [main]
     paths:
+      - 'agent/thoremix/cli.py'
+      - 'agent/thoremix/config.py'
+      - 'agent/thoremix/smoke.py'
+      - 'agent/thoremix/story_operations.py'
+      - 'agent/services/flow_story_browser.py'
       - 'deployment/thoremix/Build-Stable.ps1'
+      - 'deployment/thoremix/start.py'
+      - 'deployment/thoremix/Test-StageOnlyContract.ps1'
       - 'deployment/thoremix/Test-KatStagingContract.ps1'
+      - 'tests/unit/test_thoremix_stage_safety.py'
+      - 'tests/unit/test_thoremix_smoke.py'
+      - 'tests/unit/test_flow_story_browser.py'
       - '.github/workflows/thoremix-kat-staging.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: thoremix-kat-staging-${{ github.ref }}
+  group: thoremix-windows-contracts-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   staging-contract:
     runs-on: windows-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install focused test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: StageOnly source contracts
+        shell: pwsh
+        run: ./deployment/thoremix/Test-StageOnlyContract.ps1
+
       - name: Inspect KAT refresh path without executing deployment
         shell: pwsh
         run: ./deployment/thoremix/Test-KatStagingContract.ps1
+
+      - name: Focused StageOnly and CLI smoke regressions
+        shell: pwsh
+        env:
+          PYTHONUTF8: "1"
+        run: python -m pytest tests/unit/test_thoremix_stage_safety.py tests/unit/test_thoremix_smoke.py tests/unit/test_flow_story_browser.py -q

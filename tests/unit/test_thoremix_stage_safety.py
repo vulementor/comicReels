@@ -111,3 +111,40 @@ def test_paid_story_stages_fail_closed_before_runtime_or_filesystem_use(tmp_path
         "reason": "PAID_OPERATIONS_LOCKED",
     }
     assert not work.exists()
+
+
+def test_installed_entrypoint_smoke_has_no_launcher_log_side_effect(tmp_path):
+    bundle = _fake_bundle(tmp_path)
+
+    completed, seen = _run_entrypoint(bundle, "smoke")
+
+    assert completed.returncode == 0
+    assert seen == ["--root", str(bundle.resolve()), "smoke"]
+    assert not (bundle / "logs").exists()
+
+
+def test_paid_authorized_image_unknown_receipt_does_not_resubmit(tmp_path):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    settings = Settings(root=str((tmp_path / "live").resolve()))
+    client = MagicMock()
+    operations = StoryOperations(settings, runtime=SimpleNamespace(client=lambda: client))
+    work = tmp_path / "work"
+    images = work / "images"
+    images.mkdir(parents=True)
+    receipt = images / "provider.json"
+    receipt.write_text(json.dumps({"state": "uncertain", "conversation_url": "https://example.invalid/existing"}), encoding="utf-8")
+    before = receipt.read_bytes()
+
+    result = operations._run(
+        "images",
+        {"source": str(tmp_path / "source.png")},
+        work,
+        lambda *_: None,
+    )
+
+    assert settings.paid_operations_authorized is True
+    assert result == {"state": "uncertain", "reason": "BATCH_INCOMPLETE"}
+    assert receipt.read_bytes() == before
+    client.image.generate_batch.assert_not_called()

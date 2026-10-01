@@ -108,3 +108,35 @@ def test_only_preparation_before_paid_intent_is_retryable(tmp_path,monkeypatch,p
         assert result['state']=='blocked' and result['not_submitted'] is True
         assert 'private' not in (folder/'preparation-error.json').read_text()
     provider.close.assert_called_once()
+
+
+def test_paid_authorization_true_does_not_bypass_video_one_shot_receipt(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from agent.services import flow_story_browser as flow
+
+    folder = tmp_path / "flow"
+    folder.mkdir()
+    receipt = folder / "story-receipt.json"
+    receipt.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        flow,
+        "StoryReceipt",
+        lambda path: SimpleNamespace(path=path, load=lambda: {"state": "UNKNOWN"}),
+    )
+    provider = MagicMock()
+    provider.open.return_value = provider
+    monkeypatch.setattr(flow, "FlowBrowserSessionProvider", lambda *a, **k: provider)
+    monkeypatch.setattr(flow.FlowProfileConfig, "load", lambda _: None)
+    monkeypatch.setattr(flow, "observe_flow_account", lambda _: SimpleNamespace(state="authenticated"))
+    runtime = SimpleNamespace(flow_profile_config="config", flow_project_id=PROJECT)
+    settings = SimpleNamespace(paid_operations_authorized=True)
+    operation = flow.FlowStoryBrowser(settings, runtime)
+    operation._prepare = MagicMock(side_effect=AssertionError("must not prepare a second paid submit"))
+
+    result = operation.run("video", {}, tmp_path, lambda _: None)
+
+    assert result == {"state": "uncertain", "reason": "PAID_SUBMIT_NOT_BOUND"}
+    operation._prepare.assert_not_called()
+    provider.session.page.expect_response.assert_not_called()
+    provider.close.assert_called_once()

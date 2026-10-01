@@ -38,15 +38,16 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      - name: Install ffmpeg
-        # fonts-dejavu-core is not optional. The drawtext call in
-        # video_reviewer.py passes no fontfile=, so it asks fontconfig for a
-        # default family; with --no-install-recommends the runner can end up
-        # with an ffmpeg that has drawtext and no font. video_reviewer.py now
-        # degrades gracefully when drawtext is unavailable.
+      - name: Ensure ffmpeg without blocking an already-provisioned hosted runner
+        # Validation-only setup: keep application/runtime semantics untouched.
+        # This is the bounded hosted pattern previously used by the full portable gate.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
+          if ffmpeg -hide_banner -version >/dev/null 2>&1; then
+            echo "hosted ffmpeg available"
+          else
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg fonts-dejavu-core
+          fi
 
       - name: Report whether drawtext renders
         # This used to fail the build, because naming an absent filter aborted
