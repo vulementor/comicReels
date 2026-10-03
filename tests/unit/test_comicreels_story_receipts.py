@@ -59,10 +59,28 @@ def test_wrong_story_or_unreviewed_package_cannot_complete(tmp_path, field, chan
     assert journal.load()['state'] == 'PROCESSING'
 
 
-def intent():
+def intent(duration=10):
     return dict(source_sha256=SOURCE_HASH, project_id=PROJECT,
-                ordered_reference_ids=REFS, prompt='Full story', duration_s=10,
+                ordered_reference_ids=REFS, prompt='Full story', duration_s=duration,
                 model='Omni 1.1 Flash', resolution='360p', aspect='9:16', variants=1)
+
+
+@pytest.mark.parametrize('duration',[4,6,8,10])
+def test_story_intent_accepts_supported_integer_durations(tmp_path,duration):
+    journal=StoryReceipt(tmp_path/f'story-{duration}.json')
+    record=journal.begin(intent(duration))
+    assert record['state']=='SUBMITTING'
+    assert record['intent']['duration_s']==duration
+    assert journal.load()['intent']==intent(duration)
+
+
+@pytest.mark.parametrize('duration',[True,False,0,5,12,4.0,'4'])
+def test_story_intent_rejects_non_integer_or_unsupported_duration_without_receipt(
+        tmp_path,duration):
+    path=tmp_path/'story.json'
+    with pytest.raises(ValueError,match='INVALID_STORY_INTENT'):
+        StoryReceipt(path).begin(intent(duration))
+    assert not path.exists()
 
 
 @pytest.mark.parametrize('missing', [False, True])
