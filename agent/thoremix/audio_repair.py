@@ -27,7 +27,34 @@ def _flow_identity(package: dict) -> dict:
     return {k:flow[k] for k in keys}
 
 
-def _bound_local_native(settings: Settings, package: dict) -> Path | None:
+def _flow_story_receipt(settings: Settings, package: dict) -> dict:
+    identity=_flow_identity(package)
+    job_id=package.get('job_id')
+    source_sha256=package.get('source_sha256')
+    if (not isinstance(job_id,str) or not job_id
+            or not isinstance(source_sha256,str)):
+        raise ValueError('AUDIO_REPAIR_PACKAGE_IDENTITY_MISMATCH')
+    path=settings.data/'production'/job_id/'flow'/'story-receipt.json'
+    if not path.is_file() or path.is_symlink():
+        raise ValueError('AUDIO_REPAIR_STORY_RECEIPT_MISSING')
+    try:
+        record=json.loads(path.read_text(encoding='utf-8'))
+    except (OSError,UnicodeError,ValueError,TypeError,json.JSONDecodeError):
+        raise ValueError('AUDIO_REPAIR_STORY_RECEIPT_INVALID') from None
+    from agent.services.flow_story_browser import _validate_recovery_record
+    try:
+        _validate_recovery_record(
+            record,expected_project_id=identity['project_id'],
+            expected_source_sha256=source_sha256)
+    except (TypeError,ValueError) as error:
+        raise ValueError('AUDIO_REPAIR_STORY_RECEIPT_INVALID') from error
+    if any(record.get(key)!=identity[key] for key in identity):
+        raise ValueError('AUDIO_REPAIR_STORY_RECEIPT_MISMATCH')
+    return record
+
+
+def _bound_local_native(
+        settings: Settings, package: dict, record: dict) -> Path | None:
     """Use only immutable Flow downloads with their matching download receipt."""
     identity=_flow_identity(package)
     folder=settings.data/'production'/package['job_id']/'flow'
@@ -38,27 +65,31 @@ def _bound_local_native(settings: Settings, package: dict) -> Path | None:
             continue
         try:
             receipt=json.loads(receipt_path.read_text(encoding='utf-8'))
-        except (OSError,ValueError):
-            continue
+        except (OSError,UnicodeError,ValueError,TypeError,json.JSONDecodeError):
+            raise ValueError('AUDIO_REPAIR_NATIVE_RECEIPT_INVALID') from None
         if (receipt.get('state')!='COMPLETED'
                 or any(receipt.get(k)!=identity[k] for k in identity)
                 or receipt.get('artifact',{}).get('sha256')!=sha256(video)):
-            continue
+            raise ValueError('AUDIO_REPAIR_NATIVE_RECEIPT_INVALID')
         from .core import validate_media
-        validate_media(video,tool_root=settings.directory)
+        media=validate_media(video,tool_root=settings.directory)
         if sha256(video)!=receipt['artifact']['sha256']:
             raise ValueError('AUDIO_REPAIR_NATIVE_CHANGED')
+        duration=record['intent']['duration_s']
+        if abs(float(media.get('duration_s',-1))-duration)>.1:
+            raise ValueError('AUDIO_REPAIR_NATIVE_DURATION_MISMATCH')
         return video
     return None
 
 
-def _redownload_native(settings: Settings, package: dict, target: Path) -> Path:
+def _redownload_native(
+        settings: Settings, package: dict, record: dict, target: Path) -> Path:
     """Read the already-created 720p derivative; no generation/upscale effect."""
     from .story_runtime import StoryRuntime
     from agent.services.flow_story_browser import FlowStoryBrowser
     runtime=StoryRuntime.load(settings)
-    identity=_flow_identity(package)
-    result=FlowStoryBrowser(settings,runtime).download_existing(identity,target,highest=True)
+    result=FlowStoryBrowser(settings,runtime).download_existing(
+        record,target,highest=True)
     path=Path(result['path']).resolve(strict=True)
     if path.parent!=target.resolve():
         raise ValueError('AUDIO_REPAIR_DOWNLOAD_OUTSIDE_RECOVERY')
@@ -85,14 +116,15 @@ def repair_audio(settings: Settings, job_id: str, *, downloader=None, force=Fals
     current_video=Path(package['video_path']).resolve(strict=True)
     if current_video.parent!=folder or sha256(current_video)!=package['video_sha256']:
         raise ValueError('AUDIO_REPAIR_CURRENT_VIDEO_CHANGED')
+    record=_flow_story_receipt(settings,package)
 
     with root_operation(settings.data/'audio-repairs'/job_id):
-        native=_bound_local_native(settings,package)
+        native=_bound_local_native(settings,package,record)
         source='local_bound_flow_download'
         if native is None:
             recovery=settings.data/'production'/job_id/'flow-recovery'
-            native=(downloader(settings,package,recovery) if downloader
-                    else _redownload_native(settings,package,recovery))
+            native=(downloader(settings,package,record,recovery) if downloader
+                    else _redownload_native(settings,package,record,recovery))
             native=Path(native).resolve(strict=True)
             source='redownloaded_bound_flow_derivative'
         if native in {current_video,Path(package.get('finishing',{}).get('base_path','')).resolve()}:

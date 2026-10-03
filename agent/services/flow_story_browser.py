@@ -70,7 +70,7 @@ def _generation_contract(generation,budget_contract=None):
         raise TypeError('FLOW_GENERATION_CONTRACT_INVALID')
     duration=generation.get('duration_s')
     cost=generation.get('quoted_cost_credits')
-    if (duration not in _VIDEO_CREDITS
+    if (type(duration) is not int or duration not in _VIDEO_CREDITS
             or generation.get('model')!=_VIDEO_MODEL
             or generation.get('resolution')!=_VIDEO_RESOLUTION
             or generation.get('outputs_per_request')!=_VIDEO_OUTPUTS
@@ -103,7 +103,7 @@ def _generation_contract(generation,budget_contract=None):
 
 def verified_native_submit(body, post_data, intent):
     duration=intent.get('duration_s')
-    if (duration not in _VIDEO_CREDITS
+    if (type(duration) is not int or duration not in _VIDEO_CREDITS
             or intent.get('model')!=_VIDEO_MODEL
             or intent.get('resolution')!=_VIDEO_RESOLUTION
             or intent.get('variants')!=1
@@ -139,6 +139,46 @@ def _valid_uuid(value):
     return (isinstance(value,str)
             and re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
                              value) is not None)
+
+
+_RECOVERY_INTENT_FIELDS={
+    'source_sha256','project_id','ordered_reference_ids','prompt',
+    'duration_s','model','resolution','aspect','variants',
+}
+
+
+def _validate_recovery_record(
+        record,*,expected_project_id=None,expected_source_sha256=None):
+    if (not isinstance(record,dict) or record.get('schema_version')!=1
+            or record.get('state') not in {'PROCESSING','COMPLETED'}
+            or any(not _valid_uuid(record.get(key))
+                   for key in ('media_id','workflow_id','project_id'))):
+        raise ValueError('RECOVERY_STORY_RECEIPT_INVALID')
+    intent=record.get('intent')
+    if (not isinstance(intent,dict) or set(intent)!=_RECOVERY_INTENT_FIELDS
+            or not isinstance(intent.get('source_sha256'),str)
+            or re.fullmatch(r'[0-9a-f]{64}',intent['source_sha256']) is None
+            or not isinstance(intent.get('prompt'),str) or not intent['prompt'].strip()
+            or len(intent['prompt'])>30000
+            or type(intent.get('duration_s')) is not int
+            or intent['duration_s'] not in _VIDEO_CREDITS
+            or intent.get('model')!=_VIDEO_MODEL
+            or intent.get('resolution')!=_VIDEO_RESOLUTION
+            or intent.get('aspect')!='9:16'
+            or type(intent.get('variants')) is not int or intent['variants']!=1
+            or intent.get('project_id')!=record['project_id']):
+        raise ValueError('RECOVERY_STORY_RECEIPT_INVALID')
+    refs=intent.get('ordered_reference_ids')
+    if (not isinstance(refs,list) or not 1<=len(refs)<=32
+            or len(set(refs))!=len(refs) or any(not _valid_uuid(value) for value in refs)):
+        raise ValueError('RECOVERY_STORY_RECEIPT_INVALID')
+    if (expected_project_id is not None
+            and record['project_id']!=expected_project_id):
+        raise ValueError('RECOVERY_FLOW_PROJECT_MISMATCH')
+    if (expected_source_sha256 is not None
+            and intent['source_sha256']!=expected_source_sha256):
+        raise ValueError('RECOVERY_FLOW_SOURCE_MISMATCH')
+    return record
 
 
 def _budget_contract(authorization,req):
@@ -709,21 +749,45 @@ class FlowStoryBrowser:
     def download_existing(self, record, folder, *, highest=True):
         """Download an already-created Flow derivative without generation/upscale clicks.
 
-        This path is used for repair/recovery.  It performs only the read RPC that
-        resolves the immutable media URL plus an authenticated GET of those bytes;
-        it never presses the generate or upscale controls and works while production
-        automation is paused.
+        Recovery accepts only a complete durable StoryReceipt.  Record and cached
+        metadata are validated before any browser owner is opened.
         """
+        record=_validate_recovery_record(
+            record,expected_project_id=self.runtime.flow_project_id)
         required=('media_id','project_id','workflow_id')
-        if (not isinstance(record,dict) or any(not isinstance(record.get(k),str)
-                or not record[k] for k in required)):
-            raise ValueError('RECOVERY_FLOW_IDENTITY_INVALID')
-        if record['project_id']!=self.runtime.flow_project_id:
-            raise ValueError('RECOVERY_FLOW_PROJECT_MISMATCH')
+        duration=record['intent']['duration_s']
         folder=Path(folder)
         folder.mkdir(parents=True,exist_ok=True)
-        provider=FlowBrowserSessionProvider(FlowProfileConfig.load(Path(self.runtime.flow_profile_config)),
-                                            auth_probe=observe_flow_account,visible=False).open()
+        stem='highest' if highest else 'original'
+        receipt_path=folder/(stem+'-download.json')
+        final=folder/(stem+'.mp4')
+        resolution=720 if highest else 360
+        if receipt_path.exists():
+            try:
+                receipt=json.loads(receipt_path.read_text(encoding='utf-8'))
+            except (OSError,UnicodeError,ValueError,TypeError,json.JSONDecodeError):
+                raise ValueError('RECOVERY_DOWNLOAD_RECEIPT_INVALID') from None
+            data=receipt.get('data')
+            selected=data.get('selected_resolution') if isinstance(data,dict) else None
+            match=re.match(r'^(\d+)p(?:\s|$)',selected or '')
+            if (receipt.get('state')!='COMPLETED'
+                    or any(receipt.get(k)!=record[k] for k in required)
+                    or not final.is_file()
+                    or artifact(final)!=receipt.get('artifact')
+                    or not isinstance(data,dict)
+                    or data.get('highest') is not highest
+                    or match is None or int(match.group(1))!=resolution):
+                raise ValueError('RECOVERY_DOWNLOAD_RECEIPT_INVALID')
+            media=validate_media(final,tool_root=self.settings.directory)
+            if (media.get('width')!=resolution
+                    or abs(float(media.get('duration_s',-1))-duration)>.1
+                    or data.get('width')!=media.get('width')
+                    or data.get('duration_s')!=media.get('duration_s')):
+                raise ValueError('RECOVERY_DOWNLOAD_MEDIA_MISMATCH')
+            return {'path':str(final),'data':data}
+        provider=FlowBrowserSessionProvider(
+            FlowProfileConfig.load(Path(self.runtime.flow_profile_config)),
+            auth_probe=observe_flow_account,visible=False).open()
         try:
             page=provider.session.page
             page.goto('https://flow.google.com/project/'+record['project_id'],
@@ -732,17 +796,6 @@ class FlowStoryBrowser:
                 state='visible',timeout=30000)
             if observe_flow_account(page).state!='authenticated':
                 raise ValueError('FLOW_AUTH_REQUIRED')
-            stem='highest' if highest else 'original'
-            receipt_path=folder/(stem+'-download.json')
-            final=folder/(stem+'.mp4')
-            if receipt_path.exists():
-                receipt=json.loads(receipt_path.read_text(encoding='utf-8'))
-                if (receipt.get('state')=='COMPLETED'
-                        and all(receipt.get(k)==record[k] for k in required)
-                        and final.is_file() and artifact(final)==receipt.get('artifact')):
-                    validate_media(final,tool_root=self.settings.directory)
-                    return {'path':str(final),'data':receipt['data']}
-            resolution=720 if highest else 360
             derivative=record['media_id']+('_720p_upsampled' if highest else '')
             data=self._rpc(page,'as29s',fb.media_request(derivative))
             url=fb.read_media_urls(data,derivative).video
@@ -834,12 +887,12 @@ class FlowStoryBrowser:
         return self._promote_download(part,final,receipt_path,record,selected,labels,highest)
 
     def _promote_download(self,part,final,receipt_path,record,selected,labels,highest):
-        media=validate_media(part,tool_root=self.settings.directory)
-        wanted=int(re.match(r'\d+',selected)[0])
         intent=record.get('intent')
         duration=intent.get('duration_s') if isinstance(intent,dict) else None
-        if duration not in _VIDEO_CREDITS:
+        if type(duration) is not int or duration not in _VIDEO_CREDITS:
             raise ValueError('DOWNLOAD_INTENT_DURATION_INVALID')
+        media=validate_media(part,tool_root=self.settings.directory)
+        wanted=int(re.match(r'\d+',selected)[0])
         if media['width']!=wanted or abs(media['duration_s']-duration)>.1:
             raise ValueError('DOWNLOAD_MEDIA_MISMATCH')
         data={'selected_resolution':selected,'observed_options':labels,'highest':highest,**media}

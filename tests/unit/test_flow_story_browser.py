@@ -991,3 +991,107 @@ def test_mixed_duration_request_to_receipt_budget_native_and_download_is_exact(
     assert row['aggregate_id']==AGGREGATE
     assert row['receipt']=={
         key:story[key] for key in ('media_id','workflow_id','project_id')}
+
+
+@pytest.mark.parametrize('duration',[True,4.0,'4',None,5])
+def test_generation_native_and_promotion_reject_non_integer_or_unsupported_duration(
+        tmp_path,monkeypatch,duration):
+    from types import SimpleNamespace
+
+    from agent.services import flow_story_browser as flow
+
+    spec=generation(4)
+    spec['duration_s']=duration
+    with pytest.raises(ValueError,match='FLOW_GENERATION_CONTRACT_INVALID'):
+        flow._generation_contract(spec)
+
+    body,post_data,intent=native(duration=4)
+    intent['duration_s']=duration
+    with pytest.raises(ValueError,match='NATIVE_INTENT_INVALID'):
+        verified_native_submit(body,post_data,intent)
+
+    operation=flow.FlowStoryBrowser(SimpleNamespace(directory=tmp_path),None)
+    part=tmp_path/'part.mp4';part.write_bytes(b'bytes')
+    record=story_record(intent=story_intent()|{'duration_s':duration})
+    monkeypatch.setattr(
+        flow,'validate_media',
+        lambda *_args,**_kwargs:pytest.fail('media probe must not run'))
+    with pytest.raises(ValueError,match='DOWNLOAD_INTENT_DURATION_INVALID'):
+        operation._promote_download(
+            part,tmp_path/'final.mp4',tmp_path/'receipt.json',record,
+            '360p Original',['360p Original'],False)
+
+
+@pytest.mark.parametrize('change',[
+    lambda record:record.update(state='UNKNOWN'),
+    lambda record:record['intent'].__setitem__('duration_s',True),
+    lambda record:record['intent'].__setitem__('duration_s',4.0),
+    lambda record:record['intent'].__setitem__('duration_s','4'),
+    lambda record:record['intent'].__setitem__('duration_s',5),
+])
+def test_download_existing_rejects_invalid_story_record_before_provider(
+        tmp_path,monkeypatch,change):
+    from types import SimpleNamespace
+
+    from agent.services import flow_story_browser as flow
+
+    record=story_record()
+    change(record)
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:pytest.fail('provider must not open'))
+    operation=flow.FlowStoryBrowser(
+        SimpleNamespace(directory=tmp_path),
+        SimpleNamespace(flow_project_id=PROJECT,flow_profile_config='config'))
+    with pytest.raises(ValueError,match='RECOVERY_STORY_RECEIPT_INVALID'):
+        operation.download_existing(record,tmp_path/'recovery',highest=True)
+
+
+def test_cached_recovery_duration_mismatch_blocks_before_provider(
+        tmp_path,monkeypatch):
+    from types import SimpleNamespace
+
+    from agent.services import flow_story_browser as flow
+
+    record=story_record()
+    folder=tmp_path/'recovery';folder.mkdir()
+    final=folder/'highest.mp4';final.write_bytes(b'cached-video')
+    receipt={
+        'state':'COMPLETED',
+        **{key:record[key] for key in ('media_id','project_id','workflow_id')},
+        'artifact':flow.artifact(final),
+        'data':{
+            'selected_resolution':'720p existing Flow derivative',
+            'highest':True,'width':720,'duration_s':10.0,
+        },
+    }
+    (folder/'highest-download.json').write_text(json.dumps(receipt),encoding='utf-8')
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:pytest.fail('provider must not open'))
+    monkeypatch.setattr(
+        flow,'validate_media',
+        lambda *_args,**_kwargs:{'width':720,'duration_s':8.0})
+    operation=flow.FlowStoryBrowser(
+        SimpleNamespace(directory=tmp_path),
+        SimpleNamespace(flow_project_id=PROJECT,flow_profile_config='config'))
+    with pytest.raises(ValueError,match='RECOVERY_DOWNLOAD_MEDIA_MISMATCH'):
+        operation.download_existing(record,folder,highest=True)
+
+
+def test_corrupt_cached_recovery_receipt_blocks_before_provider(
+        tmp_path,monkeypatch):
+    from types import SimpleNamespace
+
+    from agent.services import flow_story_browser as flow
+
+    folder=tmp_path/'recovery';folder.mkdir()
+    (folder/'highest-download.json').write_text('{',encoding='utf-8')
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:pytest.fail('provider must not open'))
+    operation=flow.FlowStoryBrowser(
+        SimpleNamespace(directory=tmp_path),
+        SimpleNamespace(flow_project_id=PROJECT,flow_profile_config='config'))
+    with pytest.raises(ValueError,match='RECOVERY_DOWNLOAD_RECEIPT_INVALID'):
+        operation.download_existing(story_record(),folder,highest=True)
