@@ -520,3 +520,159 @@ def test_cross_account_or_project_cannot_reuse_aggregate_ledger(tmp_path):
         resume_req())
     with pytest.raises(ValueError,match='FLOW_BUDGET_RESERVATION_MISMATCH'):
         _BudgetLedger(tmp_path,wrong_project)._load()
+
+
+def test_committed_replay_requires_exact_receipt_ids(tmp_path):
+    from agent.services.flow_story_browser import _budget_contract, _BudgetLedger
+
+    contract=_budget_contract(resume_authorization(),resume_req())
+    binding=observed_submit_binding(contract)
+    ledger=_BudgetLedger(tmp_path,contract)
+    ledger.reserve(7,100,binding)
+    original=story_record()
+    ledger.commit(original,binding)
+
+    assert ledger.reconcile_known_submit(original,binding)['state']=='COMMITTED'
+    different=story_record(media_id='22222222-aaaa-bbbb-cccc-dddddddddddd')
+    with pytest.raises(ValueError,match='FLOW_BUDGET_COMMITTED_RECEIPT_MISMATCH'):
+        ledger.reconcile_known_submit(different,binding)
+
+
+def test_account_change_before_submit_blocks_without_reservation_or_click(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from agent.services import flow_story_browser as flow
+
+    source=tmp_path/'source.png';source.write_bytes(b'source')
+    child=tmp_path/'child.png';child.write_bytes(b'child')
+    req=resume_req()|{
+        'source':str(source),
+        'images':{'files':[{'path':str(child),'sha256':'d'*64}]},
+        'analysis':{'panels':[{'display_order':0,'dialogues':[]}]},
+        'image_review':{'data':{'dialogues_verified':True}},
+    }
+    auth=resume_authorization()
+    page=MagicMock()
+    page.get_by_role.return_value.wait_for.return_value=None
+    page.locator.return_value.fill.return_value=None
+    generate=MagicMock()
+    def role(kind,**kwargs):
+        if kind=='button' and kwargs.get('name')=='Bắt đầu tạo':
+            return generate
+        return MagicMock()
+    page.get_by_role.side_effect=role
+    provider=SimpleNamespace(session=SimpleNamespace(page=page),close=lambda:None)
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:SimpleNamespace(open=lambda:provider))
+    monkeypatch.setattr(
+        flow.FlowProfileConfig,'load',
+        lambda _:SimpleNamespace(profile_logical_name=PROFILE))
+    observed=iter((
+        SimpleNamespace(state='authenticated',identity=ACCOUNT),
+        SimpleNamespace(state='authenticated',identity='other@example.com'),
+    ))
+    monkeypatch.setattr(flow,'observe_flow_account',lambda _page:next(observed))
+    monkeypatch.setattr(flow,'BrowserStateStore',lambda *args,**kwargs:SimpleNamespace())
+    monkeypatch.setattr(flow,'upload_reference',lambda *args:REFS[0])
+    monkeypatch.setattr(flow,'attach_existing_references',lambda *args:None)
+    monkeypatch.setattr(
+        flow,'verify_reference_composer',
+        lambda *args:{'ordered_reference_ids':[REFS[0]]})
+    monkeypatch.setattr(flow,'story_video_prompt',lambda *args,**kwargs:'prompt')
+
+    runtime=SimpleNamespace(flow_profile_config='config',flow_project_id=PROJECT)
+    settings=SimpleNamespace(enabled=True,directory=tmp_path,data=tmp_path/'data')
+    operation=flow.FlowStoryBrowser(settings,runtime)
+    monkeypatch.setattr(operation,'_prepare',lambda _page:{'credits':100,'quoted_cost':7})
+    monkeypatch.setattr(operation,'_current_quote',
+                        lambda _page:pytest.fail('quote must not be read after account mismatch'))
+    monkeypatch.setattr(operation,'_check_enabled',lambda:None)
+
+    result=operation.run('video',req,tmp_path,lambda _:None,authorization=auth)
+    assert result['state']=='blocked'
+    assert result['reason']=='FLOW_ACCOUNT_IDENTITY_MISMATCH'
+    assert not (tmp_path/'flow'/'paid-submit-intent.json').exists()
+    assert not (tmp_path/'data'/'flow-budget-ledgers').exists()
+    generate.press.assert_not_called()
+
+
+def test_rejected_quote_does_not_leave_stale_submit_intent(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from agent.services import flow_story_browser as flow
+
+    source=tmp_path/'source.png';source.write_bytes(b'source')
+    child=tmp_path/'child.png';child.write_bytes(b'child')
+    video=tmp_path/'video.mp4';video.write_bytes(b'video')
+    req=resume_req()|{
+        'source':str(source),
+        'images':{'files':[{'path':str(child),'sha256':'d'*64}]},
+        'analysis':{'panels':[{'display_order':0,'dialogues':[]}]},
+        'image_review':{'data':{'dialogues_verified':True}},
+    }
+    events=[]
+    page=MagicMock()
+    page.get_by_role.return_value.wait_for.return_value=None
+    page.locator.return_value.fill.return_value=None
+    response=SimpleNamespace(
+        status=200,body=lambda:b'body',
+        request=SimpleNamespace(post_data='post'))
+    pending=MagicMock()
+    pending.__enter__.return_value=SimpleNamespace(value=response)
+    pending.__exit__.return_value=False
+    page.expect_response.return_value=pending
+    def role(kind,**kwargs):
+        button=MagicMock()
+        if kind=='button' and kwargs.get('name')=='Bắt đầu tạo':
+            button.press.side_effect=lambda _key:events.append('click')
+        return button
+    page.get_by_role.side_effect=role
+    provider=SimpleNamespace(session=SimpleNamespace(page=page),close=lambda:None)
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:SimpleNamespace(open=lambda:provider))
+    monkeypatch.setattr(
+        flow.FlowProfileConfig,'load',
+        lambda _:SimpleNamespace(profile_logical_name=PROFILE))
+    monkeypatch.setattr(
+        flow,'observe_flow_account',
+        lambda _page:SimpleNamespace(state='authenticated',identity=ACCOUNT))
+    monkeypatch.setattr(flow,'BrowserStateStore',lambda *args,**kwargs:SimpleNamespace())
+    monkeypatch.setattr(flow,'upload_reference',lambda *args:REFS[0])
+    monkeypatch.setattr(flow,'attach_existing_references',lambda *args:None)
+    monkeypatch.setattr(
+        flow,'verify_reference_composer',
+        lambda *args:{'ordered_reference_ids':[REFS[0]]})
+    monkeypatch.setattr(flow,'story_video_prompt',lambda *args,**kwargs:'prompt')
+    monkeypatch.setattr(
+        flow,'verified_native_submit',
+        lambda *args:{'media_id':REFS[1],'workflow_id':REFS[0],'project_id':PROJECT})
+
+    runtime=SimpleNamespace(flow_profile_config='config',flow_project_id=PROJECT)
+    settings=SimpleNamespace(enabled=True,directory=tmp_path,data=tmp_path/'data')
+    operation=flow.FlowStoryBrowser(settings,runtime)
+    monkeypatch.setattr(operation,'_prepare',lambda _page:{'credits':100,'quoted_cost':8})
+    monkeypatch.setattr(operation,'_current_quote',lambda _page:{'credits':100,'quoted_cost':8})
+    monkeypatch.setattr(operation,'_check_enabled',lambda:None)
+    monkeypatch.setattr(operation,'_wait',lambda *args:None)
+    monkeypatch.setattr(
+        operation,'_download',
+        lambda *args,**kwargs:{'path':str(video),'data':{'highest':False}})
+
+    first=operation.run(
+        'video',req,tmp_path,lambda _:None,
+        authorization=resume_authorization(quoted=7,maximum=14))
+    assert first['state']=='blocked'
+    assert first['reason']=='FLOW_CURRENT_QUOTE_CHANGED'
+    assert not (tmp_path/'flow'/'paid-submit-intent.json').exists()
+    assert events==[]
+
+    second=operation.run(
+        'video',req,tmp_path,lambda _:None,
+        authorization=resume_authorization(quoted=8,maximum=14))
+    assert second['state']=='verified'
+    assert events==['click']
+    assert (tmp_path/'flow'/'paid-submit-intent.json').is_file()

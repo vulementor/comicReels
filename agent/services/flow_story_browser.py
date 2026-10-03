@@ -346,6 +346,9 @@ class _BudgetLedger:
             if row.get('submit_intent_sha256')!=submit_sha:
                 raise ValueError('FLOW_SUBMIT_INTENT_MISMATCH')
             if row.get('state')=='COMMITTED':
+                incoming={k:record[k] for k in ('media_id','workflow_id','project_id')}
+                if row.get('receipt')!=incoming:
+                    raise ValueError('FLOW_BUDGET_COMMITTED_RECEIPT_MISMATCH')
                 return row
             if row.get('state') not in {'RESERVED','UNKNOWN'}:
                 raise ValueError('FLOW_BUDGET_RESERVATION_INVALID')
@@ -530,14 +533,15 @@ class FlowStoryBrowser:
                     if budget_ledger is not None:
                         step='budget_quote'
                         try:
+                            final_auth=observe_flow_account(page)
                             submit_binding=_observed_submit_binding(
-                                budget_contract,profile_config,auth,project,intent)
-                            _bind_submit_intent(
-                                folder/'paid-submit-intent.json',submit_binding)
+                                budget_contract,profile_config,final_auth,project,intent)
                             current_quote=self._current_quote(page)
                             reservation=budget_ledger.reserve(
                                 current_quote['quoted_cost'],current_quote['credits'],
                                 submit_binding)
+                            _bind_submit_intent(
+                                folder/'paid-submit-intent.json',submit_binding)
                         except ValueError as exc:
                             if str(exc)=='FLOW_BUDGET_OUTCOME_UNKNOWN':
                                 return {'state':'uncertain','reason':str(exc)}
