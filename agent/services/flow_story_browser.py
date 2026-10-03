@@ -70,6 +70,12 @@ def _json_sha256(value):
     ).encode()).hexdigest()
 
 
+def _valid_uuid(value):
+    return (isinstance(value,str)
+            and re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+                             value) is not None)
+
+
 def _budget_contract(authorization,req):
     if not isinstance(authorization,dict):
         raise TypeError('FLOW_BUDGET_AUTHORIZATION_REQUIRED')
@@ -94,10 +100,23 @@ def _budget_contract(authorization,req):
         raise ValueError('FLOW_BUDGET_SOURCE_MISMATCH')
     if authorization.get('evidence_sha256')!=req.get('resume_evidence_sha256'):
         raise ValueError('FLOW_BUDGET_EVIDENCE_MISMATCH')
-    for key in ('operation_id','quote_id'):
+
+    for key in ('operation_id','quote_id','aggregate_id','profile_logical_name'):
         value=budget.get(key)
-        if not isinstance(value,str) or not value.strip() or len(value)>200:
+        if (not isinstance(value,str) or not value.strip() or len(value)>200
+                or (key in {'aggregate_id','profile_logical_name'}
+                    and re.fullmatch(r'[A-Za-z0-9_-]{1,128}',value) is None)):
             raise ValueError('FLOW_BUDGET_INVALID')
+    for key in ('aggregate_authorization_sha256','account_identity_sha256'):
+        value=budget.get(key)
+        if not isinstance(value,str) or re.fullmatch(r'[0-9a-f]{64}',value) is None:
+            raise ValueError('FLOW_BUDGET_INVALID')
+    project_id=budget.get('project_id')
+    if (not isinstance(project_id,str)
+            or re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+                            project_id) is None):
+        raise ValueError('FLOW_BUDGET_INVALID')
+
     quoted=budget.get('quoted_cost_credits')
     maximum=budget.get('max_cost_credits')
     if (isinstance(quoted,bool) or isinstance(maximum,bool)
@@ -110,42 +129,165 @@ def _budget_contract(authorization,req):
         'authorization_sha256':_json_sha256(authorization),
         'operation_id':budget['operation_id'],
         'quote_id':budget['quote_id'],
+        'aggregate_id':budget['aggregate_id'],
+        'aggregate_authorization_sha256':budget['aggregate_authorization_sha256'],
+        'profile_logical_name':budget['profile_logical_name'],
+        'account_identity_sha256':budget['account_identity_sha256'],
+        'project_id':project_id,
         'quoted_cost_credits':float(quoted),
         'max_cost_credits':float(maximum),
     }
 
 
+def _budget_ledger_folder(settings,contract):
+    base=getattr(settings,'data',None)
+    if base is None:
+        base=Path(settings.directory)/'data'
+    return Path(base)/'flow-budget-ledgers'/contract['job_id']/contract['aggregate_id']
+
+
+def _validate_observed_owner(contract,profile_config,auth,project_id):
+    if (auth.state!='authenticated' or not isinstance(auth.identity,str)
+            or not auth.identity.strip()):
+        raise ValueError('FLOW_ACCOUNT_IDENTITY_UNVERIFIED')
+    identity_sha=hashlib.sha256(auth.identity.casefold().encode()).hexdigest()
+    if contract['account_identity_sha256']!=identity_sha:
+        raise ValueError('FLOW_ACCOUNT_IDENTITY_MISMATCH')
+    if contract['profile_logical_name']!=profile_config.profile_logical_name:
+        raise ValueError('FLOW_PROFILE_IDENTITY_MISMATCH')
+    if contract['project_id']!=project_id:
+        raise ValueError('FLOW_PROJECT_IDENTITY_MISMATCH')
+    return identity_sha
+
+
+def _observed_submit_binding(contract,profile_config,auth,project_id,native_intent):
+    identity_sha=_validate_observed_owner(contract,profile_config,auth,project_id)
+    if native_intent.get('project_id')!=project_id:
+        raise ValueError('FLOW_PROJECT_IDENTITY_MISMATCH')
+    if native_intent.get('source_sha256')!=contract['source_sha256']:
+        raise ValueError('FLOW_SUBMIT_INTENT_SOURCE_MISMATCH')
+    return {
+        'schema_version':1,
+        'provider':contract['provider'],
+        'action':contract['action'],
+        'currency':contract['currency'],
+        'operation':contract['operation'],
+        'stage':contract['stage'],
+        'operation_id':contract['operation_id'],
+        'aggregate_id':contract['aggregate_id'],
+        'aggregate_authorization_sha256':contract['aggregate_authorization_sha256'],
+        'authorization_sha256':contract['authorization_sha256'],
+        'job_id':contract['job_id'],
+        'source_sha256':contract['source_sha256'],
+        'evidence_sha256':contract['evidence_sha256'],
+        'quote_id':contract['quote_id'],
+        'quoted_cost_credits':contract['quoted_cost_credits'],
+        'max_cost_credits':contract['max_cost_credits'],
+        'profile_logical_name':contract['profile_logical_name'],
+        'account_identity_sha256':identity_sha,
+        'project_id':project_id,
+        'native_intent_sha256':_json_sha256(native_intent),
+    }
+
+
+def _bind_submit_intent(path,binding):
+    path=Path(path)
+    if path.exists():
+        try:
+            current=json.loads(path.read_text(encoding='utf-8'))
+        except (OSError,UnicodeError,ValueError,TypeError,json.JSONDecodeError):
+            raise ValueError('FLOW_SUBMIT_INTENT_INVALID') from None
+        if current!=binding:
+            raise ValueError('FLOW_SUBMIT_INTENT_MISMATCH')
+        return current
+    atomic_json(path,binding)
+    return binding
+
+
 class _BudgetLedger:
+    _STATES=frozenset(('RESERVED','UNKNOWN','COMMITTED'))
+    _SCOPE_KEYS=(
+        'provider','action','currency','job_id','source_sha256',
+        'aggregate_id','aggregate_authorization_sha256','profile_logical_name',
+        'account_identity_sha256','project_id','max_cost_credits')
+    _EXACT_KEYS=(
+        'authorization_sha256','operation','stage','operation_id','evidence_sha256',
+        'quote_id','quoted_cost_credits')
+
     def __init__(self,folder,contract):
         self.folder=Path(folder)
         self.path=self.folder/'budget-ledger.json'
         self.contract=contract
 
+    @staticmethod
+    def _positive_cost(value):
+        return (not isinstance(value,bool) and isinstance(value,(int,float))
+                and math.isfinite(value) and value>0)
+
+    def _validate_scope(self,row,operation_id):
+        if (not isinstance(row,dict) or not isinstance(operation_id,str)
+                or row.get('operation_id')!=operation_id
+                or row.get('state') not in self._STATES):
+            raise ValueError('FLOW_BUDGET_LEDGER_INVALID')
+        if any(row.get(key)!=self.contract.get(key) for key in self._SCOPE_KEYS):
+            raise ValueError('FLOW_BUDGET_RESERVATION_MISMATCH')
+        if (not isinstance(row.get('operation'),str) or not row['operation']
+                or not isinstance(row.get('stage'),str) or not row['stage']
+                or not isinstance(row.get('operation_id'),str) or not row['operation_id']
+                or not isinstance(row.get('evidence_sha256'),str)
+                or re.fullmatch(r'[0-9a-f]{64}',row['evidence_sha256']) is None
+                or not self._positive_cost(row.get('quoted_cost_credits'))
+                or not self._positive_cost(row.get('reserved_cost_credits'))
+                or float(row['quoted_cost_credits'])!=float(row['reserved_cost_credits'])
+                or not isinstance(row.get('quote_id'),str) or not row['quote_id']
+                or not isinstance(row.get('authorization_sha256'),str)
+                or re.fullmatch(r'[0-9a-f]{64}',row['authorization_sha256']) is None
+                or not isinstance(row.get('submit_intent_sha256'),str)
+                or re.fullmatch(r'[0-9a-f]{64}',row['submit_intent_sha256']) is None):
+            raise ValueError('FLOW_BUDGET_LEDGER_INVALID')
+        balance=row.get('balance_before')
+        if isinstance(balance,bool) or not isinstance(balance,int) or balance<0:
+            raise ValueError('FLOW_BUDGET_LEDGER_INVALID')
+        if row['state']=='COMMITTED':
+            spent=row.get('spent_cost_credits')
+            receipt=row.get('receipt')
+            if (not self._positive_cost(spent)
+                    or float(spent)!=float(row['reserved_cost_credits'])
+                    or not isinstance(receipt,dict)
+                    or receipt.get('project_id')!=self.contract['project_id']
+                    or any(not _valid_uuid(receipt.get(key))
+                           for key in ('media_id','workflow_id','project_id'))):
+                raise ValueError('FLOW_BUDGET_LEDGER_INVALID')
+        elif 'spent_cost_credits' in row or 'receipt' in row:
+            raise ValueError('FLOW_BUDGET_LEDGER_INVALID')
+
     def _load(self):
         if not self.path.exists():
             return {'schema_version':1,'currency':'flow_credits','reservations':{}}
-        value=json.loads(self.path.read_text(encoding='utf-8'))
+        try:
+            value=json.loads(self.path.read_text(encoding='utf-8'))
+        except (OSError,UnicodeError,ValueError,TypeError,json.JSONDecodeError):
+            raise ValueError('FLOW_BUDGET_LEDGER_INVALID') from None
         if (not isinstance(value,dict) or value.get('schema_version')!=1
                 or value.get('currency')!='flow_credits'
                 or not isinstance(value.get('reservations'),dict)):
             raise ValueError('FLOW_BUDGET_LEDGER_INVALID')
+        for operation_id,row in value['reservations'].items():
+            self._validate_scope(row,operation_id)
         return value
 
     def _validate_existing(self,row):
-        keys=('authorization_sha256','provider','action','currency','operation','stage',
-              'operation_id','job_id','source_sha256','evidence_sha256','quote_id',
-              'quoted_cost_credits','max_cost_credits')
-        if any(row.get(key)!=self.contract.get(key) for key in keys):
+        self._validate_scope(row,self.contract['operation_id'])
+        if any(row.get(key)!=self.contract.get(key) for key in self._EXACT_KEYS):
             raise ValueError('FLOW_BUDGET_RESERVATION_MISMATCH')
 
-    def reserve(self,current_ui_cost,balance):
-        if (isinstance(current_ui_cost,bool) or not isinstance(current_ui_cost,(int,float))
-                or not math.isfinite(current_ui_cost) or current_ui_cost<=0):
-            raise ValueError('FLOW_CURRENT_QUOTE_INVALID')
-        if float(current_ui_cost)!=self.contract['quoted_cost_credits']:
+    def reserve(self,current_ui_cost,balance,submit_binding):
+        if (not self._positive_cost(current_ui_cost)
+                or float(current_ui_cost)!=self.contract['quoted_cost_credits']):
             raise ValueError('FLOW_CURRENT_QUOTE_CHANGED')
-        if balance<current_ui_cost:
+        if isinstance(balance,bool) or not isinstance(balance,int) or balance<current_ui_cost:
             raise ValueError('NO_FLOW_CREDIT')
+        submit_sha=_json_sha256(submit_binding)
         with runner_lock(self.folder):
             ledger=self._load()
             reservations=ledger['reservations']
@@ -153,20 +295,17 @@ class _BudgetLedger:
             existing=reservations.get(operation_id)
             if existing is not None:
                 self._validate_existing(existing)
+                if existing.get('submit_intent_sha256')!=submit_sha:
+                    raise ValueError('FLOW_SUBMIT_INTENT_MISMATCH')
                 if existing.get('state')=='COMMITTED':
                     return dict(existing,already_committed=True)
-                if existing.get('state') in {'RESERVED','UNKNOWN'}:
-                    raise ValueError('FLOW_BUDGET_OUTCOME_UNKNOWN')
-                raise ValueError('FLOW_BUDGET_RESERVATION_INVALID')
-            counted=sum(float(row.get('reserved_cost_credits') or 0)
-                        for row in reservations.values()
-                        if isinstance(row,dict)
-                        and row.get('state') in {'RESERVED','UNKNOWN','COMMITTED'})
+                raise ValueError('FLOW_BUDGET_OUTCOME_UNKNOWN')
+            counted=sum(float(row['reserved_cost_credits']) for row in reservations.values())
             if counted+float(current_ui_cost)>self.contract['max_cost_credits']:
                 raise ValueError('FLOW_BUDGET_CAP_EXCEEDED')
             row={**self.contract,'state':'RESERVED',
                  'reserved_cost_credits':float(current_ui_cost),
-                 'balance_before':int(balance)}
+                 'balance_before':balance,'submit_intent_sha256':submit_sha}
             reservations[operation_id]=row
             atomic_json(self.path,ledger)
             return row
@@ -182,30 +321,44 @@ class _BudgetLedger:
                 row['state']='UNKNOWN'
                 atomic_json(self.path,ledger)
 
-    def commit(self,receipt):
+    @staticmethod
+    def _validate_story_record(record,submit_binding):
+        if (not isinstance(record,dict)
+                or record.get('state') not in {'PROCESSING','COMPLETED'}
+                or not isinstance(record.get('intent'),dict)
+                or _json_sha256(record['intent'])!=submit_binding['native_intent_sha256']
+                or record['intent'].get('project_id')!=submit_binding['project_id']
+                or record['intent'].get('source_sha256')!=submit_binding['source_sha256']
+                or any(not _valid_uuid(record.get(key))
+                       for key in ('media_id','workflow_id','project_id'))
+                or record.get('project_id')!=submit_binding['project_id']):
+            raise ValueError('FLOW_BUDGET_SUBMIT_RECEIPT_INVALID')
+
+    def commit(self,record,submit_binding):
+        self._validate_story_record(record,submit_binding)
+        submit_sha=_json_sha256(submit_binding)
         with runner_lock(self.folder):
             ledger=self._load()
             row=ledger['reservations'].get(self.contract['operation_id'])
             if row is None:
                 raise ValueError('FLOW_BUDGET_RESERVATION_MISSING')
             self._validate_existing(row)
+            if row.get('submit_intent_sha256')!=submit_sha:
+                raise ValueError('FLOW_SUBMIT_INTENT_MISMATCH')
             if row.get('state')=='COMMITTED':
                 return row
             if row.get('state') not in {'RESERVED','UNKNOWN'}:
                 raise ValueError('FLOW_BUDGET_RESERVATION_INVALID')
             row['state']='COMMITTED'
             row['spent_cost_credits']=row['reserved_cost_credits']
-            row['receipt']={k:receipt[k] for k in ('media_id','workflow_id','project_id')}
+            row['receipt']={k:record[k] for k in ('media_id','workflow_id','project_id')}
             atomic_json(self.path,ledger)
             return row
 
-    def reconcile_known_submit(self,record):
+    def reconcile_known_submit(self,record,submit_binding):
         if not self.path.exists():
             raise ValueError('FLOW_BUDGET_LEDGER_MISSING')
-        required=('media_id','workflow_id','project_id')
-        if any(not isinstance(record.get(k),str) or not record[k] for k in required):
-            raise ValueError('FLOW_BUDGET_SUBMIT_RECEIPT_INVALID')
-        return self.commit(record)
+        return self.commit(record,submit_binding)
 
 
 class FlowStoryBrowser:
@@ -296,27 +449,44 @@ class FlowStoryBrowser:
         folder.mkdir(exist_ok=True)
         story=StoryReceipt(folder/'story-receipt.json')
         budget_contract=_budget_contract(authorization,req) if authorization is not None else None
-        budget_ledger=_BudgetLedger(folder,budget_contract) if budget_contract is not None else None
+        budget_ledger=(_BudgetLedger(_budget_ledger_folder(self.settings,budget_contract),
+                                    budget_contract)
+                       if budget_contract is not None else None)
         budget_reserved=False
         budget_committed=False
+        submit_binding=None
         step='open'
-        provider=FlowBrowserSessionProvider(FlowProfileConfig.load(Path(self.runtime.flow_profile_config)),
-                                            auth_probe=observe_flow_account, visible=False).open()
+        profile_config=FlowProfileConfig.load(Path(self.runtime.flow_profile_config))
+        provider=FlowBrowserSessionProvider(
+            profile_config,auth_probe=observe_flow_account,visible=False).open()
         try:
             page=provider.session.page
             project=self.runtime.flow_project_id
             page.goto('https://flow.google.com/project/'+project,wait_until='domcontentloaded',timeout=60000)
             page.get_by_role('button',name='Thông tin về tài khoản',exact=True).wait_for(state='visible',timeout=30000)
-            if observe_flow_account(page).state!='authenticated':
+            auth=observe_flow_account(page)
+            if auth.state!='authenticated':
                 return {'state':'blocked','not_submitted':True,'reason':'FLOW_AUTH_REQUIRED'}
+            if budget_contract is not None:
+                try:
+                    _validate_observed_owner(budget_contract,profile_config,auth,project)
+                except ValueError as exc:
+                    return {'state':'blocked','not_submitted':True,'reason':str(exc)}
             if name=='video':
                 if story.path.exists():
                     record=story.load()
                     if record['state'] not in {'PROCESSING','COMPLETED'}:
                         return {'state':'uncertain','reason':'PAID_SUBMIT_NOT_BOUND'}
                     if budget_ledger is not None:
-                        budget_ledger.reconcile_known_submit(record)
-                        budget_committed=True
+                        try:
+                            submit_binding=_observed_submit_binding(
+                                budget_contract,profile_config,auth,project,record['intent'])
+                            _bind_submit_intent(
+                                folder/'paid-submit-intent.json',submit_binding)
+                            budget_ledger.reconcile_known_submit(record,submit_binding)
+                            budget_committed=True
+                        except (KeyError,TypeError,ValueError) as exc:
+                            return {'state':'uncertain','reason':str(exc)}
                 elif reconcile:
                     return {'state':'uncertain','reason':'FLOW_PREPARATION_INCOMPLETE'}
                 else:
@@ -360,9 +530,14 @@ class FlowStoryBrowser:
                     if budget_ledger is not None:
                         step='budget_quote'
                         try:
+                            submit_binding=_observed_submit_binding(
+                                budget_contract,profile_config,auth,project,intent)
+                            _bind_submit_intent(
+                                folder/'paid-submit-intent.json',submit_binding)
                             current_quote=self._current_quote(page)
                             reservation=budget_ledger.reserve(
-                                current_quote['quoted_cost'],current_quote['credits'])
+                                current_quote['quoted_cost'],current_quote['credits'],
+                                submit_binding)
                         except ValueError as exc:
                             if str(exc)=='FLOW_BUDGET_OUTCOME_UNKNOWN':
                                 return {'state':'uncertain','reason':str(exc)}
@@ -379,10 +554,11 @@ class FlowStoryBrowser:
                         if budget_ledger is not None and budget_reserved:
                             budget_ledger.mark_unknown()
                         raise RuntimeError('NATIVE_SUBMIT_UNCONFIRMED')
-                    receipt=verified_native_submit(response.body().decode('utf-8'),response.request.post_data,intent)
+                    receipt=verified_native_submit(
+                        response.body().decode('utf-8'),response.request.post_data,intent)
                     record=story.submitted(receipt)
                     if budget_ledger is not None:
-                        budget_ledger.commit(receipt)
+                        budget_ledger.commit(record,submit_binding)
                         budget_committed=True
                     progress(receipt)
                 self._wait(page,record)
