@@ -758,9 +758,11 @@ class FlowStoryBrowser:
         duration=record['intent']['duration_s']
         folder=Path(folder)
         folder.mkdir(parents=True,exist_ok=True)
+        folder=folder.resolve(strict=True)
         stem='highest' if highest else 'original'
         receipt_path=folder/(stem+'-download.json')
         final=folder/(stem+'.mp4')
+        part=folder/(stem+'.part.mp4')
         resolution=720 if highest else 360
         if receipt_path.exists():
             try:
@@ -770,20 +772,48 @@ class FlowStoryBrowser:
             data=receipt.get('data')
             selected=data.get('selected_resolution') if isinstance(data,dict) else None
             match=re.match(r'^(\d+)p(?:\s|$)',selected or '')
-            if (receipt.get('state')!='COMPLETED'
+            state=receipt.get('state')
+            receipt_artifact=receipt.get('artifact')
+            if (state not in {'BYTES_VALIDATED','COMPLETED'}
                     or any(receipt.get(k)!=record[k] for k in required)
-                    or not final.is_file()
-                    or artifact(final)!=receipt.get('artifact')
+                    or not isinstance(receipt_artifact,dict)
+                    or not isinstance(receipt_artifact.get('path'),str)
+                    or not isinstance(receipt_artifact.get('sha256'),str)
                     or not isinstance(data,dict)
                     or data.get('highest') is not highest
                     or match is None or int(match.group(1))!=resolution):
                 raise ValueError('RECOVERY_DOWNLOAD_RECEIPT_INVALID')
-            media=validate_media(final,tool_root=self.settings.directory)
+            expected_artifact_path=part if state=='BYTES_VALIDATED' else final
+            if Path(receipt_artifact['path']).resolve(strict=False)!=expected_artifact_path:
+                raise ValueError('RECOVERY_DOWNLOAD_RECEIPT_INVALID')
+            if state=='COMPLETED':
+                if (not final.is_file()
+                        or artifact(final)!=receipt_artifact):
+                    raise ValueError('RECOVERY_DOWNLOAD_RECEIPT_INVALID')
+                candidate=final
+            else:
+                if final.exists() and part.exists():
+                    raise ValueError('RECOVERY_DOWNLOAD_FINAL_CONFLICT')
+                candidate=final if final.exists() else part
+                if (not candidate.is_file()
+                        or artifact(candidate)['sha256']!=receipt_artifact['sha256']):
+                    raise ValueError('RECOVERY_DOWNLOAD_BYTES_CHANGED')
+            media=validate_media(candidate,tool_root=self.settings.directory)
             if (media.get('width')!=resolution
                     or abs(float(media.get('duration_s',-1))-duration)>.1
                     or data.get('width')!=media.get('width')
                     or data.get('duration_s')!=media.get('duration_s')):
                 raise ValueError('RECOVERY_DOWNLOAD_MEDIA_MISMATCH')
+            if state=='BYTES_VALIDATED':
+                if candidate==part:
+                    if final.exists():
+                        raise ValueError('RECOVERY_DOWNLOAD_FINAL_CONFLICT')
+                    try:
+                        part.rename(final)
+                    except FileExistsError:
+                        raise ValueError('RECOVERY_DOWNLOAD_FINAL_CONFLICT') from None
+                receipt.update(state='COMPLETED',artifact=artifact(final))
+                atomic_json(receipt_path,receipt)
             return {'path':str(final),'data':data}
         provider=FlowBrowserSessionProvider(
             FlowProfileConfig.load(Path(self.runtime.flow_profile_config)),

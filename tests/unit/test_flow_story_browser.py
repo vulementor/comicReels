@@ -1095,3 +1095,115 @@ def test_corrupt_cached_recovery_receipt_blocks_before_provider(
         SimpleNamespace(flow_project_id=PROJECT,flow_profile_config='config'))
     with pytest.raises(ValueError,match='RECOVERY_DOWNLOAD_RECEIPT_INVALID'):
         operation.download_existing(story_record(),folder,highest=True)
+
+
+def _bytes_validated_recovery_fixture(flow,folder,record,*,duration=10):
+    part=folder/'highest.part.mp4'
+    part.write_bytes(b'validated-recovery-bytes')
+    receipt={
+        'state':'BYTES_VALIDATED',
+        **{key:record[key] for key in ('media_id','project_id','workflow_id')},
+        'artifact':flow.artifact(part),
+        'data':{
+            'selected_resolution':'720p existing Flow derivative',
+            'observed_options':['720p existing Flow derivative'],
+            'highest':True,'width':720,'duration_s':float(duration),
+        },
+    }
+    receipt_path=folder/'highest-download.json'
+    receipt_path.write_text(json.dumps(receipt),encoding='utf-8')
+    return part,receipt_path,receipt
+
+
+@pytest.mark.parametrize('after_rename',[False,True])
+def test_download_existing_recovers_bytes_validated_crash_without_provider(
+        tmp_path,monkeypatch,after_rename):
+    from types import SimpleNamespace
+
+    from agent.services import flow_story_browser as flow
+
+    record=story_record(intent=story_intent()|{'duration_s':6})
+    folder=tmp_path/'recovery';folder.mkdir()
+    part,receipt_path,original=_bytes_validated_recovery_fixture(
+        flow,folder,record,duration=6)
+    final=folder/'highest.mp4'
+    if after_rename:
+        part.replace(final)
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:pytest.fail('provider must not open'))
+    monkeypatch.setattr(
+        flow,'validate_media',
+        lambda path,**_kwargs:{
+            'width':720,'duration_s':6.0,
+            'observed_path':str(path)})
+    operation=flow.FlowStoryBrowser(
+        SimpleNamespace(directory=tmp_path),
+        SimpleNamespace(flow_project_id=PROJECT,flow_profile_config='config'))
+
+    result=operation.download_existing(record,folder,highest=True)
+    assert Path(result['path'])==final
+    assert final.read_bytes()==b'validated-recovery-bytes'
+    assert not part.exists()
+    completed=json.loads(receipt_path.read_text(encoding='utf-8'))
+    assert completed['state']=='COMPLETED'
+    assert completed['artifact']==flow.artifact(final)
+    assert completed['data']==original['data']
+
+    before_bytes=final.read_bytes()
+    before_receipt=receipt_path.read_bytes()
+    replay=operation.download_existing(record,folder,highest=True)
+    assert Path(replay['path'])==final
+    assert final.read_bytes()==before_bytes
+    assert receipt_path.read_bytes()==before_receipt
+
+
+@pytest.mark.parametrize('kind',[
+    'wrong_id','wrong_hash','wrong_path','wrong_duration','final_conflict',
+])
+def test_bytes_validated_recovery_mismatch_blocks_without_provider_or_overwrite(
+        tmp_path,monkeypatch,kind):
+    from types import SimpleNamespace
+
+    from agent.services import flow_story_browser as flow
+
+    record=story_record(intent=story_intent()|{'duration_s':8})
+    folder=tmp_path/'recovery';folder.mkdir()
+    part,receipt_path,receipt=_bytes_validated_recovery_fixture(
+        flow,folder,record,duration=8)
+    final=folder/'highest.mp4'
+    if kind=='wrong_id':
+        receipt['media_id']='22222222-aaaa-bbbb-cccc-dddddddddddd'
+    elif kind=='wrong_hash':
+        receipt['artifact']['sha256']='0'*64
+    elif kind=='wrong_path':
+        receipt['artifact']['path']=str(tmp_path/'outside.mp4')
+    elif kind=='wrong_duration':
+        receipt['data']['duration_s']=6.0
+    elif kind=='final_conflict':
+        final.write_bytes(b'conflicting-final')
+    receipt_path.write_text(json.dumps(receipt),encoding='utf-8')
+    part_before=part.read_bytes()
+    final_before=final.read_bytes() if final.exists() else None
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:pytest.fail('provider must not open'))
+    monkeypatch.setattr(
+        flow,'validate_media',
+        lambda *_args,**_kwargs:{'width':720,'duration_s':8.0})
+    operation=flow.FlowStoryBrowser(
+        SimpleNamespace(directory=tmp_path),
+        SimpleNamespace(flow_project_id=PROJECT,flow_profile_config='config'))
+
+    expected=(
+        'RECOVERY_DOWNLOAD_FINAL_CONFLICT' if kind=='final_conflict'
+        else 'RECOVERY_DOWNLOAD_MEDIA_MISMATCH' if kind=='wrong_duration'
+        else 'RECOVERY_DOWNLOAD_RECEIPT_INVALID' if kind in {'wrong_id','wrong_path'}
+        else 'RECOVERY_DOWNLOAD_BYTES_CHANGED')
+    with pytest.raises(ValueError,match=expected):
+        operation.download_existing(record,folder,highest=True)
+    assert part.read_bytes()==part_before
+    if final_before is None:
+        assert not final.exists()
+    else:
+        assert final.read_bytes()==final_before
