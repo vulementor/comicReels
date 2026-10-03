@@ -45,9 +45,74 @@ class ProductionPaused(RuntimeError):
     pass
 
 
+_VIDEO_CREDITS={4:4,6:5,8:6,10:7}
+_VIDEO_MODEL='Omni 1.1 Flash'
+_VIDEO_RESOLUTION='360p'
+_VIDEO_OUTPUTS=1
+_VIDEO_VARIANT_LABEL='x1'
+
+
+def _generation_contract(generation,budget_contract=None):
+    if generation is None:
+        generation={
+            'duration_s':10,'model':_VIDEO_MODEL,'resolution':_VIDEO_RESOLUTION,
+            'outputs_per_request':_VIDEO_OUTPUTS,'variants':1,
+            'variant_label':_VIDEO_VARIANT_LABEL,
+            'quoted_cost_credits':(
+                budget_contract.get('quoted_cost_credits')
+                if isinstance(budget_contract,dict) else None),
+            'currency':'flow_credits',
+            'quote_id':(
+                budget_contract.get('quote_id')
+                if isinstance(budget_contract,dict) else None),
+        }
+    if not isinstance(generation,dict):
+        raise TypeError('FLOW_GENERATION_CONTRACT_INVALID')
+    duration=generation.get('duration_s')
+    cost=generation.get('quoted_cost_credits')
+    if (duration not in _VIDEO_CREDITS
+            or generation.get('model')!=_VIDEO_MODEL
+            or generation.get('resolution')!=_VIDEO_RESOLUTION
+            or generation.get('outputs_per_request')!=_VIDEO_OUTPUTS
+            or generation.get('variants')!=1
+            or generation.get('variant_label')!=_VIDEO_VARIANT_LABEL
+            or generation.get('currency')!='flow_credits'):
+        raise ValueError('FLOW_GENERATION_CONTRACT_INVALID')
+    if (cost is not None
+            and (isinstance(cost,bool) or not isinstance(cost,(int,float))
+                 or not math.isfinite(float(cost))
+                 or float(cost)!=float(_VIDEO_CREDITS[duration]))):
+        raise ValueError('FLOW_GENERATION_QUOTE_INVALID')
+    quote_id=generation.get('quote_id')
+    if quote_id is not None and (
+            not isinstance(quote_id,str) or not quote_id.strip() or len(quote_id)>200):
+        raise ValueError('FLOW_GENERATION_QUOTE_INVALID')
+    if (budget_contract is not None
+            and (float(_VIDEO_CREDITS[duration])!=budget_contract['quoted_cost_credits']
+                 or quote_id!=budget_contract['quote_id'])):
+        raise ValueError('FLOW_GENERATION_BUDGET_MISMATCH')
+    return {
+        'duration_s':duration,'model':_VIDEO_MODEL,'resolution':_VIDEO_RESOLUTION,
+        'outputs_per_request':_VIDEO_OUTPUTS,'variants':1,
+        'variant_label':_VIDEO_VARIANT_LABEL,
+        'quoted_cost_credits':(
+            float(_VIDEO_CREDITS[duration]) if cost is not None else None),
+        'currency':'flow_credits','quote_id':quote_id,
+    }
+
+
 def verified_native_submit(body, post_data, intent):
+    duration=intent.get('duration_s')
+    if (duration not in _VIDEO_CREDITS
+            or intent.get('model')!=_VIDEO_MODEL
+            or intent.get('resolution')!=_VIDEO_RESOLUTION
+            or intent.get('variants')!=1
+            or intent.get('outputs_per_request',1)!=_VIDEO_OUTPUTS
+            or intent.get('variant_label',_VIDEO_VARIANT_LABEL)!=_VIDEO_VARIANT_LABEL):
+        raise ValueError('NATIVE_INTENT_INVALID')
+    expected_model=f'abra_r2v_{duration}s_360p'
     request = json.loads(json.loads(parse_qs(post_data)['f.req'][0])[0][0][1])
-    if (len(request[0]) != 1 or request[0][0][2] != 'abra_r2v_10s_360p'
+    if (len(request[0]) != 1 or request[0][0][2] != expected_model
             or request[0][0][3] != fb.VIDEO_ASPECT_PORTRAIT
             or request[1][5] != intent['project_id']
             or normalized_prompt(request[0][0][0][2][0][0][0]) != normalized_prompt(intent['prompt'])
@@ -398,7 +463,8 @@ class FlowStoryBrowser:
             page.wait_for_timeout(5000)
         raise TimeoutError('NATIVE_GENERATION_PENDING')
 
-    def _prepare(self,page):
+    def _prepare(self,page,generation=None):
+        generation=_generation_contract(generation)
         page.get_by_role('button',name='Thông tin về tài khoản',exact=True).press('Enter')
         credit=page.get_by_role('dialog',name='Cài đặt tài khoản',exact=True).get_by_role(
             'link',name=re.compile(r'^\d+ tín dụng Google Flow$'))
@@ -407,22 +473,36 @@ class FlowStoryBrowser:
         page.get_by_role('button',name='Đóng bảng điều khiển tài khoản',exact=True).press('Enter')
         trigger=page.get_by_role('button',name='Điều kiện kích hoạt cài đặt',exact=True)
         trigger.press('Enter')
-        for label in ('Video','Thành phần','9:16','360p 360p tạo nhanh hơn ở độ phân giải thấp hơn','10 giây','x1'):
+        labels=(
+            'Video','Thành phần','9:16',
+            '360p 360p tạo nhanh hơn ở độ phân giải thấp hơn',
+            f"{generation['duration_s']} giây",_VIDEO_VARIANT_LABEL)
+        for label in labels:
             radio=page.get_by_role('radio',name=label,exact=True)
             if not radio.is_checked():
                 radio.press('Space')
             if not radio.is_checked():
                 raise ValueError('FLOW_PRESET_UNVERIFIED')
-        if model_label(page.get_by_role('button',name='Chọn nhóm mô hình',exact=True).inner_text())!='Omni 1.1 Flash':
+        if model_label(page.get_by_role(
+                'button',name='Chọn nhóm mô hình',exact=True).inner_text())!=_VIDEO_MODEL:
             raise ValueError('FLOW_MODEL_CHANGED')
         quote=page.get_by_role('link',name=re.compile(r'^\d+ tín dụng$'))
         cost=int(quote.inner_text().split()[0])
+        if generation['quoted_cost_credits'] is not None and (
+                float(cost)!=generation['quoted_cost_credits']):
+            raise ValueError('FLOW_CURRENT_QUOTE_CHANGED')
         if balance<cost:
             raise ValueError('NO_FLOW_CREDIT')
         page.keyboard.press('Escape')
-        return {'credits':balance,'quoted_cost':cost}
+        return {
+            'credits':balance,'quoted_cost':cost,
+            'duration_s':generation['duration_s'],
+            'model':generation['model'],'resolution':generation['resolution'],
+            'variants':generation['variants'],
+        }
 
-    def _current_quote(self,page):
+    def _current_quote(self,page,generation=None):
+        generation=_generation_contract(generation)
         page.get_by_role('button',name='Thông tin về tài khoản',exact=True).press('Enter')
         credit=page.get_by_role('dialog',name='Cài đặt tài khoản',exact=True).get_by_role(
             'link',name=re.compile(r'^\d+ tín dụng Google Flow$'))
@@ -431,27 +511,47 @@ class FlowStoryBrowser:
         page.get_by_role('button',name='Đóng bảng điều khiển tài khoản',exact=True).press('Enter')
         trigger=page.get_by_role('button',name='Điều kiện kích hoạt cài đặt',exact=True)
         trigger.press('Enter')
-        for label in ('Video','Thành phần','9:16',
-                      '360p 360p tạo nhanh hơn ở độ phân giải thấp hơn','10 giây','x1'):
+        labels=(
+            'Video','Thành phần','9:16',
+            '360p 360p tạo nhanh hơn ở độ phân giải thấp hơn',
+            f"{generation['duration_s']} giây",_VIDEO_VARIANT_LABEL)
+        for label in labels:
             if not page.get_by_role('radio',name=label,exact=True).is_checked():
                 raise ValueError('FLOW_PRESET_CHANGED')
         if model_label(page.get_by_role(
-                'button',name='Chọn nhóm mô hình',exact=True).inner_text())!='Omni 1.1 Flash':
+                'button',name='Chọn nhóm mô hình',exact=True).inner_text())!=_VIDEO_MODEL:
             raise ValueError('FLOW_MODEL_CHANGED')
         quote=page.get_by_role('link',name=re.compile(r'^\d+ tín dụng$'))
         cost=int(quote.inner_text().split()[0])
         page.keyboard.press('Escape')
         if cost<=0:
             raise ValueError('FLOW_CURRENT_QUOTE_INVALID')
+        if generation['quoted_cost_credits'] is not None and (
+                float(cost)!=generation['quoted_cost_credits']):
+            raise ValueError('FLOW_CURRENT_QUOTE_CHANGED')
         if balance<cost:
             raise ValueError('NO_FLOW_CREDIT')
-        return {'credits':balance,'quoted_cost':cost}
+        return {
+            'credits':balance,'quoted_cost':cost,
+            'duration_s':generation['duration_s'],
+            'model':generation['model'],'resolution':generation['resolution'],
+            'variants':generation['variants'],
+        }
 
-    def run(self,name,req,directory,progress,*,reconcile=False,authorization=None):
+    def run(
+            self,name,req,directory,progress,*,reconcile=False,
+            authorization=None,generation=None):
         folder=directory/'flow'
         folder.mkdir(exist_ok=True)
         story=StoryReceipt(folder/'story-receipt.json')
         budget_contract=_budget_contract(authorization,req) if authorization is not None else None
+        try:
+            generation_contract=_generation_contract(generation,budget_contract)
+        except (TypeError,ValueError) as exc:
+            return {
+                'state':'blocked','not_submitted':True,
+                'reason':str(exc) or 'FLOW_GENERATION_CONTRACT_INVALID',
+            }
         budget_ledger=(_BudgetLedger(_budget_ledger_folder(self.settings,budget_contract),
                                     budget_contract)
                        if budget_contract is not None else None)
@@ -495,9 +595,11 @@ class FlowStoryBrowser:
                 else:
                     step='settings'
                     try:
-                        readiness=self._prepare(page)
+                        readiness=self._prepare(page,generation_contract)
                     except ValueError as exc:
-                        if str(exc) in {'NO_FLOW_CREDIT','FLOW_MODEL_CHANGED','FLOW_PRESET_UNVERIFIED'}:
+                        if str(exc) in {
+                                'NO_FLOW_CREDIT','FLOW_MODEL_CHANGED',
+                                'FLOW_PRESET_UNVERIFIED','FLOW_CURRENT_QUOTE_CHANGED'}:
                             return {'state':'blocked','not_submitted':True,'reason':str(exc)}
                         raise
                     atomic_json(folder/'readiness.json',readiness)
@@ -526,9 +628,16 @@ class FlowStoryBrowser:
                     step='verify_composer'
                     progress({'preparation_step':step})
                     verified=verify_reference_composer(page,project,refs,prompt)
-                    intent={'source_sha256':req['source_sha256'],'project_id':project,
-                        'ordered_reference_ids':verified['ordered_reference_ids'],'prompt':prompt,
-                        'duration_s':10,'aspect':'9:16','resolution':'360p','model':'Omni 1.1 Flash','variants':1}
+                    intent={
+                        'source_sha256':req['source_sha256'],'project_id':project,
+                        'ordered_reference_ids':verified['ordered_reference_ids'],
+                        'prompt':prompt,
+                        'duration_s':generation_contract['duration_s'],
+                        'aspect':'9:16',
+                        'resolution':generation_contract['resolution'],
+                        'model':generation_contract['model'],
+                        'variants':generation_contract['variants'],
+                    }
                     self._check_enabled()
                     if budget_ledger is not None:
                         step='budget_quote'
@@ -536,7 +645,13 @@ class FlowStoryBrowser:
                             final_auth=observe_flow_account(page)
                             submit_binding=_observed_submit_binding(
                                 budget_contract,profile_config,final_auth,project,intent)
-                            current_quote=self._current_quote(page)
+                            current_quote=self._current_quote(
+                                page,generation_contract)
+                            current_auth=observe_flow_account(page)
+                            current_binding=_observed_submit_binding(
+                                budget_contract,profile_config,current_auth,project,intent)
+                            if current_binding!=submit_binding:
+                                raise ValueError('FLOW_CURRENT_ACTOR_CHANGED')
                             reservation=budget_ledger.reserve(
                                 current_quote['quoted_cost'],current_quote['credits'],
                                 submit_binding)
@@ -721,7 +836,11 @@ class FlowStoryBrowser:
     def _promote_download(self,part,final,receipt_path,record,selected,labels,highest):
         media=validate_media(part,tool_root=self.settings.directory)
         wanted=int(re.match(r'\d+',selected)[0])
-        if media['width']!=wanted or abs(media['duration_s']-10)>.1:
+        intent=record.get('intent')
+        duration=intent.get('duration_s') if isinstance(intent,dict) else None
+        if duration not in _VIDEO_CREDITS:
+            raise ValueError('DOWNLOAD_INTENT_DURATION_INVALID')
+        if media['width']!=wanted or abs(media['duration_s']-duration)>.1:
             raise ValueError('DOWNLOAD_MEDIA_MISMATCH')
         data={'selected_resolution':selected,'observed_options':labels,'highest':highest,**media}
         receipt={'state':'BYTES_VALIDATED',**{k:record[k] for k in ('media_id','project_id','workflow_id')},

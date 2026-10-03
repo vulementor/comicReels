@@ -24,10 +24,16 @@ def test_observed_model_dropdown_icon_is_not_a_model_change():
     assert model_label('Omni 1.1 Flash 2\narrow_drop_down')!='Omni 1.1 Flash'
 
 
-def native(*,mutate=None,records=1):
-    intent={'project_id':PROJECT,'prompt':'MỘT câu chuyện.','ordered_reference_ids':REFS}
-    envelope=json.loads(fb.omni_reference_video_request(intent['prompt'],PROJECT,REFS,
-                duration_s=10,resolution='360p',aspect=fb.VIDEO_ASPECT_PORTRAIT))
+def native(*,duration=10,mutate=None,records=1):
+    intent={
+        'project_id':PROJECT,'prompt':'synthetic-story-prompt',
+        'ordered_reference_ids':REFS,'duration_s':duration,
+        'model':'Omni 1.1 Flash','resolution':'360p',
+        'outputs_per_request':1,'variants':1,'variant_label':'x1',
+    }
+    envelope=json.loads(fb.omni_reference_video_request(
+        intent['prompt'],PROJECT,REFS,duration_s=duration,
+        resolution='360p',aspect=fb.VIDEO_ASPECT_PORTRAIT))
     inner=json.loads(envelope[0][0][1])
     if mutate: mutate(inner)
     envelope[0][0][1]=json.dumps(inner)
@@ -37,8 +43,9 @@ def native(*,mutate=None,records=1):
     return body,urlencode({'f.req':json.dumps(envelope)}),intent
 
 
-def test_exact_native_one_story_receipt():
-    assert verified_native_submit(*native())['project_id']==PROJECT
+@pytest.mark.parametrize('duration',[4,6,8,10])
+def test_exact_native_one_story_receipt(duration):
+    assert verified_native_submit(*native(duration=duration))['project_id']==PROJECT
 
 
 @pytest.mark.parametrize('mutate',[
@@ -163,6 +170,16 @@ def resume_authorization(
             'quoted_cost_credits':quoted,
             'max_cost_credits':maximum,
         },
+    }
+
+
+def generation(duration,*,operation_id='flow-op-1'):
+    costs={4:4,6:5,8:6,10:7}
+    return {
+        'duration_s':duration,'model':'Omni 1.1 Flash','resolution':'360p',
+        'outputs_per_request':1,'variants':1,'variant_label':'x1',
+        'quoted_cost_credits':costs[duration],'currency':'flow_credits',
+        'quote_id':'flow-quote-current-'+operation_id,
     }
 
 
@@ -369,8 +386,8 @@ def test_authorized_run_reserves_budget_before_native_submit_click(tmp_path,monk
     runtime=SimpleNamespace(flow_profile_config='config',flow_project_id=PROJECT)
     settings=SimpleNamespace(enabled=True,directory=tmp_path,data=tmp_path/'data')
     operation=flow.FlowStoryBrowser(settings,runtime)
-    monkeypatch.setattr(operation,'_prepare',lambda _page:{'credits':100,'quoted_cost':7})
-    monkeypatch.setattr(operation,'_current_quote',lambda _page:{'credits':100,'quoted_cost':7})
+    monkeypatch.setattr(operation,'_prepare',lambda _page,_generation:{'credits':100,'quoted_cost':7})
+    monkeypatch.setattr(operation,'_current_quote',lambda _page,_generation:{'credits':100,'quoted_cost':7})
     monkeypatch.setattr(operation,'_check_enabled',lambda:None)
     monkeypatch.setattr(operation,'_wait',lambda *args:None)
     monkeypatch.setattr(operation,'_download',
@@ -585,9 +602,9 @@ def test_account_change_before_submit_blocks_without_reservation_or_click(tmp_pa
     runtime=SimpleNamespace(flow_profile_config='config',flow_project_id=PROJECT)
     settings=SimpleNamespace(enabled=True,directory=tmp_path,data=tmp_path/'data')
     operation=flow.FlowStoryBrowser(settings,runtime)
-    monkeypatch.setattr(operation,'_prepare',lambda _page:{'credits':100,'quoted_cost':7})
+    monkeypatch.setattr(operation,'_prepare',lambda _page,_generation:{'credits':100,'quoted_cost':7})
     monkeypatch.setattr(operation,'_current_quote',
-                        lambda _page:pytest.fail('quote must not be read after account mismatch'))
+                        lambda _page,_generation:pytest.fail('quote must not be read after account mismatch'))
     monkeypatch.setattr(operation,'_check_enabled',lambda:None)
 
     result=operation.run('video',req,tmp_path,lambda _:None,authorization=auth)
@@ -654,8 +671,14 @@ def test_rejected_quote_does_not_leave_stale_submit_intent(tmp_path,monkeypatch)
     runtime=SimpleNamespace(flow_profile_config='config',flow_project_id=PROJECT)
     settings=SimpleNamespace(enabled=True,directory=tmp_path,data=tmp_path/'data')
     operation=flow.FlowStoryBrowser(settings,runtime)
-    monkeypatch.setattr(operation,'_prepare',lambda _page:{'credits':100,'quoted_cost':8})
-    monkeypatch.setattr(operation,'_current_quote',lambda _page:{'credits':100,'quoted_cost':8})
+    monkeypatch.setattr(
+        operation,'_prepare',
+        lambda _page,_generation:{'credits':100,'quoted_cost':7})
+    quotes=iter((8,7))
+    monkeypatch.setattr(
+        operation,'_current_quote',
+        lambda _page,_generation:{
+            'credits':100,'quoted_cost':next(quotes)})
     monkeypatch.setattr(operation,'_check_enabled',lambda:None)
     monkeypatch.setattr(operation,'_wait',lambda *args:None)
     monkeypatch.setattr(
@@ -672,7 +695,299 @@ def test_rejected_quote_does_not_leave_stale_submit_intent(tmp_path,monkeypatch)
 
     second=operation.run(
         'video',req,tmp_path,lambda _:None,
-        authorization=resume_authorization(quoted=8,maximum=14))
+        authorization=resume_authorization(quoted=7,maximum=14))
     assert second['state']=='verified'
     assert events==['click']
     assert (tmp_path/'flow'/'paid-submit-intent.json').is_file()
+
+
+def test_generation_contract_binds_observed_mixed_duration_prices():
+    from agent.services.flow_story_browser import _generation_contract
+
+    for duration,cost in ((4,4),(6,5),(8,6),(10,7)):
+        value=_generation_contract(generation(duration))
+        assert value['duration_s']==duration
+        assert value['quoted_cost_credits']==float(cost)
+        assert value['model']=='Omni 1.1 Flash'
+        assert value['resolution']=='360p'
+        assert value['outputs_per_request']==1
+        assert value['variants']==1
+        assert value['variant_label']=='x1'
+
+
+@pytest.mark.parametrize(('field','value','reason'),[
+    ('duration_s',5,'FLOW_GENERATION_CONTRACT_INVALID'),
+    ('model','other','FLOW_GENERATION_CONTRACT_INVALID'),
+    ('resolution','720p','FLOW_GENERATION_CONTRACT_INVALID'),
+    ('outputs_per_request',2,'FLOW_GENERATION_CONTRACT_INVALID'),
+    ('variants',2,'FLOW_GENERATION_CONTRACT_INVALID'),
+    ('quoted_cost_credits',99,'FLOW_GENERATION_QUOTE_INVALID'),
+])
+def test_generation_contract_rejects_unsupported_or_mismatched_values(
+        field,value,reason):
+    from agent.services.flow_story_browser import _generation_contract
+
+    spec=generation(6)
+    spec[field]=value
+    with pytest.raises(ValueError,match=reason):
+        _generation_contract(spec)
+
+
+class _UiNode:
+    def __init__(self,text='',checked=None,on_press=None):
+        self._text=text
+        self._checked=checked
+        self._on_press=on_press
+    def press(self,_key):
+        if self._checked is not None:
+            self._checked=True
+        if self._on_press is not None:
+            self._on_press()
+    def is_checked(self):
+        return self._checked
+    def inner_text(self):
+        return self._text
+    def wait_for(self,**_kwargs):
+        return None
+    def fill(self,_text):
+        return None
+
+
+class _UiDialog:
+    def __init__(self,balance):
+        self.balance=balance
+    def get_by_role(self,kind,**_kwargs):
+        assert kind=='link'
+        return _UiNode(f'{self.balance} tín dụng Google Flow')
+
+
+class _UiPage:
+    def __init__(self,cost,balance=100):
+        from types import SimpleNamespace
+
+        self.cost=cost
+        self.balance=balance
+        self.radios={}
+        self.keyboard=SimpleNamespace(press=lambda _key:None)
+    def get_by_role(self,kind,**kwargs):
+        name=kwargs.get('name')
+        if kind=='dialog':
+            return _UiDialog(self.balance)
+        if kind=='radio':
+            return self.radios.setdefault(name,_UiNode(checked=False))
+        if kind=='link':
+            return _UiNode(f'{self.cost} tín dụng')
+        if kind=='button' and name=='Chọn nhóm mô hình':
+            return _UiNode('Omni 1.1 Flash\narrow_drop_down')
+        return _UiNode()
+
+
+@pytest.mark.parametrize(('duration','cost'),[(4,4),(6,5),(8,6),(10,7)])
+def test_prepare_and_current_quote_use_exact_duration_ui_and_price(
+        duration,cost):
+    from types import SimpleNamespace
+
+    from agent.services.flow_story_browser import FlowStoryBrowser
+
+    page=_UiPage(cost)
+    operation=FlowStoryBrowser(SimpleNamespace(),None)
+    spec=generation(duration)
+    ready=operation._prepare(page,spec)
+    assert ready['quoted_cost']==cost
+    assert ready['duration_s']==duration
+    checked_duration_labels=[
+        label for label,node in page.radios.items()
+        if node.is_checked() is True and label.startswith(f'{duration} ')
+    ]
+    assert len(checked_duration_labels)==1
+    assert page.radios['360p 360p tạo nhanh hơn ở độ phân giải thấp hơn'].is_checked() is True
+    assert page.radios['x1'].is_checked() is True
+    current=operation._current_quote(page,spec)
+    assert current['quoted_cost']==cost
+    assert current['duration_s']==duration
+    assert current['model']=='Omni 1.1 Flash'
+    assert current['resolution']=='360p'
+    assert current['variants']==1
+
+
+def test_current_quote_change_is_rejected_before_reservation():
+    from types import SimpleNamespace
+
+    from agent.services.flow_story_browser import FlowStoryBrowser
+
+    page=_UiPage(6)
+    operation=FlowStoryBrowser(SimpleNamespace(),None)
+    spec=generation(8)
+    operation._prepare(page,spec)
+    page.cost=7
+    with pytest.raises(ValueError,match='FLOW_CURRENT_QUOTE_CHANGED'):
+        operation._current_quote(page,spec)
+
+
+def test_invalid_generation_blocks_before_provider_or_budget_reservation(
+        tmp_path,monkeypatch):
+    from types import SimpleNamespace
+
+    from agent.services import flow_story_browser as flow
+
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:pytest.fail('provider must not open'))
+    operation=flow.FlowStoryBrowser(
+        SimpleNamespace(directory=tmp_path,data=tmp_path/'data'),
+        SimpleNamespace(flow_profile_config='config',flow_project_id=PROJECT))
+    bad=generation(6)
+    bad['quoted_cost_credits']=99
+    result=operation.run(
+        'video',resume_req(),tmp_path,lambda _:None,
+        authorization=resume_authorization(quoted=5,maximum=14),
+        generation=bad)
+    assert result=={
+        'state':'blocked','not_submitted':True,
+        'reason':'FLOW_GENERATION_QUOTE_INVALID',
+    }
+    assert not (tmp_path/'data'/'flow-budget-ledgers').exists()
+
+
+class _PendingResponse:
+    def __init__(self,response):
+        self.value=response
+    def __enter__(self):
+        return self
+    def __exit__(self,*_args):
+        return False
+
+
+class _RunUiPage(_UiPage):
+    def __init__(self,cost,response,on_generate):
+        super().__init__(cost)
+        self.response=response
+        self.on_generate=on_generate
+        self.quote_reads=0
+        self.expecting_submit=False
+    def goto(self,*_args,**_kwargs):
+        return None
+    def reload(self,*_args,**_kwargs):
+        return None
+    def locator(self,_selector):
+        return _UiNode()
+    def expect_response(self,*_args,**_kwargs):
+        self.expecting_submit=True
+        return _PendingResponse(self.response)
+    def get_by_role(self,kind,**kwargs):
+        if kind=='button' and self.expecting_submit:
+            self.expecting_submit=False
+            return _UiNode(on_press=self.on_generate)
+        if kind=='link':
+            self.quote_reads+=1
+        return super().get_by_role(kind,**kwargs)
+
+
+@pytest.mark.parametrize(('duration','cost'),[(4,4),(6,5),(8,6),(10,7)])
+def test_mixed_duration_request_to_receipt_budget_native_and_download_is_exact(
+        tmp_path,monkeypatch,duration,cost):
+    from types import SimpleNamespace
+
+    from agent.services import flow_story_browser as flow
+
+    source=tmp_path/'source.png';source.write_bytes(b'source')
+    children=[]
+    for index in range(2):
+        child=tmp_path/f'child-{index}.png'
+        child.write_bytes(f'child-{index}'.encode())
+        children.append(child)
+    req=resume_req()|{
+        'source':str(source),
+        'images':{'files':[
+            {'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+            for path in children]},
+        'analysis':{'panels':[{'display_order':0,'dialogues':[]}]},
+        'image_review':{'data':{'dialogues_verified':True}},
+    }
+    authorization=resume_authorization(quoted=cost,maximum=14)
+    spec=generation(duration)
+    body,post_data,_native_intent=native(duration=duration)
+    response=SimpleNamespace(
+        status=200,body=lambda:body.encode(),
+        request=SimpleNamespace(post_data=post_data))
+    events=[]
+    ledger_path=(
+        tmp_path/'data'/'flow-budget-ledgers'/req['resume_job_id']/AGGREGATE/
+        'budget-ledger.json')
+    def on_generate():
+        ledger=json.loads(ledger_path.read_text())
+        assert ledger['reservations']['flow-op-1']['state']=='RESERVED'
+        assert (tmp_path/'flow'/'paid-submit-intent.json').is_file()
+        receipt=json.loads((tmp_path/'flow'/'story-receipt.json').read_text())
+        assert receipt['state']=='SUBMITTING'
+        assert receipt['intent']['duration_s']==duration
+        events.append('click')
+    page=_RunUiPage(cost,response,on_generate)
+    provider=SimpleNamespace(
+        session=SimpleNamespace(page=page),
+        close=lambda:events.append('close'))
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:SimpleNamespace(open=lambda:provider))
+    monkeypatch.setattr(
+        flow.FlowProfileConfig,'load',
+        lambda _:SimpleNamespace(profile_logical_name=PROFILE))
+    auth_reads=[]
+    def observe(_page):
+        auth_reads.append('read')
+        return SimpleNamespace(state='authenticated',identity=ACCOUNT)
+    monkeypatch.setattr(flow,'observe_flow_account',observe)
+    monkeypatch.setattr(flow,'BrowserStateStore',lambda *args,**kwargs:SimpleNamespace())
+    ref_ids=iter(REFS)
+    monkeypatch.setattr(flow,'upload_reference',lambda *args:next(ref_ids))
+    monkeypatch.setattr(flow,'attach_existing_references',lambda *args:None)
+    monkeypatch.setattr(
+        flow,'verify_reference_composer',
+        lambda *args:{'ordered_reference_ids':REFS})
+    monkeypatch.setattr(flow,'story_video_prompt',lambda *args,**kwargs:'synthetic-story-prompt')
+    runtime=SimpleNamespace(flow_profile_config='config',flow_project_id=PROJECT)
+    settings=SimpleNamespace(enabled=True,directory=tmp_path,data=tmp_path/'data')
+    operation=flow.FlowStoryBrowser(settings,runtime)
+    monkeypatch.setattr(operation,'_check_enabled',lambda:None)
+    monkeypatch.setattr(operation,'_wait',lambda *args:None)
+    monkeypatch.setattr(
+        flow,'validate_media',
+        lambda *_args,**_kwargs:{'width':360,'duration_s':float(duration)})
+    def fake_download(_page,record,folder,*,highest):
+        assert highest is False
+        part=folder/'synthetic.part.mp4';part.write_bytes(b'video-bytes')
+        final=folder/'synthetic.mp4'
+        receipt_path=folder/'synthetic-download.json'
+        return operation._promote_download(
+            part,final,receipt_path,record,'360p Original',
+            ['360p Original'],False)
+    monkeypatch.setattr(operation,'_download',fake_download)
+
+    result=operation.run(
+        'video',req,tmp_path,lambda _value:None,
+        authorization=authorization,generation=spec)
+    assert result['state']=='verified'
+    assert result['data']['duration_s']==float(duration)
+    assert result['data']['width']==360
+    assert events==['click','close']
+    assert len(auth_reads)==3
+    assert page.quote_reads==2
+    checked_duration_labels=[
+        label for label,node in page.radios.items()
+        if node.is_checked() is True and label.startswith(f'{duration} ')
+    ]
+    assert len(checked_duration_labels)==1
+    story=json.loads((tmp_path/'flow'/'story-receipt.json').read_text())
+    assert story['state']=='PROCESSING'
+    assert story['intent']['duration_s']==duration
+    assert story['intent']['model']=='Omni 1.1 Flash'
+    assert story['intent']['resolution']=='360p'
+    assert story['intent']['variants']==1
+    ledger=json.loads(ledger_path.read_text())
+    row=ledger['reservations']['flow-op-1']
+    assert row['state']=='COMMITTED'
+    assert row['reserved_cost_credits']==float(cost)
+    assert row['spent_cost_credits']==float(cost)
+    assert row['aggregate_id']==AGGREGATE
+    assert row['receipt']=={
+        key:story[key] for key in ('media_id','workflow_id','project_id')}
