@@ -38,6 +38,25 @@
 
 # FLOW KIT
 
+## Workflow integration and current transport — 2026-10-05
+
+ComicReels/FlowKit supplies reusable image/video production operations through its
+existing local API and in-repository SDK. Consumers own their campaign, scheduling,
+actor/destination policy and cross-toolkit workflow. ThoRemix is an independent app;
+the legacy `agent/thoremix` source present here does not establish current app ownership.
+
+At the reviewed upstream revision, the operational Flow path remains the Chrome
+extension bridge. The browser-first design is a checkpointed migration, not evidence
+that upstream main has completed browser-only cutover. Keep selected-backend health
+and paid authorization separate, and reconcile unknown paid outcomes before resend.
+The live claims below retain their original workload/transport scope; they do not
+qualify a different backend or executable.
+
+Read [workflow role, evidence and source/launcher update policy](docs/WORKFLOW_ROLE_20261005.md).
+Source Python is the deployment target; an optional EXE only launches it. Existing
+API/in-repo SDK are not a promise of a separately distributable toolkit CLI or SDK.
+
+
 Standalone system to generate AI videos via Google Flow. Uses a Chrome extension as a browser bridge: it mints reCAPTCHA and runs Flow's batchexecute RPCs inside a signed-in `flow.google.com` tab, which is the only place they can be signed.
 
 ## Showcase
