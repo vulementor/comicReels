@@ -20,6 +20,13 @@ documentation remain historical source in this upstream tree; current integratio
 use the standalone app's reviewed adapters/contracts rather than assume shared internals.
 See the common architecture for the standalone ownership reconciliation.
 
+## Current reading authority
+
+Use this role guide and the root README for the current integration boundary. Older
+architecture and development-index narratives remain historical; their authentication
+and host-operation details are not operational instructions. No historical file or
+generated contributor rule is changed by this proposal.
+
 ## Available interface and qualification
 
 The local FastAPI API and `agent/sdk` are present. The latter is an in-repository SDK
