@@ -181,6 +181,21 @@ def _validate_recovery_record(
     return record
 
 
+def _recovery_candidate_identity(path,expected_path):
+    path=Path(path)
+    expected_path=Path(expected_path)
+    if path!=expected_path or path.is_symlink() or not path.is_file():
+        raise ValueError('RECOVERY_DOWNLOAD_PATH_INVALID')
+    try:
+        resolved=path.resolve(strict=True)
+        stat=os.stat(path,follow_symlinks=False)
+    except OSError:
+        raise ValueError('RECOVERY_DOWNLOAD_PATH_INVALID') from None
+    if resolved!=expected_path:
+        raise ValueError('RECOVERY_DOWNLOAD_PATH_INVALID')
+    return (stat.st_dev,stat.st_ino)
+
+
 def _budget_contract(authorization,req):
     if not isinstance(authorization,dict):
         raise TypeError('FLOW_BUDGET_AUTHORIZATION_REQUIRED')
@@ -786,19 +801,24 @@ class FlowStoryBrowser:
             expected_artifact_path=part if state=='BYTES_VALIDATED' else final
             if Path(receipt_artifact['path']).resolve(strict=False)!=expected_artifact_path:
                 raise ValueError('RECOVERY_DOWNLOAD_RECEIPT_INVALID')
+            trusted_sha=receipt_artifact['sha256']
             if state=='COMPLETED':
-                if (not final.is_file()
-                        or artifact(final)!=receipt_artifact):
-                    raise ValueError('RECOVERY_DOWNLOAD_RECEIPT_INVALID')
                 candidate=final
+                candidate_identity=_recovery_candidate_identity(candidate,final)
+                if artifact(candidate)!=receipt_artifact:
+                    raise ValueError('RECOVERY_DOWNLOAD_RECEIPT_INVALID')
             else:
                 if final.exists() and part.exists():
                     raise ValueError('RECOVERY_DOWNLOAD_FINAL_CONFLICT')
                 candidate=final if final.exists() else part
-                if (not candidate.is_file()
-                        or artifact(candidate)['sha256']!=receipt_artifact['sha256']):
+                candidate_identity=_recovery_candidate_identity(candidate,candidate)
+                if artifact(candidate)['sha256']!=trusted_sha:
                     raise ValueError('RECOVERY_DOWNLOAD_BYTES_CHANGED')
             media=validate_media(candidate,tool_root=self.settings.directory)
+            post_probe_identity=_recovery_candidate_identity(candidate,candidate)
+            if (post_probe_identity!=candidate_identity
+                    or artifact(candidate)['sha256']!=trusted_sha):
+                raise ValueError('RECOVERY_DOWNLOAD_BYTES_CHANGED')
             if (media.get('width')!=resolution
                     or abs(float(media.get('duration_s',-1))-duration)>.1
                     or data.get('width')!=media.get('width')
@@ -812,7 +832,14 @@ class FlowStoryBrowser:
                         part.rename(final)
                     except FileExistsError:
                         raise ValueError('RECOVERY_DOWNLOAD_FINAL_CONFLICT') from None
-                receipt.update(state='COMPLETED',artifact=artifact(final))
+                    final_identity=_recovery_candidate_identity(final,final)
+                    if (final_identity!=candidate_identity
+                            or artifact(final)['sha256']!=trusted_sha):
+                        raise ValueError('RECOVERY_DOWNLOAD_BYTES_CHANGED')
+                receipt.update(state='COMPLETED',artifact={
+                    'path':str(final.resolve(strict=True)),
+                    'sha256':trusted_sha,
+                })
                 atomic_json(receipt_path,receipt)
             return {'path':str(final),'data':data}
         provider=FlowBrowserSessionProvider(

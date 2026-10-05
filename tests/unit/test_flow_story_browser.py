@@ -1207,3 +1207,72 @@ def test_bytes_validated_recovery_mismatch_blocks_without_provider_or_overwrite(
         assert not final.exists()
     else:
         assert final.read_bytes()==final_before
+
+
+def test_bytes_validated_outside_final_symlink_blocks_without_provider(
+        tmp_path,monkeypatch):
+    from types import SimpleNamespace
+
+    from agent.services import flow_story_browser as flow
+
+    record=story_record(intent=story_intent()|{'duration_s':6})
+    folder=tmp_path/'recovery';folder.mkdir()
+    part,receipt_path,_receipt=_bytes_validated_recovery_fixture(
+        flow,folder,record,duration=6)
+    outside=tmp_path/'outside.mp4'
+    outside.write_bytes(part.read_bytes())
+    part.unlink()
+    final=folder/'highest.mp4'
+    try:
+        final.symlink_to(outside)
+    except (OSError,NotImplementedError) as error:
+        pytest.skip(f'file symlink unsupported: {error}')
+    receipt_before=receipt_path.read_bytes()
+    outside_before=outside.read_bytes()
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:pytest.fail('provider must not open'))
+    monkeypatch.setattr(
+        flow,'validate_media',
+        lambda *_args,**_kwargs:pytest.fail('media probe must not run'))
+    operation=flow.FlowStoryBrowser(
+        SimpleNamespace(directory=tmp_path),
+        SimpleNamespace(flow_project_id=PROJECT,flow_profile_config='config'))
+
+    with pytest.raises(ValueError,match='RECOVERY_DOWNLOAD_PATH_INVALID'):
+        operation.download_existing(record,folder,highest=True)
+    assert final.is_symlink()
+    assert outside.read_bytes()==outside_before
+    assert receipt_path.read_bytes()==receipt_before
+
+
+def test_bytes_validated_probe_mutation_blocks_without_completion(
+        tmp_path,monkeypatch):
+    from types import SimpleNamespace
+
+    from agent.services import flow_story_browser as flow
+
+    record=story_record(intent=story_intent()|{'duration_s':8})
+    folder=tmp_path/'recovery';folder.mkdir()
+    _part,receipt_path,receipt=_bytes_validated_recovery_fixture(
+        flow,folder,record,duration=8)
+    trusted_sha=receipt['artifact']['sha256']
+    receipt_before=receipt_path.read_bytes()
+    monkeypatch.setattr(
+        flow,'FlowBrowserSessionProvider',
+        lambda *args,**kwargs:pytest.fail('provider must not open'))
+    def mutating_probe(path,**_kwargs):
+        Path(path).write_bytes(b'probe-mutated-bytes')
+        return {'width':720,'duration_s':8.0}
+    monkeypatch.setattr(flow,'validate_media',mutating_probe)
+    operation=flow.FlowStoryBrowser(
+        SimpleNamespace(directory=tmp_path),
+        SimpleNamespace(flow_project_id=PROJECT,flow_profile_config='config'))
+
+    with pytest.raises(ValueError,match='RECOVERY_DOWNLOAD_BYTES_CHANGED'):
+        operation.download_existing(record,folder,highest=True)
+    assert not (folder/'highest.mp4').exists()
+    persisted=json.loads(receipt_path.read_text(encoding='utf-8'))
+    assert persisted['state']=='BYTES_VALIDATED'
+    assert persisted['artifact']['sha256']==trusted_sha
+    assert receipt_path.read_bytes()==receipt_before
