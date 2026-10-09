@@ -42,7 +42,9 @@ class StoryReceipt:
                 or not isinstance(intent.get('prompt'), str) or not intent['prompt'].strip()
                 or len(intent['prompt']) > 30000
                 or type(intent.get('variants')) is not int or intent['variants'] != 1
-                or intent.get('duration_s') != 10 or intent.get('aspect') != '9:16'
+                or type(intent.get('duration_s')) is not int
+                or intent['duration_s'] not in {4, 6, 8, 10}
+                or intent.get('aspect') != '9:16'
                 or intent.get('resolution') not in {'360p', '720p'}
                 or intent.get('model') != 'Omni 1.1 Flash'):
             raise ValueError('INVALID_STORY_INTENT')
