@@ -90,8 +90,16 @@ def attach_existing_references(page, images: list[ExistingReference]) -> None:
         page.get_by_role("button", name="Thêm thành phần vào ô nhập câu lệnh", exact=True).press(
             "Enter", timeout=10000)
         option = page.get_by_role("option", name=f"{image.file_name} Hình ảnh", exact=True)
-        option.wait_for(state="visible", timeout=15000)
-        option.dispatch_event("click", timeout=10000)
+        # The asset picker can contain multiple native uploads under the same
+        # filename. Resolve strict-locator ambiguity without trusting the
+        # filename: composer_reference_ids MUST verify the exact media UUID
+        # against the saved upload receipt before any provider Generate.
+        option.first.wait_for(state="visible", timeout=15000)
+        count = option.count()
+        if not 1 <= count <= 4:
+            raise ValueError("REFERENCE_OPTION_COUNT_UNSUPPORTED")
+        selected = option.nth(0) if count > 1 else option
+        selected.dispatch_event("click", timeout=10000)
         confirm = page.get_by_role("button", name="Thêm vào câu lệnh", exact=True)
         preview = page.get_by_role("img", name=f"Bản xem trước của {image.file_name}", exact=True)
         expected = [x.media_id for x in images[:index + 1]]
