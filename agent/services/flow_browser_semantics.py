@@ -90,8 +90,17 @@ def attach_existing_references(page, images: list[ExistingReference]) -> None:
         page.get_by_role("button", name="Thêm thành phần vào ô nhập câu lệnh", exact=True).press(
             "Enter", timeout=10000)
         option = page.get_by_role("option", name=f"{image.file_name} Hình ảnh", exact=True)
-        option.wait_for(state="visible", timeout=15000)
-        option.dispatch_event("click", timeout=10000)
+        # An earlier native upload can leave another gallery card with the same
+        # filename. Playwright's strict locator fails on the duplicate before
+        # confirming anything. Select one deterministic candidate, but never
+        # trust its filename as identity: the composer UUID check below MUST
+        # match the durable upload receipt before a paid submit is possible.
+        option.first.wait_for(state="visible", timeout=15000)
+        count = option.count()
+        if not 1 <= count <= 4:
+            raise ValueError("REFERENCE_OPTION_COUNT_UNSUPPORTED")
+        selected = option.nth(0) if count > 1 else option
+        selected.dispatch_event("click", timeout=10000)
         confirm = page.get_by_role("button", name="Thêm vào câu lệnh", exact=True)
         preview = page.get_by_role("img", name=f"Bản xem trước của {image.file_name}", exact=True)
         expected = [x.media_id for x in images[:index + 1]]
