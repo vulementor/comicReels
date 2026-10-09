@@ -80,12 +80,14 @@ def test_delayed_picker_confirmation_is_awaited_before_attachment(monkeypatch):
     from agent.services import flow_browser_semantics as semantics
 
     page = MagicMock()
+    option = MagicMock()
+    option.count.return_value = 1
     confirm = MagicMock()
     preview = MagicMock()
     confirm.is_visible.side_effect = [False, True]
     preview.is_visible.return_value = True
     page.get_by_role.side_effect = lambda role, name, exact: (
-        confirm if name == "Thêm vào câu lệnh" else preview if role == "img" else MagicMock()
+        confirm if name == "Thêm vào câu lệnh" else preview if role == "img" else option if role == "option" else MagicMock()
     )
     states = iter([[], [], [], [REFS[0]]])
     monkeypatch.setattr(semantics, "composer_reference_ids", lambda _: next(states))
@@ -97,6 +99,7 @@ def test_auto_attached_image_does_not_press_stale_confirmation(monkeypatch):
     from agent.services import flow_browser_semantics as semantics
 
     page = MagicMock()
+    page.get_by_role.return_value.count.return_value = 1
     states = iter([[], [REFS[0]]])
     monkeypatch.setattr(semantics, "composer_reference_ids", lambda _: next(states))
     attach_existing_references(page, references()[:1])
@@ -108,12 +111,14 @@ def test_stale_preview_is_never_confirmed_and_wait_is_bounded(monkeypatch):
     from agent.services import flow_browser_semantics as semantics
 
     page = MagicMock()
+    option = MagicMock()
+    option.count.return_value = 1
     confirm = MagicMock()
     preview = MagicMock()
     confirm.is_visible.return_value = True
     preview.is_visible.return_value = False
     page.get_by_role.side_effect = lambda role, name, exact: (
-        confirm if name == "Thêm vào câu lệnh" else preview if role == "img" else MagicMock()
+        confirm if name == "Thêm vào câu lệnh" else preview if role == "img" else option if role == "option" else MagicMock()
     )
     monkeypatch.setattr(semantics, "composer_reference_ids", lambda _: [])
     ticks = iter(range(30))
