@@ -670,7 +670,14 @@ class FlowStoryBrowser:
                     page.reload(wait_until='domcontentloaded')
                     step='attach_references'
                     progress({'preparation_step':step})
-                    attach_existing_references(page,refs)
+                    attach_existing_references(
+                        page,refs,
+                        on_verified=lambda count: progress({
+                            'preparation_step':step,
+                            'verified_reference_count':count,
+                            'expected_reference_count':len(refs),
+                        }),
+                    )
                     panels=json.loads(json.dumps(req['analysis']['panels']))
                     approved_words=req['image_review']['data'].get('dialogues_verified') is True
                     for panel in panels:

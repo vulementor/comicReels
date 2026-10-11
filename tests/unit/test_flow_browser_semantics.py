@@ -107,6 +107,38 @@ def test_auto_attached_image_does_not_press_stale_confirmation(monkeypatch):
     assert page.get_by_role.return_value.press.call_count == 1
 
 
+def test_attach_checkpoint_only_after_receipt_uuid_verified(monkeypatch):
+    from agent.services import flow_browser_semantics as semantics
+
+    page = MagicMock()
+    page.get_by_role.return_value.count.return_value = 1
+    states = iter([[], [], [REFS[0]]])
+    monkeypatch.setattr(semantics, "composer_reference_ids", lambda _: next(states))
+    observed = []
+    attach_existing_references(
+        page, references()[:1], on_verified=observed.append,
+    )
+    assert observed == [1]
+    option = page.get_by_role.return_value
+    option.first.wait_for.assert_called_with(state="visible", timeout=45000)
+
+
+def test_wrong_native_uuid_never_advances_attachment_checkpoint(monkeypatch):
+    from agent.services import flow_browser_semantics as semantics
+
+    page = MagicMock()
+    page.get_by_role.return_value.count.return_value = 1
+    wrong = '00000000-0000-4000-8000-999999999999'
+    states = iter([[], [wrong]])
+    monkeypatch.setattr(semantics, "composer_reference_ids", lambda _: next(states))
+    observed = []
+    with pytest.raises(ValueError, match="REFERENCE_ORDER_MISMATCH"):
+        attach_existing_references(
+            page, references()[:1], on_verified=observed.append,
+        )
+    assert observed == []
+
+
 def test_stale_preview_is_never_confirmed_and_wait_is_bounded(monkeypatch):
     from agent.services import flow_browser_semantics as semantics
 
@@ -121,7 +153,7 @@ def test_stale_preview_is_never_confirmed_and_wait_is_bounded(monkeypatch):
         confirm if name == "Thêm vào câu lệnh" else preview if role == "img" else option if role == "option" else MagicMock()
     )
     monkeypatch.setattr(semantics, "composer_reference_ids", lambda _: [])
-    ticks = iter(range(30))
+    ticks = iter(range(90))
     monkeypatch.setattr(semantics.time, "monotonic", lambda: next(ticks))
     with pytest.raises(TimeoutError, match="REFERENCE_ATTACH_TIMEOUT"):
         attach_existing_references(page, references()[:1])

@@ -376,7 +376,7 @@ def test_authorized_run_reserves_budget_before_native_submit_click(tmp_path,monk
         lambda _:SimpleNamespace(state='authenticated',identity=ACCOUNT))
     monkeypatch.setattr(flow,'BrowserStateStore',lambda *args,**kwargs:SimpleNamespace())
     monkeypatch.setattr(flow,'upload_reference',lambda *args:REFS[0])
-    monkeypatch.setattr(flow,'attach_existing_references',lambda *args:None)
+    monkeypatch.setattr(flow,'attach_existing_references',lambda *args,**kwargs:None)
     monkeypatch.setattr(flow,'verify_reference_composer',
                         lambda *args:{'ordered_reference_ids':[REFS[0]]})
     monkeypatch.setattr(flow,'story_video_prompt',lambda *args,**kwargs:'prompt')
@@ -593,7 +593,7 @@ def test_account_change_before_submit_blocks_without_reservation_or_click(tmp_pa
     monkeypatch.setattr(flow,'observe_flow_account',lambda _page:next(observed))
     monkeypatch.setattr(flow,'BrowserStateStore',lambda *args,**kwargs:SimpleNamespace())
     monkeypatch.setattr(flow,'upload_reference',lambda *args:REFS[0])
-    monkeypatch.setattr(flow,'attach_existing_references',lambda *args:None)
+    monkeypatch.setattr(flow,'attach_existing_references',lambda *args,**kwargs:None)
     monkeypatch.setattr(
         flow,'verify_reference_composer',
         lambda *args:{'ordered_reference_ids':[REFS[0]]})
@@ -659,7 +659,7 @@ def test_rejected_quote_does_not_leave_stale_submit_intent(tmp_path,monkeypatch)
         lambda _page:SimpleNamespace(state='authenticated',identity=ACCOUNT))
     monkeypatch.setattr(flow,'BrowserStateStore',lambda *args,**kwargs:SimpleNamespace())
     monkeypatch.setattr(flow,'upload_reference',lambda *args:REFS[0])
-    monkeypatch.setattr(flow,'attach_existing_references',lambda *args:None)
+    monkeypatch.setattr(flow,'attach_existing_references',lambda *args,**kwargs:None)
     monkeypatch.setattr(
         flow,'verify_reference_composer',
         lambda *args:{'ordered_reference_ids':[REFS[0]]})
@@ -940,7 +940,7 @@ def test_mixed_duration_request_to_receipt_budget_native_and_download_is_exact(
     monkeypatch.setattr(flow,'BrowserStateStore',lambda *args,**kwargs:SimpleNamespace())
     ref_ids=iter(REFS)
     monkeypatch.setattr(flow,'upload_reference',lambda *args:next(ref_ids))
-    monkeypatch.setattr(flow,'attach_existing_references',lambda *args:None)
+    monkeypatch.setattr(flow,'attach_existing_references',lambda *args,**kwargs:None)
     monkeypatch.setattr(
         flow,'verify_reference_composer',
         lambda *args:{'ordered_reference_ids':REFS})

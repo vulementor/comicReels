@@ -47,7 +47,7 @@ def test_duplicate_gallery_filename_can_attach_only_verified_native_uuid():
         side_effect=[[], [], [EXPECTED]],
     ):
         attach_existing_references(page, [ExistingReference(EXPECTED, FILENAME)])
-    options.first.wait_for.assert_called_once_with(state="visible", timeout=15000)
+    options.first.wait_for.assert_called_once_with(state="visible", timeout=45000)
     options.nth.assert_called_once_with(0)
     selected.dispatch_event.assert_called_once_with("click", timeout=10000)
     options.dispatch_event.assert_not_called()

@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -77,13 +78,17 @@ def verify_reference_composer(page, project_id: str,
             "prompt_sha256": hashlib.sha256(normalized_prompt(prompt).encode()).hexdigest()}
 
 
-def attach_existing_references(page, images: list[ExistingReference]) -> None:
+def attach_existing_references(
+    page, images: list[ExistingReference], *, on_verified: Callable[[int], None] | None = None,
+) -> None:
     """Select filenames, then verify UUIDs; never infer order from the recent grid.
 
     An option's Enter handler can confirm the previous preview. The observed click
     handler selects the requested preview; verify it before confirming the picker.
     """
     _validate_references(images)
+    if on_verified is not None and not callable(on_verified):
+        raise TypeError("INVALID_ATTACH_PROGRESS_CALLBACK")
     if composer_reference_ids(page):
         raise ValueError("COMPOSER_REFERENCES_NOT_EMPTY")
     for index, image in enumerate(images):
@@ -94,7 +99,9 @@ def attach_existing_references(page, images: list[ExistingReference]) -> None:
         # filename. Resolve strict-locator ambiguity without trusting the
         # filename: composer_reference_ids MUST verify the exact media UUID
         # against the saved upload receipt before any provider Generate.
-        option.first.wait_for(state="visible", timeout=15000)
+        # Native upload gallery indexing may lag behind a successful durable
+        # upload receipt. Wait longer, but never bypass the UUID check.
+        option.first.wait_for(state="visible", timeout=45000)
         count = option.count()
         if not 1 <= count <= 4:
             raise ValueError("REFERENCE_OPTION_COUNT_UNSUPPORTED")
@@ -103,7 +110,7 @@ def attach_existing_references(page, images: list[ExistingReference]) -> None:
         confirm = page.get_by_role("button", name="Thêm vào câu lệnh", exact=True)
         preview = page.get_by_role("img", name=f"Bản xem trước của {image.file_name}", exact=True)
         expected = [x.media_id for x in images[:index + 1]]
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 45
         confirmed = False
         # Picker rendering can be asynchronous; wait for either auto-attachment
         # or this image's preview and confirmation, never an instantaneous branch.
@@ -115,6 +122,8 @@ def attach_existing_references(page, images: list[ExistingReference]) -> None:
                     raise
                 actual = None
             if actual == expected:
+                if on_verified is not None:
+                    on_verified(index + 1)
                 break
             if actual is not None and actual != expected[:-1]:
                 raise ValueError("REFERENCE_ORDER_MISMATCH")
