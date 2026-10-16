@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from agent.services.flow_browser_auth import observe_flow_account, read_current_flow_balance
 
@@ -147,6 +148,37 @@ class CurrentFlowBalanceTests(unittest.TestCase):
         p=self.CreditPage('0 tín dụng Google Flow')
         row=read_current_flow_balance(p)
         self.assertEqual(row['balance_credits'],0)
+
+
+class SafeFlowPrepareTests(unittest.TestCase):
+    class AbsentLegacy:
+        def count(self):return 0
+        def is_visible(self):return False
+
+    class CurrentPage:
+        def get_by_role(self, role, name=None, exact=False):
+            assert role=="button"
+            assert name=="Thông tin về tài khoản"
+            assert exact is True
+            return SafeFlowPrepareTests.AbsentLegacy()
+
+    def test_new_composer_refuses_paid_quote_without_price(self):
+        from agent.services.flow_story_browser import FlowStoryBrowser
+        browser=FlowStoryBrowser(settings=None,runtime=None)
+        with patch("agent.services.flow_story_browser.read_current_flow_balance",
+                   return_value={"balance_credits":1050}) as check:
+            with self.assertRaisesRegex(ValueError,"FLOW_GENERATION_PRESET_UI_CHANGED"):
+                browser._prepare(self.CurrentPage())
+        check.assert_called_once()
+        self.assertFalse(hasattr(self.CurrentPage(),"paid_generate_called"))
+
+    def test_failed_live_balance_also_blocks(self):
+        from agent.services.flow_story_browser import FlowStoryBrowser
+        browser=FlowStoryBrowser(settings=None,runtime=None)
+        with patch("agent.services.flow_story_browser.read_current_flow_balance",
+                   side_effect=ValueError("FLOW_BALANCE_UNVERIFIED")):
+            with self.assertRaisesRegex(ValueError,"FLOW_BALANCE_UNVERIFIED"):
+                browser._prepare(self.CurrentPage())
 
 if __name__=="__main__":
     unittest.main()
