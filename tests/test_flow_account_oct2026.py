@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from agent.services.flow_browser_auth import observe_flow_account
+from agent.services.flow_browser_auth import observe_flow_account, read_current_flow_balance
 
 LABEL = "Tài khoản Google: Sample User  \n(sample@example.com), Gói thành viên của Google"
 LEGACY = "Tài khoản Google: Sample User  \n(sample@example.com)"
@@ -83,6 +83,70 @@ class FlowAccountOct2026Tests(unittest.TestCase):
         self.assertNotEqual(observe_flow_account(Page(old=old)).state,
                             "authenticated")
 
+
+
+
+class CurrentFlowBalanceTests(unittest.TestCase):
+    class BalanceLink:
+        def __init__(self, label):
+            self.label=label
+        def count(self):return 1
+        def is_visible(self):return True
+        def inner_text(self, timeout=1500):return self.label
+
+    class Dialog:
+        def __init__(self, link):self.link=link
+        def wait_for(self, state=None, timeout=None):
+            assert state == 'visible'
+        def get_by_role(self, role, name=None):
+            assert role == 'link'
+            return self.link
+
+    class Account(Element):
+        def __init__(self, owner):
+            super().__init__(label=LABEL)
+            self.owner=owner
+        def evaluate(self, expression):
+            assert expression == '(account) => account.click()'
+            self.owner.opened=True
+
+    class CreditPage(Page):
+        def __init__(self, balance='1.050 tín dụng Google Flow'):
+            super().__init__(current=Element(count=0))
+            self.opened=False
+            self.current=CurrentFlowBalanceTests.Account(self)
+            self.dialog=CurrentFlowBalanceTests.Dialog(
+                CurrentFlowBalanceTests.BalanceLink(balance))
+        def get_by_role(self, role, name=None, exact=False):
+            if role=='dialog':
+                assert name == 'Cài đặt tài khoản'
+                assert self.opened
+                return self.dialog
+            return super().get_by_role(role,name=name,exact=exact)
+
+    def test_verified_live_balance_vietnamese_thousands(self):
+        p=self.CreditPage()
+        row=read_current_flow_balance(p)
+        self.assertEqual(row['balance_credits'],1050)
+        self.assertEqual(row['source'],'authenticated_ui_account_dialog')
+        self.assertFalse(row['paid_generate_called'])
+
+    def test_balance_label_changed_must_block(self):
+        p=self.CreditPage('1050 credits')
+        with self.assertRaisesRegex(ValueError,'FLOW_BALANCE_UNVERIFIED'):
+            read_current_flow_balance(p)
+
+    def test_wrong_origin_never_opens_account(self):
+        p=self.CreditPage()
+        p.url='https://other.example.com/project/id'
+        with self.assertRaisesRegex(ValueError,'FLOW_ACCOUNT_NOT_VERIFIED'):
+            read_current_flow_balance(p)
+        self.assertFalse(p.opened)
+
+    def test_zero_balance_is_valid_read_only_observation(self):
+        p=self.CreditPage('0 tín dụng Google Flow')
+        row=read_current_flow_balance(p)
+        self.assertEqual(row['balance_credits'],0)
 
 if __name__=="__main__":
     unittest.main()
