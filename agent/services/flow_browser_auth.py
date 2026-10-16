@@ -31,6 +31,13 @@ def _account_email_from_scoped_control(page) -> str | None:
     )
     if legacy.count() == 1 and legacy.is_visible():
         inner = legacy.get_by_role('button', name=_LEGACY_ACCOUNT_NAME)
+        # Existing legacy identity controls must be singular. This rejects
+        # ambiguous old widgets while permitting the current UI wrapper,
+        # which has no nested identity button at all.
+        if inner.count() > 1:
+            return None
+        if inner.count() == 1 and not inner.is_visible():
+            return None
         if inner.count() == 1 and inner.is_visible():
             label = inner.get_attribute('aria-label', timeout=1500)
             match = _LEGACY_IDENTITY.fullmatch(' '.join((label or '').split()))
