@@ -16,6 +16,7 @@ from agent.comicreels.prompts import story_video_prompt
 from agent.comicreels.story import StoryReceipt
 from agent.services import flow_batch as fb
 from agent.services.flow_browser_auth import observe_flow_account, read_current_flow_balance
+from agent.services.flow_current_quote import inspect_current_video_quote
 from agent.services.flow_browser_session import FlowBrowserSessionProvider, FlowProfileConfig
 from agent.services.flow_browser_state import BrowserStateStore
 from agent.services.flow_browser_upload import upload_reference
@@ -91,46 +92,13 @@ class FlowStoryBrowser:
         raise TimeoutError('NATIVE_GENERATION_PENDING')
 
     def _prepare(self,page):
-        # This is BEFORE any upload, durable paid intent or Generate click.
-        # Current Flow changed to a standalone Google account anchor and an
-        # agent composer. Account/credits may be genuine, but the old 10s
-        # Omni/360p video quote is NOT verifiable from the new composer.
-        # Do not reinterpret a historical seven-credit receipt as a quote.
-        # The current Google Flow project may still expose an old-looking
-        # account header even while its composer is a new agent workflow.
-        # Detect that independently before calling any historic preset UI.
-        # This check has NO clicks, upload, reservation or paid effects.
-        agent = page.locator('flow-creative-agent-prompt-box')
-        if agent.count() > 0:
-            raise ValueError('FLOW_GENERATION_PRESET_UI_CHANGED')
-        legacy = page.get_by_role('button',name='Thông tin về tài khoản',exact=True)
-        if legacy.count() != 1 or not legacy.is_visible():
-            # This verifies the live account + credit panel, but does not
-            # generate anything; any failure is still a clean pre-submit block.
-            read_current_flow_balance(page)
-            raise ValueError('FLOW_GENERATION_PRESET_UI_CHANGED')
-        legacy.press('Enter')
-        credit=page.get_by_role('dialog',name='Cài đặt tài khoản',exact=True).get_by_role(
-            'link',name=re.compile(r'^\d+ tín dụng Google Flow$'))
-        credit.wait_for(state='visible',timeout=10000)
-        balance=int(credit.inner_text().split()[0])
-        page.get_by_role('button',name='Đóng bảng điều khiển tài khoản',exact=True).press('Enter')
-        trigger=page.get_by_role('button',name='Điều kiện kích hoạt cài đặt',exact=True)
-        trigger.press('Enter')
-        for label in ('Video','Thành phần','9:16','360p 360p tạo nhanh hơn ở độ phân giải thấp hơn','10 giây','x1'):
-            radio=page.get_by_role('radio',name=label,exact=True)
-            if not radio.is_checked():
-                radio.press('Space')
-            if not radio.is_checked():
-                raise ValueError('FLOW_PRESET_UNVERIFIED')
-        if model_label(page.get_by_role('button',name='Chọn nhóm mô hình',exact=True).inner_text())!='Omni 1.1 Flash':
-            raise ValueError('FLOW_MODEL_CHANGED')
-        quote=page.get_by_role('link',name=re.compile(r'^\d+ tín dụng$'))
-        cost=int(quote.inner_text().split()[0])
-        if balance<cost:
-            raise ValueError('NO_FLOW_CREDIT')
-        page.keyboard.press('Escape')
-        return {'credits':balance,'quoted_cost':cost}
+        """Native strict account/price/preset read only, before any paid intent.
+
+        The per-operation budget contract still controls whether production
+        may proceed. Any current UI drift is a clean pre-submit block.
+        """
+        return inspect_current_video_quote(
+            page,self.runtime.flow_project_id,credit_cap=7)
 
     def run(self,name,req,directory,progress,*,reconcile=False):
         folder=directory/'flow'
@@ -159,6 +127,13 @@ class FlowStoryBrowser:
                         readiness=self._prepare(page)
                     except ValueError as exc:
                         if str(exc) in {'NO_FLOW_CREDIT','FLOW_MODEL_CHANGED','FLOW_PRESET_UNVERIFIED',
+                                        'FLOW_QUOTE_PRESET_UNVERIFIED','FLOW_QUOTE_PRICE_UNVERIFIED',
+                                        'FLOW_QUOTE_PRICE_AMBIGUOUS','FLOW_QUOTE_COST_EXCEEDS_AUTHORIZED_CAP',
+                                        'FLOW_QUOTE_BALANCE_INSUFFICIENT','FLOW_QUOTE_ACCOUNT_NOT_VERIFIED',
+                                        'FLOW_QUOTE_PROJECT_MISMATCH','FLOW_QUOTE_STANDARD_MODE_MISSING',
+                                        'FLOW_QUOTE_AGENT_MODE_ACTIVE','FLOW_QUOTE_AGENT_COMPOSER_ACTIVE',
+                                        'FLOW_QUOTE_TOOLBAR_MISSING','FLOW_QUOTE_SETTINGS_MISSING',
+                                        'FLOW_QUOTE_INPUT_INVALID','FLOW_QUOTE_RADIO_AMBIGUOUS',
                                         'FLOW_GENERATION_PRESET_UI_CHANGED','FLOW_BALANCE_UNVERIFIED'}:
                             return {'state':'blocked','not_submitted':True,'reason':str(exc)}
                         raise
