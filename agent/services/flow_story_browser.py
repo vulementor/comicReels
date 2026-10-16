@@ -17,6 +17,7 @@ from agent.comicreels.story import StoryReceipt
 from agent.services import flow_batch as fb
 from agent.services.flow_browser_auth import observe_flow_account, read_current_flow_balance
 from agent.services.flow_current_quote import inspect_current_video_quote
+from agent.services.flow_video_budget import _budget_contract
 from agent.services.flow_browser_session import FlowBrowserSessionProvider, FlowProfileConfig
 from agent.services.flow_browser_state import BrowserStateStore
 from agent.services.flow_browser_upload import upload_reference
