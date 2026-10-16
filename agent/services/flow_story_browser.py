@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 from agent.comicreels.prompts import story_video_prompt
 from agent.comicreels.story import StoryReceipt
 from agent.services import flow_batch as fb
-from agent.services.flow_browser_auth import observe_flow_account
+from agent.services.flow_browser_auth import observe_flow_account, read_current_flow_balance
 from agent.services.flow_browser_session import FlowBrowserSessionProvider, FlowProfileConfig
 from agent.services.flow_browser_state import BrowserStateStore
 from agent.services.flow_browser_upload import upload_reference
@@ -91,7 +91,18 @@ class FlowStoryBrowser:
         raise TimeoutError('NATIVE_GENERATION_PENDING')
 
     def _prepare(self,page):
-        page.get_by_role('button',name='Thông tin về tài khoản',exact=True).press('Enter')
+        # This is BEFORE any upload, durable paid intent or Generate click.
+        # Current Flow changed to a standalone Google account anchor and an
+        # agent composer. Account/credits may be genuine, but the old 10s
+        # Omni/360p video quote is NOT verifiable from the new composer.
+        # Do not reinterpret a historical seven-credit receipt as a quote.
+        legacy = page.get_by_role('button',name='Thông tin về tài khoản',exact=True)
+        if legacy.count() != 1 or not legacy.is_visible():
+            # This verifies the live account + credit panel, but does not
+            # generate anything; any failure is still a clean pre-submit block.
+            read_current_flow_balance(page)
+            raise ValueError('FLOW_GENERATION_PRESET_UI_CHANGED')
+        legacy.press('Enter')
         credit=page.get_by_role('dialog',name='Cài đặt tài khoản',exact=True).get_by_role(
             'link',name=re.compile(r'^\d+ tín dụng Google Flow$'))
         credit.wait_for(state='visible',timeout=10000)
@@ -125,7 +136,7 @@ class FlowStoryBrowser:
             page=provider.session.page
             project=self.runtime.flow_project_id
             page.goto('https://flow.google.com/project/'+project,wait_until='domcontentloaded',timeout=60000)
-            page.get_by_role('button',name='Thông tin về tài khoản',exact=True).wait_for(state='visible',timeout=30000)
+            page.locator('[aria-label^="Tài khoản Google: "]').first.wait_for(state='visible',timeout=30000)
             if observe_flow_account(page).state!='authenticated':
                 return {'state':'blocked','not_submitted':True,'reason':'FLOW_AUTH_REQUIRED'}
             if name=='video':
@@ -140,7 +151,8 @@ class FlowStoryBrowser:
                     try:
                         readiness=self._prepare(page)
                     except ValueError as exc:
-                        if str(exc) in {'NO_FLOW_CREDIT','FLOW_MODEL_CHANGED','FLOW_PRESET_UNVERIFIED'}:
+                        if str(exc) in {'NO_FLOW_CREDIT','FLOW_MODEL_CHANGED','FLOW_PRESET_UNVERIFIED',
+                                        'FLOW_GENERATION_PRESET_UI_CHANGED','FLOW_BALANCE_UNVERIFIED'}:
                             return {'state':'blocked','not_submitted':True,'reason':str(exc)}
                         raise
                     atomic_json(folder/'readiness.json',readiness)
