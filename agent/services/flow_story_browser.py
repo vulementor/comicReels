@@ -101,7 +101,19 @@ class FlowStoryBrowser:
         return inspect_current_video_quote(
             page,self.runtime.flow_project_id,credit_cap=7)
 
-    def run(self,name,req,directory,progress,*,reconcile=False):
+    def run(self,name,req,directory,progress,*,reconcile=False,authorization=None):
+        # A resumed paid video must never use the legacy unauthenticated
+        # submission path. Validate owner-bound job/source/evidence, 7-credit
+        # cap and exactly one allocation before opening a paid browser session.
+        contract = None
+        if name == 'video' and (authorization is not None or req.get('resume_job_id') is not None):
+            try:
+                contract = _budget_contract(authorization, req)
+                if contract['project_id'] != self.runtime.flow_project_id:
+                    raise ValueError('NATIVE_VIDEO_BUDGET_PROJECT_MISMATCH')
+            except (ValueError,TypeError,KeyError) as error:
+                return {'state':'blocked','not_submitted':True,
+                        'reason':str(error) if str(error) else 'NATIVE_VIDEO_BUDGET_INVALID'}
         folder=directory/'flow'
         folder.mkdir(exist_ok=True)
         story=StoryReceipt(folder/'story-receipt.json')
@@ -138,6 +150,18 @@ class FlowStoryBrowser:
                                         'FLOW_GENERATION_PRESET_UI_CHANGED','FLOW_BALANCE_UNVERIFIED'}:
                             return {'state':'blocked','not_submitted':True,'reason':str(exc)}
                         raise
+                    if contract is not None:
+                        if (readiness.get('quote_source') != 'verified_live_google_flow_ui'
+                                or readiness.get('quoted_cost') != contract['quoted_cost_credits']
+                                or readiness.get('credits',0) < contract['quoted_cost_credits']
+                                or readiness.get('account_identity_sha256') !=
+                                    contract['account_identity_sha256']
+                                or readiness.get('model') != 'Omni 1.1 Flash'
+                                or readiness.get('resolution') != '360p'
+                                or readiness.get('duration_s') != 10
+                                or readiness.get('variants') != 1):
+                            return {'state':'blocked','not_submitted':True,
+                                    'reason':'NATIVE_VIDEO_LIVE_QUOTE_GRANT_MISMATCH'}
                     atomic_json(folder/'readiness.json',readiness)
                     state=BrowserStateStore(folder/'uploads.json',owner_key='thoremix-'+req['source_sha256'][:20])
                     refs=[]
