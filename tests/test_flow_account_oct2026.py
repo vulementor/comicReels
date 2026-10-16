@@ -156,6 +156,10 @@ class SafeFlowPrepareTests(unittest.TestCase):
         def is_visible(self):return False
 
     class CurrentPage:
+        def locator(self, selector):
+            assert selector == 'flow-creative-agent-prompt-box'
+            return SafeFlowPrepareTests.AbsentLegacy()
+
         def get_by_role(self, role, name=None, exact=False):
             assert role=="button"
             assert name=="Thông tin về tài khoản"
@@ -171,6 +175,22 @@ class SafeFlowPrepareTests(unittest.TestCase):
                 browser._prepare(self.CurrentPage())
         check.assert_called_once()
         self.assertFalse(hasattr(self.CurrentPage(),"paid_generate_called"))
+
+    def test_agent_composer_blocks_even_with_legacy_account_wrapper(self):
+        from agent.services.flow_story_browser import FlowStoryBrowser
+        class AgentPage(self.CurrentPage):
+            def locator(self, selector):
+                assert selector == 'flow-creative-agent-prompt-box'
+                class Present:
+                    def count(self):return 1
+                return Present()
+            def get_by_role(self, role, name=None, exact=False):
+                raise AssertionError('legacy account UI should never be used')
+        browser=FlowStoryBrowser(settings=None,runtime=None)
+        with patch("agent.services.flow_story_browser.read_current_flow_balance") as reader:
+            with self.assertRaisesRegex(ValueError,"FLOW_GENERATION_PRESET_UI_CHANGED"):
+                browser._prepare(AgentPage())
+        reader.assert_not_called()
 
     def test_failed_live_balance_also_blocks(self):
         from agent.services.flow_story_browser import FlowStoryBrowser
