@@ -61,3 +61,44 @@ def observe_flow_account(page) -> AuthObservation:
     except Exception:  # noqa: BLE001 - no leaked account labels or browser errors
         pass
     return AuthObservation()
+
+
+_CURRENT_CREDIT = re.compile(r'^(\d{1,3}(?:\.\d{3})*|\d+) tín dụng Google Flow$')
+
+
+def read_current_flow_balance(page) -> dict:
+    """Read credits from authenticated account panel, never click Generate.
+
+    Only supports the strictly observed standalone October 2026 account
+    control. Unfamiliar UI or ambiguous balance fails closed; no network API,
+    cookie, browser profile modification, upload or paid operation.
+    """
+    if observe_flow_account(page).state != 'authenticated':
+        raise ValueError('FLOW_ACCOUNT_NOT_VERIFIED')
+    url = urlsplit(page.url)
+    if (url.hostname != 'flow.google.com' or url.scheme != 'https'
+            or not url.path.startswith('/project/')):
+        raise ValueError('FLOW_PROJECT_NOT_VERIFIED')
+    control = page.locator('a[role="button"][aria-label^="Tài khoản Google: "]')
+    if control.count() != 1 or not control.is_visible():
+        raise ValueError('FLOW_ACCOUNT_BUTTON_MISSING')
+    label = control.get_attribute('aria-label', timeout=1500)
+    if _CURRENT_IDENTITY.fullmatch(' '.join((label or '').split())) is None:
+        raise ValueError('FLOW_ACCOUNT_LABEL_CHANGED')
+    # Native Playwright press/click on a nested anchor can time out even
+    # though the account control is visible. This is NOT a paid action.
+    control.evaluate('(account) => account.click()')
+    dialog = page.get_by_role('dialog', name='Cài đặt tài khoản', exact=True)
+    dialog.wait_for(state='visible', timeout=10000)
+    link = dialog.get_by_role('link', name=_CURRENT_CREDIT)
+    if link.count() != 1 or not link.is_visible():
+        raise ValueError('FLOW_BALANCE_UNVERIFIED')
+    label = ' '.join(link.inner_text(timeout=1500).split())
+    match = _CURRENT_CREDIT.fullmatch(label)
+    if match is None:
+        raise ValueError('FLOW_BALANCE_UNVERIFIED')
+    balance = int(match.group(1).replace('.', ''))
+    if not 0 <= balance <= 10000000:
+        raise ValueError('FLOW_BALANCE_OUT_OF_RANGE')
+    return {'balance_credits': balance, 'source': 'authenticated_ui_account_dialog',
+            'paid_generate_called': False}
