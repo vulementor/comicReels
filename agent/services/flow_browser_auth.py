@@ -25,27 +25,35 @@ _CURRENT_IDENTITY = re.compile(
 
 
 def _account_email_from_scoped_control(page) -> str | None:
+    legacy_identity = None
     legacy = page.get_by_role(
         'button', name='Thông tin về tài khoản', exact=True
     )
     if legacy.count() == 1 and legacy.is_visible():
         inner = legacy.get_by_role('button', name=_LEGACY_ACCOUNT_NAME)
-        if inner.count() != 1 or not inner.is_visible():
-            return None
-        label = inner.get_attribute('aria-label', timeout=1500)
-        match = _LEGACY_IDENTITY.fullmatch(' '.join((label or '').split()))
-        return match.group(1).casefold() if match else None
+        if inner.count() == 1 and inner.is_visible():
+            label = inner.get_attribute('aria-label', timeout=1500)
+            match = _LEGACY_IDENTITY.fullmatch(' '.join((label or '').split()))
+            if match:
+                legacy_identity = match.group(1).casefold()
 
-    # The new button is an <a role="button">, not a nested <button>.
-    # No broader identity discovery is allowed on other page elements.
+    # The new standalone account anchor often lives inside the SAME old
+    # account-header wrapper. An unmatched legacy child must not short-circuit
+    # current-UI authentication. Never use PRO or the header itself as proof.
+    current_identity = None
     control = page.locator(
         'a[role="button"][aria-label^="Tài khoản Google: "]'
     )
-    if control.count() != 1 or not control.is_visible():
+    if control.count() == 1 and control.is_visible():
+        label = control.get_attribute('aria-label', timeout=1500)
+        match = _CURRENT_IDENTITY.fullmatch(' '.join((label or '').split()))
+        if match:
+            current_identity = match.group(1).casefold()
+
+    # Two independently valid but conflicting identity labels fail closed.
+    if legacy_identity and current_identity and legacy_identity != current_identity:
         return None
-    label = control.get_attribute('aria-label', timeout=1500)
-    match = _CURRENT_IDENTITY.fullmatch(' '.join((label or '').split()))
-    return match.group(1).casefold() if match else None
+    return legacy_identity or current_identity
 
 
 def observe_flow_account(page) -> AuthObservation:
