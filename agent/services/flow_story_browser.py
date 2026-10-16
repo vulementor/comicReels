@@ -96,6 +96,13 @@ class FlowStoryBrowser:
         # agent composer. Account/credits may be genuine, but the old 10s
         # Omni/360p video quote is NOT verifiable from the new composer.
         # Do not reinterpret a historical seven-credit receipt as a quote.
+        # The current Google Flow project may still expose an old-looking
+        # account header even while its composer is a new agent workflow.
+        # Detect that independently before calling any historic preset UI.
+        # This check has NO clicks, upload, reservation or paid effects.
+        agent = page.locator('flow-creative-agent-prompt-box')
+        if agent.count() > 0:
+            raise ValueError('FLOW_GENERATION_PRESET_UI_CHANGED')
         legacy = page.get_by_role('button',name='Thông tin về tài khoản',exact=True)
         if legacy.count() != 1 or not legacy.is_visible():
             # This verifies the live account + credit panel, but does not
