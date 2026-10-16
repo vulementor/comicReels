@@ -49,6 +49,20 @@ class FlowAccountOct2026Tests(unittest.TestCase):
         self.assertEqual(x.state,"authenticated")
         self.assertEqual(x.identity,"sample@example.com")
 
+    def test_standalone_current_account_inside_legacy_header_wrapper(self):
+        # Real October 2026 UI retains the old account-header div, but the
+        # nested old-style button no longer exists. Current anchor is valid.
+        wrapper=Element(nested=Element(count=0))
+        result=observe_flow_account(Page(old=wrapper))
+        self.assertEqual(result.state,"authenticated")
+        self.assertEqual(result.identity,"sample@example.com")
+
+    def test_two_conflicting_account_identity_labels_fail_closed(self):
+        legacy=Element(nested=Element(label=LEGACY))
+        current=Element(label=LABEL.replace("sample@example.com","other@example.com"))
+        result=observe_flow_account(Page(old=legacy,current=current))
+        self.assertNotEqual(result.state,"authenticated")
+
     def test_original_nested_button_still_supported(self):
         child=Element(label=LEGACY)
         container=Element(nested=child)
