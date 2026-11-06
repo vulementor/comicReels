@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from agent.services.media_process import run_media_command
 from fractions import Fraction
 
 from PIL import ImageFont
@@ -152,7 +153,7 @@ def _sha256(path: Path) -> str:
 
 
 def _run(args: list[str], **kwargs):
-    return subprocess.run(args, check=True, capture_output=True, timeout=180, **kwargs)
+    return run_media_command(args, check=True, capture_output=True, timeout=180, **kwargs)
 
 
 def render_sign_text(source_video: Path, source_image: Path, output: Path, directory: Path,
@@ -193,8 +194,8 @@ def render_sign_text(source_video: Path, source_image: Path, output: Path, direc
         _run([str(ffmpeg), '-v', 'error', '-n', '-i', str(source_video), '-filter_script:v',
               filter_file.name, '-map', '0:v:0', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'medium',
               '-crf', '16', '-pix_fmt', 'yuv420p', '-c:a', 'copy', '-movflags', '+faststart',
-              str(pending)], cwd=directory)
-        _run([str(ffmpeg), '-v', 'error', '-xerror', '-i', str(pending), '-map', '0', '-f', 'null', '-'])
+              str(pending)], cwd=directory, journal_path=directory / 'ffmpeg-process.jsonl')
+        _run([str(ffmpeg), '-v', 'error', '-xerror', '-i', str(pending), '-map', '0', '-f', 'null', '-'], journal_path=directory / 'ffmpeg-process.jsonl')
         if _sha256(source_video) != spec['video_sha256']:
             raise ValueError('SIGN_OVERLAY_SOURCE_CHANGED_DURING_RENDER')
         os.replace(pending, output)

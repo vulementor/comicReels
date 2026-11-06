@@ -1,5 +1,6 @@
 """Post-processing: trim, merge, add music via ffmpeg."""
 import subprocess
+from .media_process import run_media_command
 import logging
 from pathlib import Path
 
@@ -32,7 +33,7 @@ def trim_video(input_path: str, output_path: str, start: float, end: float) -> b
         "-movflags", "+faststart",
         output_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = run_media_command(cmd, capture_output=True, text=True, timeout=120, journal_path=Path(output_path).parent / 'ffmpeg-process.jsonl')
     if result.returncode != 0:
         logger.error("Trim failed: %s", result.stderr[-200:])
         return False
@@ -56,7 +57,7 @@ def merge_videos(video_paths: list[str], output_path: str) -> bool:
             "-movflags", "+faststart",
             output_path,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = run_media_command(cmd, capture_output=True, text=True, timeout=120, journal_path=Path(output_path).parent / 'ffmpeg-process.jsonl')
     finally:
         Path(concat_file).unlink(missing_ok=True)
     if result.returncode != 0:
@@ -82,7 +83,7 @@ def add_narration(video_path: str, narration_path: str, output_path: str,
     fade_in = _clamp_float(fade_in, "fade_in")
     fade_out = _clamp_float(fade_out, "fade_out")
 
-    probe = subprocess.run(
+    probe = run_media_command(
         ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", video_path],
         capture_output=True, text=True, timeout=30,
     )
@@ -103,7 +104,7 @@ def add_narration(video_path: str, narration_path: str, output_path: str,
         "-movflags", "+faststart",
         output_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = run_media_command(cmd, capture_output=True, text=True, timeout=120, journal_path=Path(output_path).parent / 'ffmpeg-process.jsonl')
     if result.returncode != 0:
         logger.error("Add narration failed: %s", result.stderr[-200:])
         return False
@@ -125,7 +126,7 @@ def add_music(video_path: str, music_path: str, output_path: str,
     fade_in = _clamp_float(fade_in, "fade_in")
     fade_out = _clamp_float(fade_out, "fade_out")
 
-    probe = subprocess.run(
+    probe = run_media_command(
         ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", video_path],
         capture_output=True, text=True, timeout=30,
     )
@@ -146,7 +147,7 @@ def add_music(video_path: str, music_path: str, output_path: str,
         "-movflags", "+faststart",
         output_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = run_media_command(cmd, capture_output=True, text=True, timeout=120, journal_path=Path(output_path).parent / 'ffmpeg-process.jsonl')
     if result.returncode != 0:
         logger.error("Add music failed: %s", result.stderr[-200:])
         return False

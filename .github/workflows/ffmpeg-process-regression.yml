@@ -1,0 +1,30 @@
+name: FFmpeg process regression
+
+on:
+  pull_request:
+    paths:
+      - 'agent/**'
+      - 'tests/test_media_process.py'
+      - '.github/workflows/ffmpeg-process-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  media-process:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pytest
+      - name: Bound/headless media lifecycle regressions
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.
+        run: python -m pytest -q tests/test_media_process.py
