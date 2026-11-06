@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+from agent.services.media_process import run_media_command
 import tempfile
 from pathlib import Path
 
@@ -186,7 +187,7 @@ def _extract_frames(video_path: str, fps: float, out_dir: str) -> list:
         "-q:v", "4",
         f"{out_dir}/frame_%04d.jpg",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = run_media_command(cmd, capture_output=True, text=True, timeout=180, journal_path=Path(out_dir) / 'ffmpeg-process.jsonl')
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg frame extraction failed: {result.stderr[-500:]}")
     return sorted(Path(out_dir).glob("frame_*.jpg"))
@@ -206,7 +207,7 @@ def _has_drawtext() -> bool:
     it was there to draw. Probe once and degrade to untimestamped frames.
     """
     try:
-        out = subprocess.run(
+        out = run_media_command(
             ["ffmpeg", "-hide_banner", "-filters"],
             capture_output=True, text=True, timeout=30,
         )
@@ -253,14 +254,15 @@ def _create_contact_sheets(
     frames_dir.mkdir(exist_ok=True)
 
     def _extract(with_drawtext: bool):
-        return subprocess.run(
+        return run_media_command(
             [
                 "ffmpeg", "-y", "-i", video_path,
                 "-vf", _frame_filter(fps, with_drawtext),
                 "-q:v", "2",
                 f"{frames_dir}/frame_%04d.jpg",
             ],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=180,
+            journal_path=Path(out_dir) / 'ffmpeg-process.jsonl',
         )
 
     timestamped = _has_drawtext()
@@ -317,7 +319,7 @@ def _create_contact_sheets(
             "-vf", f"tile={cols_eff}x{rows_eff}:nb_frames={len(chunk)}",
             "-q:v", "2", str(output),
         ]
-        result = subprocess.run(tile_cmd, capture_output=True, text=True)
+        result = run_media_command(tile_cmd, capture_output=True, text=True, timeout=120, journal_path=Path(out_dir) / 'ffmpeg-process.jsonl')
         if result.returncode != 0:
             raise RuntimeError(f"Contact sheet tiling failed: {result.stderr[-500:]}")
         sheets.append(output)
